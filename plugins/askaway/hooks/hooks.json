@@ -1,0 +1,4 @@
+{
+  "description": "The Askaway hooks module: pane, band row, toast and the /askaway commands",
+  "modules": ["./register.tsx"]
+}

@@ -1,0 +1,12 @@
+{
+  "name": "askaway",
+  "version": "0.1.0",
+  "description": "Askaway: a question inbox for Claude Code. Agents file questions with a recommended default while you are away; you answer them one at a time in a real panel, all at once per window.",
+  "author": { "name": "KeepGlide", "url": "https://keepglide.com" },
+  "homepage": "https://github.com/KeepGlide/askaway",
+  "repository": "https://github.com/KeepGlide/askaway",
+  "license": "MIT",
+  "keywords": ["claude-code", "questions", "inbox", "panel", "mod"],
+  "types": "./types/index.d.ts",
+  "hooks": "./hooks/command-hooks.json"
+}

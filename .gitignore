@@ -1,0 +1,6 @@
+node_modules/
+__pycache__/
+*.pyc
+.pytest_cache/
+.claude-plugin/types/
+plugins/*/.claude-plugin/types/

@@ -1,0 +1,12 @@
+{
+  "name": "askaway",
+  "description": "Askaway by KeepGlide: a question inbox for Claude Code.",
+  "owner": { "name": "KeepGlide", "url": "https://keepglide.com" },
+  "plugins": [
+    {
+      "name": "askaway",
+      "source": "./plugins/askaway",
+      "description": "Agents file questions with a recommended default while you are away; you answer them in a real panel, one at a time, all at once per window."
+    }
+  ]
+}
