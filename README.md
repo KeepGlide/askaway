@@ -8,7 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Early access (0.4.0-beta.4):** the mod API moves between Claude Code releases, so expect changes until a stable release.
+> ⚠️ **Early access (0.4.0-beta.5):** the mod API moves between Claude Code releases, so expect changes until a stable release.
 
 ## 💡 What it is
 
