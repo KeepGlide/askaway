@@ -299,14 +299,8 @@ export function sectionsOf(lang: Lang, question: Question): Section[] {
   add(t(lang, 'section.analogy'), question.analogy)
   add(t(lang, 'section.why', { key: question.recommended }), question.why)
   add(t(lang, 'section.how'), question.how)
-  // One section for the two halves: each half shows only when its field is set, and the subtitle names just the halves shown.
-  const benefits = [
-    { body: question.gains, heading: t(lang, 'section.gains') },
-    { body: question.losses, heading: t(lang, 'section.losses') },
-  ].filter((part): part is { body: string; heading: string } => part.body !== undefined)
-  if (benefits.length > 0) {
-    add(benefits.map(part => part.heading).join(' · '), benefits.map(part => part.body).join(' '))
-  }
+  add(t(lang, 'section.gains'), question.gains)
+  add(t(lang, 'section.losses'), question.losses)
   add(t(lang, 'section.urgency'), question.urgency)
   add(t(lang, 'section.undo'), question.undo)
   return sections

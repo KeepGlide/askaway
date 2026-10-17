@@ -335,15 +335,21 @@ test('model: each explanation section reads in the chosen language and shows onl
     '🔁 Analogia',
     '💡 Por que A',
     '🛠️ Como',
-    '🎁 O que ganhamos · ⚖️ O que perdemos',
+    '🎁 O que ganhamos',
+    '⚖️ O que perdemos',
   ])
-  expect(sectionsOf('en', full)[4]).toEqual({ heading: '🎁 What we gain · ⚖️ What we lose', body: 'G L' })
+  expect(sectionsOf('en', full).slice(4)).toEqual([
+    { heading: '🎁 What we gain', body: 'G' },
+    { heading: '⚖️ What we lose', body: 'L' },
+  ])
 
   const gainsOnly = parsedQuestion('q-m-000003', 10, { gains: 'G' })
   expect(sectionsOf('en', gainsOnly)[1]).toEqual({ heading: '🎁 What we gain', body: 'G' })
+  const lossesOnly = parsedQuestion('q-m-000007', 10, { losses: 'L' })
+  expect(sectionsOf('en', lossesOnly)[1]).toEqual({ heading: '⚖️ What we lose', body: 'L' })
 })
 
-test('model: urgency and undo draw last, after gains · losses, each only when set, in both languages', () => {
+test('model: urgency and undo draw last, after gains and losses, each only when set, in both languages', () => {
   const every = parsedQuestion('q-m-000004', 10, {
     context: 'C', analogy: 'An', how: 'H', gains: 'G', losses: 'L', urgency: 'Blocks in ~8 min', undo: 'Changing later ≈ 10 min',
   })
@@ -352,15 +358,16 @@ test('model: urgency and undo draw last, after gains · losses, each only when s
     '🔁 Analogy',
     '💡 Why A',
     '🛠️ How',
-    '🎁 What we gain · ⚖️ What we lose',
+    '🎁 What we gain',
+    '⚖️ What we lose',
     '⏱️ Urgency',
     '↩️ Undo',
   ])
-  expect(sectionsOf('en', every).slice(5)).toEqual([
+  expect(sectionsOf('en', every).slice(6)).toEqual([
     { heading: '⏱️ Urgency', body: 'Blocks in ~8 min' },
     { heading: '↩️ Undo', body: 'Changing later ≈ 10 min' },
   ])
-  expect(sectionsOf('pt', every).slice(5).map(section => section.heading)).toEqual(['⏱️ Urgência', '↩️ Como desfazer'])
+  expect(sectionsOf('pt', every).slice(6).map(section => section.heading)).toEqual(['⏱️ Urgência', '↩️ Como desfazer'])
 
   const withoutEither = parsedQuestion('q-m-000005', 10, { gains: 'G' })
   expect(sectionsOf('en', withoutEither).map(section => section.heading)).toEqual(['💡 Why A', '🎁 What we gain'])
@@ -454,15 +461,15 @@ test('the KeepGlide mark is drawn 24px beside the counter and 28px beside Submit
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface)
     // The drawn tree keeps no key on an Svg (only Box and Button keep theirs), so each mark is placed by its neighbour:
-    // the header mark sits right before the counter, the other right before the Submit all button.
+    // the header mark sits right after the counter, the other right after the Submit all button.
     const nodes = nodesOf(await ui.drawn())
     const markAt = nodes.flatMap((node, index) => (node.type === 'Svg' && (node.props as Record<string, unknown>).alt === 'KeepGlide' ? [index] : []))
     if (surface === 'desktop') {
       expect(markAt).toHaveLength(2)
       const counterAt = nodes.findIndex(node => node.type === 'Text' && Array.isArray(node.children) && node.children.includes('1 pendente · 1 grupo'))
       const submitAt = nodes.findIndex(node => keyOfNode(node) === 'submit-all')
-      expect(markAt[0]).toBe(counterAt - 1)
-      expect(markAt[1]).toBe(submitAt - 1)
+      expect(markAt[0]).toBe(counterAt + 1)
+      expect(markAt[1]).toBe(submitAt + nodesOf(nodes[submitAt]).length)
       expect(markAt.map(index => (nodes[index].props as Record<string, unknown>).width)).toEqual([24, 28])
     } else {
       expect(markAt).toHaveLength(0)
@@ -666,8 +673,8 @@ test('each option is one full-width column with its tradeoff under it, numbered,
   for (const key of ['optrow-q-l1-aaaaaa-A', 'optrow-q-l1-aaaaaa-B']) {
     expect((await ui.find({ type: 'Box', key }))?.props.flexDirection).toBe('column')
   }
-  expect(await ui.find({ type: 'Text', text: 'Cheap' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'Slow' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '└ Cheap' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '└ Slow' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -812,7 +819,7 @@ test('only the recommended option says "(Recomendada)", and the card has no JEV 
   await ui.unmount()
 })
 
-test('each explanation section shows only when its field is set, in one box under the question, with the subtitle for what is set', async ($, on) => {
+test('each explanation section shows only when its field is set, in one box under the question', async ($, on) => {
   const files = new Map([
     [
       path('q', 'q-l1-aaaaaa'),
@@ -828,7 +835,8 @@ test('each explanation section shows only when its field is set, in one box unde
   expect(texts).toContain('🔁 Analogia: Like a phone book.')
   expect(texts).toContain('💡 Por que A: It is smaller.')
   expect(texts).toContain('🛠️ Como: A table.')
-  expect(texts).toContain('🎁 O que ganhamos · ⚖️ O que perdemos: Fast reads. A file to back up.')
+  expect(texts).toContain('🎁 O que ganhamos: Fast reads.')
+  expect(texts).toContain('⚖️ O que perdemos: A file to back up.')
   // Urgency and undo are not set on this question, so their headings are not drawn.
   expect(texts.some(text => text.startsWith('⏱️') || text.startsWith('↩️'))).toBe(false)
   await ui.unmount()
@@ -845,16 +853,18 @@ test('the card draws urgency and undo last in the explanation box, with their Po
   await $.session.start(SESSION)
   const ui = await mountPane($)
   const texts = await textsOf(ui)
-  const gainsLine = texts.indexOf('🎁 O que ganhamos · ⚖️ O que perdemos: Fast reads. A file to back up.')
+  const gainsLine = texts.indexOf('🎁 O que ganhamos: Fast reads.')
+  const lossesLine = texts.indexOf('⚖️ O que perdemos: A file to back up.')
   const urgencyLine = texts.indexOf('⏱️ Urgência: Blocks in ~8 min')
   const undoLine = texts.indexOf('↩️ Como desfazer: Changing later ≈ 10 min')
   expect(gainsLine).toBeGreaterThanOrEqual(0)
-  expect(urgencyLine).toBeGreaterThan(gainsLine)
+  expect(lossesLine).toBeGreaterThan(gainsLine)
+  expect(urgencyLine).toBeGreaterThan(lossesLine)
   expect(undoLine).toBeGreaterThan(urgencyLine)
   await ui.unmount()
 })
 
-test('a losses-only question shows its subtitle for the losses alone, and a gains-only one for the gains', async ($, on) => {
+test('a losses-only question draws the losses section alone, and a gains-only one the gains', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { losses: 'Extra file.' })],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { gains: 'Quick answers.' })],
@@ -892,7 +902,7 @@ test('a legacy question with tradeoff and no how, gains, losses or session title
   const ui = await mountPane($)
   const texts = await textsOf(ui)
   expect(texts).toContain('💡 Por que A: It is smaller.')
-  expect(texts).toContain('Cheap')
+  expect(texts).toContain('└ Cheap')
   expect(texts.filter(text => /^(🛠️|🎁|⚖️)/u.test(text))).toEqual([])
   expect(texts.filter(text => text.trim() === '')).toEqual([])
   await ui.unmount()
@@ -920,7 +930,7 @@ test('a name in an explanation is drawn in the accent color, a slash command bar
   }
 })
 
-test('an option tradeoff written in lowercase is drawn capitalized, in a box indented one cell, on both surfaces', async ($, on) => {
+test('an option tradeoff written in lowercase is drawn capitalized after └, in a box indented one cell, on both surfaces', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   stubHost(on, files)
   await $.session.start(SESSION)
@@ -934,8 +944,8 @@ test('an option tradeoff written in lowercase is drawn capitalized, in a box ind
           (node.props as Record<string, unknown> | undefined)?.paddingLeft === 1 &&
           nodesOf(node).some(inner => inner.type === 'Text' && Array.isArray(inner.children) && inner.children.includes(line)),
       )
-    expect(indentedLine('Cheap')).toBe(true)
-    expect(indentedLine('Slow')).toBe(true)
+    expect(indentedLine('└ Cheap')).toBe(true)
+    expect(indentedLine('└ Slow')).toBe(true)
     expect(await ui.find({ type: 'Text', text: 'cheap' })).toBeUndefined()
     await ui.unmount()
   }

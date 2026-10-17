@@ -79,8 +79,8 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
           <Text bold>{t(lang, 'pane.heading')}</Text>
         </Box>
         <Box flexDirection="row" alignItems="center" gap={1}>
-          {renderKeepGlide(ui, view.surface, 'keepglide-counter', KEEPGLIDE_HEADER_SIZE)}
           <Text>{counterText(lang, view.questions)}</Text>
+          {renderKeepGlide(ui, view.surface, 'keepglide-counter', KEEPGLIDE_HEADER_SIZE)}
         </Box>
       </Box>
       {view.groups.length > 0 && renderTree(ui, lang, view)}
@@ -292,7 +292,7 @@ function renderOption(
       ))}
       {option.tradeoff !== undefined && (
         <Box paddingLeft={1}>
-          <Text dimColor={isLeaving}>{capitalized(option.tradeoff)}</Text>
+          <Text dimColor={isLeaving}>{`└ ${capitalized(option.tradeoff)}`}</Text>
         </Box>
       )}
     </Box>
@@ -385,10 +385,10 @@ function renderSubmitAll(ui: Ui, lang: Lang, actions: PaneActions, card: CardCon
   }
   return (
     <Box key="submit-row" flexDirection="row" alignItems="center" gap={1}>
-      {renderKeepGlide(ui, card.surface, 'keepglide-submit', KEEPGLIDE_SUBMIT_SIZE)}
       {card.held.hold('submit-all', [label, isOff, hotkey], onPress, press => (
         <Button key="submit-all" label={label} variant={isOff ? 'secondary' : 'primary'} dimColor={isOff} hotkey={hotkey} onPress={press} />
       ))}
+      {renderKeepGlide(ui, card.surface, 'keepglide-submit', KEEPGLIDE_SUBMIT_SIZE)}
     </Box>
   )
 }
