@@ -181,6 +181,15 @@ function questionLabel(question: Question): string {
 // The tradeoff under an option starts with a capital letter, whatever the agent wrote.
 const capitalized = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1)
 
+// The line under an option: its tradeoff, then its fit after a dot. Either part may be missing; with neither, no line.
+const tradeoffLineOf = (lang: Lang, option: QuestionOption): string | undefined => {
+  const parts = [
+    option.tradeoff === undefined ? undefined : capitalized(option.tradeoff),
+    typeof option.fit === 'number' ? t(lang, 'option.fit', { n: option.fit }) : undefined,
+  ].filter((part): part is string => part !== undefined)
+  return parts.length > 0 ? `└ ${parts.join(' · ')}` : undefined
+}
+
 // An option answers to its digit: 1 to 9 for the first nine positions, none after.
 const digitOf = (position: number): string | undefined => (position <= 8 ? String(position + 1) : undefined)
 
@@ -254,8 +263,8 @@ function renderExplanation(ui: Ui, sections: Section[], isLeaving: boolean): Ren
   )
 }
 
-// A full-width numbered option, its tradeoff under it. The picked one is the primary button; the recommended one, when
-// not picked, is bold and says "(Recommended)" in its text.
+// A full-width numbered option, its tradeoff and fit under it. The picked one is the primary button; the recommended
+// one, when not picked, is bold and says "(Recommended)" in its text.
 function renderOption(
   ui: Ui,
   lang: Lang,
@@ -272,6 +281,7 @@ function renderOption(
   const isBold = isRecommended && !isPicked
   const key = `opt-${question.id}-${option.key}`
   const hotkey = hotkeyFor(card, digitOf(position))
+  const tradeoffLine = tradeoffLineOf(lang, option)
   const onPress = () => {
     if (isLeaving) return
     actions.pick(question.id, option.key)
@@ -290,9 +300,9 @@ function renderOption(
           {isBold ? <Text bold dimColor={isLeaving}>{text}</Text> : text}
         </Button>
       ))}
-      {option.tradeoff !== undefined && (
+      {tradeoffLine !== undefined && (
         <Box paddingLeft={1}>
-          <Text dimColor={isLeaving}>{`└ ${capitalized(option.tradeoff)}`}</Text>
+          <Text dimColor={isLeaving}>{tradeoffLine}</Text>
         </Box>
       )}
     </Box>

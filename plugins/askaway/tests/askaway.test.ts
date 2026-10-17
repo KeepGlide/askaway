@@ -673,8 +673,8 @@ test('each option is one full-width column with its tradeoff under it, numbered,
   for (const key of ['optrow-q-l1-aaaaaa-A', 'optrow-q-l1-aaaaaa-B']) {
     expect((await ui.find({ type: 'Box', key }))?.props.flexDirection).toBe('column')
   }
-  expect(await ui.find({ type: 'Text', text: '└ Cheap' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '└ Slow' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '└ Cheap · aderência 80' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '└ Slow · aderência 40' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -735,7 +735,7 @@ test('every status line takes the one green pair, the ⚠️ lines included', as
   const pending = '⏳ Resposta B enviada para App'
   expect((await ui.find({ type: 'Text', text: expired }))?.props.color).toBe('#166534')
   expect((await ui.find({ type: 'Text', text: pending }))?.props.color).toBe('#166534')
-  // Each status line is one green row with its text inside; the explanation box of the card is blue, so it is not one.
+  // Each status line is one green row with its text inside; the explanation box of the card is light gray, so it is not one.
   const rows = nodesOf(await ui.drawn()).filter(node => (node.props as Record<string, unknown> | undefined)?.backgroundColor === '#DCFCE7')
   expect(rows).toHaveLength(2)
   for (const text of [expired, pending]) {
@@ -902,7 +902,7 @@ test('a legacy question with tradeoff and no how, gains, losses or session title
   const ui = await mountPane($)
   const texts = await textsOf(ui)
   expect(texts).toContain('💡 Por que A: It is smaller.')
-  expect(texts).toContain('└ Cheap')
+  expect(texts).toContain('└ Cheap · aderência 80')
   expect(texts.filter(text => /^(🛠️|🎁|⚖️)/u.test(text))).toEqual([])
   expect(texts.filter(text => text.trim() === '')).toEqual([])
   await ui.unmount()
@@ -944,11 +944,58 @@ test('an option tradeoff written in lowercase is drawn capitalized after └, in
           (node.props as Record<string, unknown> | undefined)?.paddingLeft === 1 &&
           nodesOf(node).some(inner => inner.type === 'Text' && Array.isArray(inner.children) && inner.children.includes(line)),
       )
-    expect(indentedLine('└ Cheap')).toBe(true)
-    expect(indentedLine('└ Slow')).toBe(true)
+    expect(indentedLine('└ Cheap · aderência 80')).toBe(true)
+    expect(indentedLine('└ Slow · aderência 40')).toBe(true)
     expect(await ui.find({ type: 'Text', text: 'cheap' })).toBeUndefined()
     await ui.unmount()
   }
+})
+
+test('an option draws its fit after its tradeoff as "· fit N" in English, and with no tradeoff as "└ fit N"', async ($, on) => {
+  const options = [
+    { key: 'A', label: 'SQLite', tradeoff: 'fast', fit: 88 },
+    { key: 'B', label: 'JSONL', fit: 55 },
+  ]
+  const files = new Map([[path('q', 'q-f-aaaaaa'), question('q-f-aaaaaa', 1000, { options })]])
+  stubHost(on, files, true, {}, {}, { LANG: '' })
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(await ui.find({ type: 'Text', text: '└ Fast · fit 88' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '└ fit 55' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('an option draws its fit as "· aderência N" in Portuguese, the default language', async ($, on) => {
+  const options = [
+    { key: 'A', label: 'SQLite', tradeoff: 'fast', fit: 88 },
+    { key: 'B', label: 'JSONL', tradeoff: 'simple', fit: 55 },
+  ]
+  const files = new Map([[path('q', 'q-f-aaaaaa'), question('q-f-aaaaaa', 1000, { options })]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(await ui.find({ type: 'Text', text: '└ Fast · aderência 88' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '└ Simple · aderência 55' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('an option with fit null draws its tradeoff and no fit, and an option with neither draws no line', async ($, on) => {
+  const options = [
+    { key: 'A', label: 'Keep', tradeoff: 'cheap', fit: null },
+    { key: 'B', label: 'Rewrite', tradeoff: 'slow', fit: null },
+    { key: 'C', label: 'Skip', fit: null },
+  ]
+  const files = new Map([[path('q', 'q-f-aaaaaa'), question('q-f-aaaaaa', 1000, { options })]])
+  stubHost(on, files, true, {}, {}, { LANG: '' })
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(await ui.find({ type: 'Text', text: '└ Cheap' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '└ Slow' })).toBeDefined()
+  expect((await textsOf(ui)).some(text => /\bfit\b|aderência/u.test(text))).toBe(false)
+  const row = await ui.find({ type: 'Box', key: 'optrow-q-f-aaaaaa-C' })
+  expect(row).toBeDefined()
+  expect(nodesOf(row).some(node => (node.props as Record<string, unknown> | undefined)?.paddingLeft === 1)).toBe(false)
+  await ui.unmount()
 })
 
 test('model: piecesOf draws a slash command as a name and leaves the rest of the text plain', () => {

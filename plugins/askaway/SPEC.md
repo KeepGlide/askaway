@@ -36,7 +36,7 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
    "undo":"<free text, e.g. 'changing later ≈ 10 min'>",
    "risk":"low|medium|high","pause":false,"source":"cli"}
   ```
-  `fit` is an int 0-100 (older questions may hold null; the panel hides the chart when every fit is null).
+  `fit` is an int 0-100 (older questions may hold null; the panel then draws no fit for that option).
   `session_title` is filled by `ask`, not by the caller: it is the window title of the asking
   session, read from its transcript `~/.claude/projects/<dir>/<session>.jsonl`. The folder is
   derived from `project`: every char outside `[A-Za-z0-9]` becomes `-`; all folders are globbed
@@ -199,8 +199,8 @@ status list). `hooks/pane.tsx`, `renderPane`.
     high) is the risk of accepting the recommended option, as the filing agent judged it. A question with no title is
     named by its text, cut to 24 characters with "…";
   - the question text, bold;
-  - the explanation box, when at least one of its sections is set: a box on a light blue ground (`#EFF6FF`, ink
-    `#1F2937`, `EXPLAIN_COLORS`). Its sections, each drawn only when its field is set: 🧭 Context and origin, 🔁 Analogy,
+  - the explanation box, when at least one of its sections is set: a box on a very light gray ground (`#F9FAFB`, ink
+    `#1F2937`, `EXPLAIN_COLORS`, 14.05:1), with `paddingX={1}` and `paddingY={1}`. Its sections, each drawn only when its field is set: 🧭 Context and origin, 🔁 Analogy,
     💡 Why <rec>, 🛠️ How, one section for gains and losses (🎁 What we gain · ⚖️ What we lose; its heading names only
     the halves that are set), then ⏱️ Urgency and ↩️ Undo (pt: ⏱️ Urgência, ↩️ Como desfazer). Each section is one line,
     "heading: text" (pt: "💡 Por que A: <why>"): the heading in bold, then the text, wrapping as one paragraph. Every name
@@ -208,7 +208,8 @@ status list). `hooks/pane.tsx`, `renderPane`.
     (`ACCENT_COLOR`), its backticks not drawn (`piecesOf`, `renderSection`, `hooks/model.ts`, `hooks/pane.tsx`). The box
     sits before the options (`sectionsOf`, `renderExplanation`, `hooks/pane.tsx`, `hooks/model.ts`);
   - the options, one full-width Button each, "N. Label", with the option's tradeoff under it: one line, its first letter
-    capitalized, indented one cell (`paddingLeft={1}`), dim only while the card fades. The options
+    capitalized, then the fit after a dot, `· fit N` (`· aderência N` in pt-BR; with no tradeoff the line reads `└ fit N`;
+    a null fit draws nothing), indented one cell (`paddingLeft={1}`), dim only while the card fades. The options
     are in a column with `gap={2}` and `marginTop={1}`, so two blank lines part them from the explanation box
     (`renderQuestion`, `hooks/pane.tsx`). The recommended option reads "N. Label (Recommended)"
     (Portuguese: "Recomendada") and is bold while not picked. The picked option is the primary button;
