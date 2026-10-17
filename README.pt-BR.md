@@ -8,7 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Acesso antecipado (0.4.0-beta.3):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável.
+> ⚠️ **Acesso antecipado (0.4.0-beta.4):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável.
 
 ## 💡 O que é
 
@@ -282,4 +282,4 @@ Leia [CONTRIBUTING.md](CONTRIBUTING.md) para saber como rodar as duas suítes de
 
 O Askaway é distribuído sob a [Licença MIT](LICENSE).
 
-Feito por [KeepGlide](https://keepglide.com).
+Feito por [Sophia Phillipa](https://github.com/sophia-phillipa) na [KeepGlide](https://keepglide.com).

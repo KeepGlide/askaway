@@ -8,7 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Early access (0.4.0-beta.3):** the mod API moves between Claude Code releases, so expect changes until a stable release.
+> ⚠️ **Early access (0.4.0-beta.4):** the mod API moves between Claude Code releases, so expect changes until a stable release.
 
 ## 💡 What it is
 
@@ -282,4 +282,4 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for how to run the two test suites and w
 
 Askaway is released under the [MIT License](LICENSE).
 
-Made by [KeepGlide](https://keepglide.com).
+Made by [Sophia Phillipa](https://github.com/sophia-phillipa) at [KeepGlide](https://keepglide.com).
