@@ -4,7 +4,9 @@
 
 **Askaway is a question inbox for Claude Code:** agents file questions with a recommended default while you are away, you answer them in a real panel, and the work continues on the recommended option unless the question is risky.
 
-![The Askaway pane: tree of open questions and one question card](assets/pane-en.png)
+![The Askaway pane beside the Context and Environment panes, light theme: two projects, four sessions, five questions, one card open](assets/window-light-en.png)
+
+![The same pane on the dark theme](assets/window-dark-en.png)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -26,8 +28,6 @@ The agent keeps doing what does not depend on your answer. When you are back, th
 - **each option** with its trade-off and its fit score, drawn after the trade-off as `· fit 88`.
 
 You pick an option or write your own, move to the next question with the buttons or the hotkeys, and send all the answers of the group with **Submit all**. Each one is delivered automatically to the session that asked, with no step on your side.
-
-![The Askaway pane beside the Context and Environment panes: two projects, four sessions, five questions, one card open](assets/window-en.png)
 
 Askaway does more than give you time to answer without stopping the agent. Every question arrives with the context, the comparison, the reasoning and the cost of each option, so you decide with the same facts the agent had, and decide well.
 

@@ -4,7 +4,9 @@
 
 **O Askaway é uma caixa de perguntas para o Claude Code:** os agentes registram perguntas com uma opção recomendada enquanto você está ausente, você responde num painel de verdade, e o trabalho segue na opção recomendada, a menos que a pergunta seja arriscada.
 
-![O painel do Askaway: árvore de perguntas abertas e um cartão de pergunta](assets/pane-en.png)
+![O painel do Askaway ao lado dos painéis Context e Environment, tema claro: dois projetos, quatro sessões, cinco perguntas, um cartão aberto](assets/window-light-en.png)
+
+![O mesmo painel no tema escuro](assets/window-dark-en.png)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -26,8 +28,6 @@ O agente segue trabalhando no que não depende da sua resposta. Ao voltar, o toa
 - **cada opção** com o seu trade-off e a nota de aderência, desenhada depois dele como `· fit 88`.
 
 Você escolhe uma opção ou escreve a sua, avança para a próxima pergunta pelos botões ou pelas teclas de atalho e envia todas as respostas do grupo com **Enviar tudo**. Cada uma é entregue automaticamente à sessão que perguntou, sem nenhum passo seu.
-
-![O painel do Askaway ao lado dos painéis Context e Environment: dois projetos, quatro sessões, cinco perguntas, um cartão aberto](assets/window-en.png)
 
 O Askaway faz mais do que te dar tempo para responder sem parar o agente. Cada pergunta chega com o contexto, a comparação, o raciocínio e o custo de cada opção, então você decide com os mesmos fatos que o agente tinha, e decide bem.
 
