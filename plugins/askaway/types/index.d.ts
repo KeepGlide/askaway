@@ -24,6 +24,8 @@ export type Question = {
   how?: string
   gains?: string
   losses?: string
+  urgency?: string
+  undo?: string
   project: string
   session: string | null
   session_title?: string

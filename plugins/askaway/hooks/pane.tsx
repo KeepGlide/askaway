@@ -1,39 +1,43 @@
-// The Askaway pane: the header, the status lines, the window selector and the question wizard (one question at a
-// time, then the review). Everything is drawn from data handed in; the pane never reads state or writes it. Every
-// callback it receives is a handler; the register supplies them.
+// The Askaway pane: the header, the tree of the open questions (every group in turn, one under the other, with its
+// sessions and questions), the question card (one question at a time; Submit all on the last one of its group) and the
+// status lines of the answers. Everything is drawn from data handed in; the pane never reads state or writes it. Every
+// callback it receives is a handler; the register supplies them, and the held table keeps each Button's press handle.
 import type { Elements, RenderElement, RenderSurface } from 'claude-code'
 
 import type { Question, QuestionOption } from '../types'
 import { t, type Lang } from './i18n'
-import { ORIGIN_COLOR, STATUS_COLORS } from './look'
+import type { HeldButtons } from './held'
+import { DIVIDER_COLUMNS, DIVIDER_HEIGHT, DIVIDER_PX, dividerSvg } from './divider'
+import { ACCENT_COLOR, EXPLAIN_COLORS, STATUS_COLORS } from './look'
+import { renderLogo } from './logo-element'
 import {
+  OTHER_INPUT_PREFIX,
   OTHER_KEY,
   ageLabel,
   counterText,
-  jevLine,
+  projectLabel,
   riskLabel,
   sectionsOf,
-  windowOf,
+  sessionLabelOf,
   type Leaving,
   type Section,
   type StatusLine,
 } from './model'
-import type { Pick, Screen, Wizard, WindowGroup } from './wizard'
+import type { Group, Screen, Wizard } from './wizard'
 
 type Ui = Elements[RenderSurface]
-type QuestionScreen = Extract<Screen, { kind: 'question' }>
-type ReviewScreen = Extract<Screen, { kind: 'review' }>
 
 export type PaneView = {
   questions: Question[]
   lines: StatusLine[]
   now: number
   leaving: Leaving
-  windows: WindowGroup[]
-  active: WindowGroup | undefined
+  groups: Group[]
+  active: Group | undefined
   // Already pruned to the open questions by the register.
   wizard: Wizard
   screen: Screen | undefined
+  surface: RenderSurface
 }
 
 export type PaneActions = {
@@ -41,43 +45,50 @@ export type PaneActions = {
   pick: (id: string, key: string) => void
   toggleOther: (id: string) => void
   submitOther: (id: string, text: string) => void
-  toggleExpanded: (id: string) => void
   back: () => void
   next: () => void
-  jump: (index: number) => void
-  selectWindow: (key: string) => void
   submit: () => void
 }
 
-// What one question card draws from: the question, the wizard state and whether it is fading out after a press.
+// What one question card draws from: the question, the wizard state, whether it is fading out after a press, and
+// whether its Other field is open (then the card draws no hotkeys: typed text must not press a button).
 type CardContext = {
   question: Question
   wizard: Wizard
   isLeaving: boolean
+  isTyping: boolean
+  held: HeldButtons
 }
 
-// A tab names its question by the question's title; a question with no title is named by its text, cut short.
-const TAB_TITLE_MAX = 24
+// The title line names a question by its title; a question with no title is named by its text, cut short.
+const TITLE_MAX = 24
 
-export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: Lang): RenderElement {
+export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: Lang, held: HeldButtons): RenderElement {
   const { Box, Text } = ui
   const { screen } = view
-  return (
+  held.begin()
+  // The status lines come last: they change height as answers are delivered, and a Button drawn below a block that
+  // grows lost its presses on the desktop (the first click was dropped). Everything that changes size stays below the card.
+  const pane = (
     <Box flexDirection="column" gap={1}>
       <Box flexDirection="row" justifyContent="space-between">
-        <Text bold>{t(lang, 'pane.title')}</Text>
+        <Box flexDirection="row" gap={1}>
+          {renderLogo(ui, view.surface)}
+          <Text bold>{t(lang, 'pane.heading')}</Text>
+        </Box>
         <Text>{counterText(lang, view.questions)}</Text>
       </Box>
-      {view.lines.map(line => renderStatusLine(ui, actions, line))}
-      {view.windows.length > 1 && renderWindows(ui, lang, view, actions)}
-      {screen?.kind === 'question' && renderQuestion(ui, lang, view, actions, screen)}
-      {screen?.kind === 'review' && renderReview(ui, lang, view, actions, screen)}
+      {view.groups.length > 0 && renderTree(ui, lang, view)}
+      {screen !== undefined && renderQuestion(ui, lang, view, actions, screen, held)}
+      {view.lines.map(line => renderStatusLine(ui, actions, line, held))}
     </Box>
   )
+  held.end()
+  return pane
 }
 
 // One status line of the answers: pending, delivered or expired. Expired lines carry a ✕ that dismisses them.
-function renderStatusLine(ui: Ui, actions: PaneActions, line: StatusLine): RenderElement {
+function renderStatusLine(ui: Ui, actions: PaneActions, line: StatusLine, held: HeldButtons): RenderElement {
   const { Box, Text, Button } = ui
   return (
     <Box
@@ -88,98 +99,140 @@ function renderStatusLine(ui: Ui, actions: PaneActions, line: StatusLine): Rende
       paddingX={1}
     >
       <Text color={STATUS_COLORS.ink}>{line.text}</Text>
-      {line.dismissable && (
-        <Button key={`dismiss-${line.id}`} label="✕" plain onPress={() => actions.dismiss(line.id)} />
-      )}
-    </Box>
-  )
-}
-
-// One button per window, when there are two or more: the window on screen is the primary button.
-function renderWindows(ui: Ui, lang: Lang, view: PaneView, actions: PaneActions): RenderElement {
-  const { Box, Button, Text } = ui
-  return (
-    <Box flexDirection="column" gap={1}>
-      <Text>{t(lang, 'window.choose')}</Text>
-      <Box flexDirection="row" gap={1}>
-        {view.windows.map(group => (
-          <Button
-            key={`window-${group.key}`}
-            label={`${group.label || t(lang, 'status.target.session')} (${group.questions.length})`}
-            variant={group.key === view.active?.key ? 'primary' : 'secondary'}
-            onPress={() => actions.selectWindow(group.key)}
-          />
+      {line.dismissable &&
+        held.hold(`dismiss-${line.id}`, '✕', () => actions.dismiss(line.id), press => (
+          <Button key={`dismiss-${line.id}`} label="✕" plain onPress={press} />
         ))}
-      </Box>
     </Box>
   )
 }
 
-// The tab name of a question: its title, else its text cut to TAB_TITLE_MAX characters.
-function tabTitle(question: Question): string {
+// The name of a group: its project's name, or the words for "the session" when the project is unknown.
+function groupLabel(group: Group, lang: Lang): string {
+  return projectLabel(group.questions[0]?.project ?? '', lang) || t(lang, 'status.target.session')
+}
+
+// The tree of the open questions: every group in turn, one under the other, each with its sessions and their questions.
+// The group on screen is drawn in the accent color. A question's mark says where it stands: ● the one on screen, ✓ picked,
+// ○ not yet. Indentation is the Box's paddingLeft, not leading spaces, which a desktop may collapse.
+function renderTree(ui: Ui, lang: Lang, view: PaneView): RenderElement {
+  const { Box } = ui
+  return (
+    <Box key="tree" flexDirection="column" gap={1}>
+      {view.groups.map(group => renderGroup(ui, lang, view, group))}
+    </Box>
+  )
+}
+
+function renderGroup(ui: Ui, lang: Lang, view: PaneView, group: Group): RenderElement {
+  const { Box, Text } = ui
+  const label = groupLabel(group, lang)
+  const lastSession = group.sessions.length - 1
+  return (
+    <Box key={`group-${group.key}`} flexDirection="column">
+      {group.key === view.active?.key ? <Text bold color={ACCENT_COLOR}>{label}</Text> : <Text bold>{label}</Text>}
+      {group.sessions.map((questions, index) => renderSession(ui, lang, view, questions, index === lastSession))}
+    </Box>
+  )
+}
+
+// One session of the group: its row ("├ " or, for the last one, "└ "), then its questions under it.
+function renderSession(ui: Ui, lang: Lang, view: PaneView, questions: Question[], isFinal: boolean): RenderElement | false {
+  const { Box, Text } = ui
+  const [first] = questions
+  if (first === undefined) return false
+  return (
+    <Box key={`session-${first.id}`} flexDirection="column">
+      <Box paddingLeft={1}>
+        <Text>{`${isFinal ? '└' : '├'} ${sessionLabelOf(first, lang)}`}</Text>
+      </Box>
+      {questions.map(question => renderTreeQuestion(ui, view, question, isFinal))}
+    </Box>
+  )
+}
+
+// One question under its session: "│  " before the mark under a session that is not the last one, nothing under the last.
+// The indent is the Box's paddingLeft, so the mark sits in the same column under either session.
+function renderTreeQuestion(ui: Ui, view: PaneView, question: Question, isFinal: boolean): RenderElement {
+  const { Box, Text } = ui
+  const isOnScreen = view.screen?.question.id === question.id
+  const mark = isOnScreen ? '●' : view.wizard.picks[question.id] !== undefined ? '✓' : '○'
+  const label = `${isFinal ? '' : '│  '}${mark} ${questionLabel(question)}`
+  return (
+    <Box key={`tree-${question.id}`} paddingLeft={isFinal ? 4 : 1}>
+      {isOnScreen ? <Text bold color={ACCENT_COLOR}>{label}</Text> : <Text>{label}</Text>}
+    </Box>
+  )
+}
+
+// The title of a question for the card and the tree: its title, else its text cut to TITLE_MAX characters.
+function questionLabel(question: Question): string {
   const title = question.title.trim()
   if (title !== '') return title
   const text = question.question.trim()
-  return text.length > TAB_TITLE_MAX ? `${text.slice(0, TAB_TITLE_MAX - 1)}…` : text
+  return text.length > TITLE_MAX ? `${text.slice(0, TITLE_MAX - 1)}…` : text
 }
 
-// The one way into the review step, from the Submit tab and the Review button: it does nothing until every question has
-// a pick (canReview).
-function goToReview(actions: PaneActions, total: number, canReview: boolean): () => void {
-  return () => {
-    if (canReview) actions.jump(total)
+// An option answers to its digit: 1 to 9 for the first nine positions, none after.
+const digitOf = (position: number): string | undefined => (position <= 8 ? String(position + 1) : undefined)
+
+// A hotkey is drawn only while the card's Other field is shut.
+const hotkeyFor = (card: CardContext, key: string | undefined): string | undefined => (card.isTyping ? undefined : key)
+
+// One question on screen: the title in bold, the risk and age line, the question, the explanation box, the numbered
+// options with "Other…", a separator, and the Back / Next or Submit all row. One blank line sits under the nav row.
+function renderQuestion(
+  ui: Ui,
+  lang: Lang,
+  view: PaneView,
+  actions: PaneActions,
+  screen: Screen,
+  held: HeldButtons,
+): RenderElement {
+  const { Box, Text } = ui
+  const { question } = screen
+  const card: CardContext = {
+    question,
+    wizard: view.wizard,
+    isLeaving: view.leaving[question.id] !== undefined,
+    isTyping: view.wizard.other === question.id,
+    held,
   }
-}
-
-// The tabs row of a window of two or more questions: one tab per question, then Submit. The tab on screen is bold;
-// Submit is dim until every question has a pick. A window of one question has no tabs.
-function renderTabs(ui: Ui, lang: Lang, actions: PaneActions, group: WindowGroup, current: number, canReview: boolean): RenderElement | false {
-  const { Box, Button, Text } = ui
-  const total = group.questions.length
-  if (total < 2) return false
-  const submit = t(lang, 'tab.submit')
+  const { isLeaving } = card
+  const sections = sectionsOf(lang, question)
   return (
-    <Box key="tabs" flexDirection="row" gap={2}>
-      {group.questions.map((question, index) => {
-        const label = `${index + 1} ${tabTitle(question)}`
-        return (
-          <Button key={`tab-${question.id}`} label={label} plain onPress={() => actions.jump(index)}>
-            {index === current ? <Text bold>{label}</Text> : label}
-          </Button>
-        )
-      })}
-      <Button key="tab-submit" label={submit} plain dimColor={!canReview} onPress={goToReview(actions, total, canReview)}>
-        {current === total ? <Text bold dimColor={!canReview}>{submit}</Text> : submit}
-      </Button>
+    <Box key={`card-${question.id}`} flexDirection="column" gap={1} borderStyle="round" borderDimColor={isLeaving} paddingX={1} paddingBottom={1}>
+      <Text bold dimColor={isLeaving}>{questionLabel(question)}</Text>
+      <Text dimColor={isLeaving}>{`${riskLabel(lang, question.risk)} · ${ageLabel(lang, question.ts, view.now)}`}</Text>
+      <Text bold dimColor={isLeaving}>{question.question}</Text>
+      {sections.length > 0 && renderExplanation(ui, sections, isLeaving)}
+      <Box flexDirection="column" gap={2}>
+        {question.options.map((option, position) => renderOption(ui, lang, actions, card, option, position))}
+        {renderOther(ui, lang, actions, card)}
+      </Box>
+      {renderDivider(ui, view.surface)}
+      {renderNav(ui, lang, actions, card, screen)}
     </Box>
   )
 }
 
-// One question on screen: the tabs, the origin line, the risk and age line, the question, the JEV line, the numbered
-// options with "Other…", the explanations behind "More", and the Back / Next row.
-function renderQuestion(ui: Ui, lang: Lang, view: PaneView, actions: PaneActions, screen: QuestionScreen): RenderElement {
-  const { Box, Text } = ui
-  const { question } = screen
-  const card: CardContext = { question, wizard: view.wizard, isLeaving: view.leaving[question.id] !== undefined }
-  const { isLeaving } = card
-  const isExpanded = view.wizard.expanded[question.id] === true
-  const jev = jevLine(question.options)
+// The separator above the nav row: a 1px SVG rule on the desktop, a row of '─' on the terminal. It is drawn after the
+// options and the Other field, and before the nav row.
+function renderDivider(ui: Ui, surface: RenderSurface): RenderElement {
+  if (surface === 'desktop' && 'Svg' in ui) {
+    const { Svg } = ui
+    return <Svg key="divider" source={dividerSvg(DIVIDER_PX)} alt="divider" height={DIVIDER_HEIGHT} />
+  }
+  const { Text } = ui
+  return <Text key="divider" dimColor>{'─'.repeat(DIVIDER_COLUMNS)}</Text>
+}
+
+// The explanations of the question, in one box under its text: every section that the card used to hide behind More.
+function renderExplanation(ui: Ui, sections: Section[], isLeaving: boolean): RenderElement {
+  const { Box } = ui
   return (
-    <Box key={`card-${question.id}`} flexDirection="column" gap={1} borderStyle="round" borderDimColor={isLeaving} paddingX={1}>
-      {view.active !== undefined && renderTabs(ui, lang, actions, view.active, screen.index, screen.canReview)}
-      <Box flexDirection="column">
-        <Text bold color={ORIGIN_COLOR} dimColor={isLeaving}>{windowOf(question)}</Text>
-        <Text dimColor={isLeaving}>{`${riskLabel(lang, question.risk)} · ${ageLabel(lang, question.ts, view.now)}`}</Text>
-      </Box>
-      <Text bold dimColor={isLeaving}>{question.question}</Text>
-      {jev !== undefined && <Text dimColor={isLeaving}>{jev}</Text>}
-      <Box flexDirection="column" gap={1}>
-        {question.options.map((option, position) => renderOption(ui, lang, actions, card, option, position))}
-        {renderOther(ui, lang, actions, card)}
-      </Box>
-      {renderMore(ui, lang, actions, card, isExpanded)}
-      {isExpanded && sectionsOf(lang, question).map(section => renderSection(ui, section, isLeaving))}
-      {screen.total > 1 && renderNav(ui, lang, actions, card, screen)}
+    <Box key="explanation" flexDirection="column" gap={1} backgroundColor={EXPLAIN_COLORS.bg} paddingX={1} paddingY={1}>
+      {sections.map(section => renderSection(ui, section, isLeaving))}
     </Box>
   )
 }
@@ -195,25 +248,31 @@ function renderOption(
   position: number,
 ): RenderElement {
   const { Box, Button, Text } = ui
-  const { question, isLeaving, wizard } = card
+  const { question, isLeaving, wizard, held } = card
   const isPicked = wizard.picks[question.id]?.key === option.key
   const isRecommended = option.key === question.recommended
   const text = `${position + 1}. ${option.label}${isRecommended ? ` (${t(lang, 'option.recommended')})` : ''}`
   const isBold = isRecommended && !isPicked
+  const key = `opt-${question.id}-${option.key}`
+  const hotkey = hotkeyFor(card, digitOf(position))
+  const onPress = () => {
+    if (isLeaving) return
+    actions.pick(question.id, option.key)
+  }
   return (
     <Box key={`optrow-${question.id}-${option.key}`} flexDirection="column">
-      <Button
-        key={`opt-${question.id}-${option.key}`}
-        label={text}
-        variant={isPicked ? 'primary' : 'secondary'}
-        dimColor={isLeaving}
-        onPress={() => {
-          if (isLeaving) return
-          actions.pick(question.id, option.key)
-        }}
-      >
-        {isBold ? <Text bold dimColor={isLeaving}>{text}</Text> : text}
-      </Button>
+      {held.hold(key, [text, isPicked, isBold, isLeaving, hotkey], onPress, press => (
+        <Button
+          key={key}
+          label={text}
+          variant={isPicked ? 'primary' : 'secondary'}
+          dimColor={isLeaving}
+          hotkey={hotkey}
+          onPress={press}
+        >
+          {isBold ? <Text bold dimColor={isLeaving}>{text}</Text> : text}
+        </Button>
+      ))}
       {option.tradeoff !== undefined && <Text dimColor={isLeaving}>{option.tradeoff}</Text>}
     </Box>
   )
@@ -224,27 +283,28 @@ function renderOption(
 function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext): RenderElement | false {
   if (!('Input' in ui)) return false
   const { Box, Button, Input, Text } = ui
-  const { question, isLeaving, wizard } = card
+  const { question, isLeaving, wizard, held } = card
   const isOpen = wizard.other === question.id
   // Once Other… is submitted the pick holds its text: the button stays primary and the text shows under it.
   const pick = wizard.picks[question.id]
   const chosenText = pick !== undefined && pick.key === OTHER_KEY ? (pick.text ?? '') : undefined
+  const key = `other-${question.id}`
+  const label = `${question.options.length + 1}. ${t(lang, 'option.other')}`
+  const variant = chosenText !== undefined ? 'primary' : 'secondary'
+  const hotkey = hotkeyFor(card, digitOf(question.options.length))
+  const onPress = () => {
+    if (isLeaving) return
+    actions.toggleOther(question.id)
+  }
   return (
     <Box key={`other-row-${question.id}`} flexDirection="column">
-      <Button
-        key={`other-${question.id}`}
-        label={`${question.options.length + 1}. ${t(lang, 'option.other')}`}
-        variant={chosenText !== undefined ? 'primary' : 'secondary'}
-        dimColor={isLeaving}
-        onPress={() => {
-          if (isLeaving) return
-          actions.toggleOther(question.id)
-        }}
-      />
+      {held.hold(key, [label, variant, isLeaving, hotkey], onPress, press => (
+        <Button key={key} label={label} variant={variant} dimColor={isLeaving} hotkey={hotkey} onPress={press} />
+      ))}
       {chosenText !== undefined && <Text dimColor={isLeaving}>{chosenText}</Text>}
       {isOpen && !isLeaving && (
         <Input
-          key={`other-input-${question.id}`}
+          key={`${OTHER_INPUT_PREFIX}${question.id}`}
           label={t(lang, 'input.label')}
           placeholder={t(lang, 'input.placeholder')}
           submitLabel={t(lang, 'input.send')}
@@ -256,105 +316,62 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
   )
 }
 
-// The toggle that shows or hides the explanations of the card.
-function renderMore(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, isExpanded: boolean): RenderElement {
-  const { Button } = ui
-  const { question, isLeaving } = card
+// Back, and forward: Next on every question but the last; on the last one, Submit all, which writes every answer of the
+// group and needs every question picked. A dim button does nothing when pressed.
+function renderNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: Screen): RenderElement {
+  const { Box, Button } = ui
+  const { question, isLeaving, held } = card
+  const isBackOff = !screen.canBack || isLeaving
+  const label = t(lang, 'nav.back')
+  const hotkey = hotkeyFor(card, 'b')
+  const onPress = () => {
+    if (isBackOff) return
+    actions.back()
+  }
   return (
-    <Button
-      key={`more-${question.id}`}
-      label={t(lang, isExpanded ? 'nav.less' : 'nav.more')}
-      variant="secondary"
-      dimColor={isLeaving}
-      onPress={() => {
-        if (isLeaving) return
-        actions.toggleExpanded(question.id)
-      }}
-    />
+    <Box key={`nav-${question.id}`} flexDirection="row" justifyContent="space-between">
+      {held.hold('nav-back', [label, isBackOff, hotkey], onPress, press => (
+        <Button key="nav-back" label={label} variant="secondary" dimColor={isBackOff} hotkey={hotkey} onPress={press} />
+      ))}
+      {screen.canNext ? renderNext(ui, lang, actions, card, screen) : renderSubmitAll(ui, lang, actions, card, screen)}
+    </Box>
   )
 }
 
-// Back, and forward: Next on every question but the last, Review on the last one (to the review step, which needs
-// every question picked). A dim button does nothing when pressed.
-function renderNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: QuestionScreen): RenderElement {
-  const { Box, Button } = ui
-  const isLast = screen.index === screen.total - 1
-  const forward = isLast
-    ? { label: t(lang, 'nav.review'), canGo: screen.canReview, go: goToReview(actions, screen.total, screen.canReview) }
-    : { label: t(lang, 'nav.next'), canGo: screen.canNext, go: () => actions.next() }
-  const isBackOff = !screen.canBack || card.isLeaving
-  const isForwardOff = !forward.canGo || card.isLeaving
-  return (
-    <Box key={`nav-${card.question.id}`} flexDirection="row" justifyContent="space-between">
-      <Button
-        key="nav-back"
-        label={t(lang, 'nav.back')}
-        variant="secondary"
-        dimColor={isBackOff}
-        onPress={() => {
-          if (isBackOff) return
-          actions.back()
-        }}
-      />
-      <Button
-        key="nav-next"
-        label={forward.label}
-        variant={forward.canGo ? 'primary' : 'secondary'}
-        dimColor={isForwardOff}
-        onPress={() => {
-          if (isForwardOff) return
-          forward.go()
-        }}
-      />
-    </Box>
-  )
+function renderNext(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: Screen): RenderElement {
+  const { Button } = ui
+  const isOff = !screen.canNext || card.isLeaving
+  const label = t(lang, 'nav.next')
+  const hotkey = hotkeyFor(card, 'n')
+  const onPress = () => {
+    if (isOff) return
+    actions.next()
+  }
+  return card.held.hold('nav-next', [label, isOff, hotkey], onPress, press => (
+    <Button key="nav-next" label={label} variant={isOff ? 'secondary' : 'primary'} dimColor={isOff} hotkey={hotkey} onPress={press} />
+  ))
+}
+
+function renderSubmitAll(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: Screen): RenderElement {
+  const { Button } = ui
+  const isOff = !screen.canSubmit || card.isLeaving
+  const label = t(lang, 'review.submit', { n: screen.total })
+  const hotkey = hotkeyFor(card, 's')
+  const onPress = () => {
+    if (isOff) return
+    actions.submit()
+  }
+  return card.held.hold('submit-all', [label, isOff, hotkey], onPress, press => (
+    <Button key="submit-all" label={label} variant={isOff ? 'secondary' : 'primary'} dimColor={isOff} hotkey={hotkey} onPress={press} />
+  ))
 }
 
 function renderSection(ui: Ui, section: Section, isLeaving: boolean): RenderElement {
   const { Box, Text } = ui
   return (
     <Box key={`section-${section.heading}`} flexDirection="column">
-      <Text bold dimColor={isLeaving}>{section.heading}</Text>
-      <Text dimColor={isLeaving}>{section.body}</Text>
+      <Text bold color={EXPLAIN_COLORS.ink} dimColor={isLeaving}>{section.heading}</Text>
+      <Text color={EXPLAIN_COLORS.ink} dimColor={isLeaving}>{section.body}</Text>
     </Box>
   )
-}
-
-// The review: the tabs (Submit on), one row per question (a click jumps to its step), then Back and Submit all.
-function renderReview(ui: Ui, lang: Lang, view: PaneView, actions: PaneActions, screen: ReviewScreen): RenderElement {
-  const { Box, Button, Text } = ui
-  return (
-    <Box key="review" flexDirection="column" gap={1}>
-      {view.active !== undefined && renderTabs(ui, lang, actions, view.active, screen.rows.length, screen.canSubmit)}
-      <Text bold>{t(lang, 'review.title')}</Text>
-      {screen.rows.map((row, index) => (
-        <Button
-          key={`review-row-${row.question.id}`}
-          label={`${index + 1}. ${row.question.question} → ${chosenText(lang, row.question, row.pick)}`}
-          variant="secondary"
-          onPress={() => actions.jump(index)}
-        />
-      ))}
-      <Box flexDirection="row" justifyContent="space-between">
-        <Button key="nav-back" label={t(lang, 'nav.back')} variant="secondary" onPress={() => actions.back()} />
-        <Button
-          key="submit-all"
-          label={t(lang, 'review.submit', { n: screen.rows.length })}
-          variant={screen.canSubmit ? 'primary' : 'secondary'}
-          dimColor={!screen.canSubmit}
-          onPress={() => {
-            if (!screen.canSubmit) return
-            actions.submit()
-          }}
-        />
-      </Box>
-    </Box>
-  )
-}
-
-// What a review row says the question got: the option's label, the Other text, or nothing yet.
-function chosenText(lang: Lang, question: Question, pick: Pick | undefined): string {
-  if (pick === undefined) return t(lang, 'review.unanswered')
-  if (pick.key === OTHER_KEY) return t(lang, 'review.other', { text: pick.text ?? '' })
-  return question.options.find(option => option.key === pick.key)?.label ?? pick.key
 }

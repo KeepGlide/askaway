@@ -80,6 +80,8 @@ export function parseQuestion(raw: unknown, id: string): Question | undefined {
     how: optionalText(raw.how),
     gains: optionalText(raw.gains),
     losses: optionalText(raw.losses),
+    urgency: optionalText(raw.urgency),
+    undo: optionalText(raw.undo),
     project: typeof raw.project === 'string' ? raw.project : '',
     session: typeof raw.session === 'string' ? raw.session : null,
     session_title: optionalText(raw.session_title),
@@ -186,9 +188,40 @@ export function groupBySession(board: Board, now: number): SessionPrompt[] {
     .filter(group => group.items.length > 0)
 }
 
-// The window a question came from: "<project> · <session title>", each part only when known.
-export function windowOf(question: Pick<Question, 'project' | 'session_title'>): string {
-  return [basename(question.project), question.session_title].filter(part => part !== undefined && part !== '').join(' · ')
+// The minor words of a title, per language: after the first word they stay as typed.
+const MINOR_WORDS: Readonly<Record<Lang, ReadonlySet<string>>> = {
+  en: new Set('a an and as at but by for in of on or the to via with'.split(' ')),
+  pt: new Set('a as o os e de da das do dos em na nas no nos para por com ou um uma'.split(' ')),
+}
+
+// Title case for a name: each word's first letter up, except a minor word after the first and a word that already
+// has a capital (JEV, iOS), which stay as typed. Nothing is ever lowercased.
+export function titleCase(text: string, lang: Lang): string {
+  const minor = MINOR_WORDS[lang]
+  return text
+    .trim()
+    .split(/\s+/)
+    .map((word, index) => {
+      if (index > 0 && minor.has(word.toLowerCase())) return word
+      return /[A-Z]/.test(word) ? word : `${word.charAt(0).toUpperCase()}${word.slice(1)}`
+    })
+    .join(' ')
+}
+
+// The name of a project: its folder name, title-cased from its slug ("my-sample_project" becomes "My Sample Project").
+export function projectLabel(project: string, lang: Lang): string {
+  return titleCase(basename(project).replace(/[-_]+/g, ' '), lang)
+}
+
+// The name of a question's session: its title, title-cased, else the words for "the session".
+export function sessionLabelOf(question: Pick<Question, 'session_title'>, lang: Lang): string {
+  return question.session_title === undefined ? t(lang, 'status.target.session') : titleCase(question.session_title, lang)
+}
+
+// The window a question came from, as the status lines name it: "<project> · <session title>", each part only when known.
+export function windowOf(question: Pick<Question, 'project' | 'session_title'>, lang: Lang): string {
+  const session = question.session_title === undefined ? undefined : titleCase(question.session_title, lang)
+  return [projectLabel(question.project, lang), session].filter(part => part !== undefined && part !== '').join(' · ')
 }
 
 function basename(project: string): string {
@@ -199,7 +232,7 @@ function basename(project: string): string {
 // The status line of one answer: pending until its delivery marker appears, then delivered, or expired.
 function statusOf(lang: Lang, answer: Answer, question: Question | undefined, delivery: Delivery | undefined): StatusLine {
   const { id, key } = answer
-  const target = (question ? windowOf(question) : '') || t(lang, 'status.target.session')
+  const target = (question ? windowOf(question, lang) : '') || t(lang, 'status.target.session')
   if (delivery === undefined) {
     return { id, text: t(lang, 'status.pending', { key, target }), dismissable: false }
   }
@@ -232,13 +265,13 @@ export function statusLines(lang: Lang, board: Board, context: StatusContext): S
   return lines
 }
 
-// The header counter: the open questions and the distinct windows they come from.
+// The header counter: the open questions and the distinct groups (projects) they come from.
 export function counterText(lang: Lang, questions: readonly Question[]): string {
   if (questions.length === 0) return t(lang, 'counter.none')
-  const windows = new Set(questions.map(question => question.session ?? question.project)).size
+  const groups = new Set(questions.map(question => question.project)).size
   return t(lang, 'counter.line', {
     pending: plural(lang, questions.length, 'counter.pending.one', 'counter.pending.many'),
-    windows: plural(lang, windows, 'count.window.one', 'count.window.many'),
+    groups: plural(lang, groups, 'count.group.one', 'count.group.many'),
   })
 }
 
@@ -254,13 +287,6 @@ export function ageLabel(lang: Lang, ts: number, now: number): string {
   const hours = Math.round(minutes / 60)
   if (hours < 48) return t(lang, 'age.hours', { n: hours })
   return t(lang, 'age.days', { n: Math.round(hours / 24) })
-}
-
-// The JEV line: each option's fit in order. Absent when no option has a fit; a null fit reads "-".
-export function jevLine(options: readonly QuestionOption[]): string | undefined {
-  if (!options.some(option => option.fit !== null)) return undefined
-  const fits = options.map(option => `${option.key} ${option.fit === null ? '-' : `${option.fit}%`}`)
-  return `🔷 ${fits.join(' · ')}`
 }
 
 // The explanation sections, in the approved order; each one only when its field is set.
@@ -281,6 +307,8 @@ export function sectionsOf(lang: Lang, question: Question): Section[] {
   if (benefits.length > 0) {
     add(benefits.map(part => part.heading).join(' · '), benefits.map(part => part.body).join(' '))
   }
+  add(t(lang, 'section.urgency'), question.urgency)
+  add(t(lang, 'section.undo'), question.undo)
   return sections
 }
 
@@ -291,3 +319,6 @@ export function listText(lang: Lang, questions: readonly Question[], isAway: boo
   const rows = questions.map(question => t(lang, 'list.row', { id: question.id, title: question.title, rec: question.recommended }))
   return [`${head}${away}.`, ...rows].join('\n')
 }
+
+// The key prefix of the Other field.
+export const OTHER_INPUT_PREFIX = 'other-input-'

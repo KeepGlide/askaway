@@ -2,10 +2,11 @@
 // the toast and the /askaway command. $ stays in this file: the engine follows $ only inside the module that holds
 // the hook, so the calls on $ live here. Pure rules live in model.ts, the wizard's in wizard.ts, the text in i18n.ts.
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, RenderSurface } from 'claude-code'
 
 import type { Answer, Board, Delivery, PromptMarker, Question } from '../types'
 import { renderBand } from './band'
+import { heldButtons, type HeldButtons } from './held'
 import { detectLang, resolveLang, t, type Lang } from './i18n'
 import { renderPane, type PaneActions, type PaneView } from './pane'
 import {
@@ -26,9 +27,10 @@ import {
   withLocalAnswers,
 } from './model'
 import * as flow from './wizard'
-import type { Pick, Wizard, WindowGroup } from './wizard'
+import type { Group, Pick, Wizard } from './wizard'
 
 const PANE = 'askaway'
+const PLUGIN = 'askaway'
 const TITLE = 'Askaway'
 const POLL_MS = 5000
 // An answered card stays listed, dimmed, for this long after the press; then it leaves and its status line shows.
@@ -55,7 +57,7 @@ const deliveredAt = atom({ plugin: 'askaway', key: 'deliveredAt' } as const, {} 
 const leaving = atom({ plugin: 'askaway', key: 'leaving' } as const, {} as Record<string, number>)
 // Whether this session's main loop is inside a turn: an answer is handed to the prompt only while it is idle.
 const turn = atom({ plugin: 'askaway', key: 'turn' } as const, { isBusy: false })
-// The language in use, and the question wizard (window, step, picks, Other…, explanations).
+// The language in use, and the question wizard (group, step, picks, Other…).
 const langAtom = atom({ plugin: 'askaway', key: 'lang' } as const, DEFAULT_LANG)
 const wizardAtom = atom({ plugin: 'askaway', key: 'wizard' } as const, flow.EMPTY_WIZARD)
 
@@ -63,11 +65,22 @@ const wizardAtom = atom({ plugin: 'askaway', key: 'wizard' } as const, flow.EMPT
 const questionCache = new Map<string, Question>()
 const answerCache = new Map<string, Answer>()
 const deliveryCache = new Map<string, Delivery>()
-// Question ids whose answer a press is writing now, answer ids being handed to the prompt now, and window keys whose
+// Question ids whose answer a press is writing now, answer ids being handed to the prompt now, and group keys whose
 // submit-all is in flight. Each is checked before the first await, so a second press or an overlapping poll does nothing.
 const pressing = new Set<string>()
 const handing = new Set<string>()
 const submitting = new Set<string>()
+// The Buttons each site (a pane or the band, on one surface) drew last, so a redraw keeps their press handles (held.ts).
+const heldTables = new Map<string, HeldButtons>()
+
+function heldFor(surface: RenderSurface, requestId: string): HeldButtons {
+  const key = `${surface}:${requestId}`
+  const known = heldTables.get(key)
+  if (known !== undefined) return known
+  const table = heldButtons()
+  heldTables.set(key, table)
+  return table
+}
 
 // A failed poll or action is logged, never thrown into the timer or a press handler.
 function logFailure($: EngineInterface, error: unknown): void {
@@ -184,30 +197,44 @@ async function mergeBoard($: EngineInterface, next: Board): Promise<void> {
   $.ui.invalidate('ui.render')
 }
 
-// The pane draws from the clock in two ways: the age labels (to the minute) and the delivery lines (their marks are
-// seconds apart). The tick is written only when one of them would read differently at `now`; a tick that changes no
-// drawn text would redraw the pane on every poll.
+// The pane draws from the clock in two ways: the age label of the question on the card (to the minute) and the delivery
+// lines (their marks are seconds apart). The tick is written only when one of them would read differently at `now`; a
+// tick that changes no drawn text would redraw the pane on every poll.
 async function tickClock($: EngineInterface, now: number, shownAt: Record<string, number>): Promise<void> {
   const last = await read($, clockTick)
   const lang = await read($, langAtom)
   const current = await read($, board)
+  const open = openQuestions(current, await read($, leaving))
+  const wizard = prunedWizard(await read($, wizardAtom), open)
+  const group = flow.activeGroup(flow.groupsOf(open), wizard)
+  // Only the question on the card draws an age label: an off-screen question turning its minute changes no drawn text.
+  const onCard = group === undefined ? undefined : flow.screenOf(group, wizard)?.question
   const drawnAt = (at: number): string =>
     JSON.stringify([
-      current.questions.map(question => ageLabel(lang, question.ts, at)),
+      onCard === undefined ? null : ageLabel(lang, onCard.ts, at),
       statusLines(lang, current, { cleared: [], shownAt, now: at, leaving: {} }).map(line => line.text),
     ])
   if (drawnAt(last) !== drawnAt(now)) await update($, clockTick, () => now)
 }
 
-// The wizard as the open questions leave it: the picks, Other… and explanations of answered questions dropped, the
-// step clamped to the window on screen, and that window the first one still open when its own is gone.
+// The wizard as the open questions leave it: the picks and Other… of answered questions dropped, and the step on the
+// question on screen. That question stays on the card while it is still open in the group on screen, even when a
+// question before it arrives or leaves; otherwise the step clamps, and a group that changes on screen starts at its
+// first question.
 function prunedWizard(prev: Wizard, open: readonly Question[]): Wizard {
-  const groups = flow.windowsOf([...open])
-  const active = flow.activeWindow(groups, prev)
-  const pruned = flow.pruneWizard(prev, open.map(question => question.id), active?.questions.length ?? 0)
-  const kept: Wizard = { ...pruned, windowKey: active?.key ?? null }
-  // A dropped question can leave the step on the review with a gap: the step moves to the first unpicked question.
-  return active === undefined ? kept : flow.settle(kept, active)
+  const groups = flow.groupsOf([...open])
+  const active = flow.activeGroup(groups, prev)
+  const switched = prev.groupKey !== null && active !== undefined && active.key !== prev.groupKey
+  const from: Wizard = { ...prev, step: anchorStep(prev, active, switched) }
+  const pruned = flow.pruneWizard(from, open.map(question => question.id), active?.questions.length ?? 0)
+  return { ...pruned, groupKey: active?.key ?? null, questionId: active?.questions[pruned.step]?.id ?? null }
+}
+
+// The step before the clamp: the index of the question on screen when it is still in the group on screen.
+function anchorStep(prev: Wizard, active: Group | undefined, switched: boolean): number {
+  if (switched) return 0
+  const anchor = active?.questions.findIndex(question => question.id === prev.questionId) ?? -1
+  return anchor >= 0 ? anchor : prev.step
 }
 
 // One poll: read the folder, merge it into the board, redraw only when something changed, then announce new questions.
@@ -230,7 +257,12 @@ async function pollInbox($: EngineInterface, home: string, ownSession?: string):
 async function pruneWizardState($: EngineInterface): Promise<void> {
   const open = openQuestions(await read($, board), await read($, leaving))
   const prev = await read($, wizardAtom)
-  if (JSON.stringify(prunedWizard(prev, open)) === JSON.stringify(prev)) return
+  const next = prunedWizard(prev, open)
+  const same = (a: Wizard, b: Wizard): boolean => JSON.stringify(a) === JSON.stringify(b)
+  // With nothing open the pane draws no card, so a groupKey or questionId that only turns null changes nothing drawn; the
+  // write would still redraw the pane and retire the Button handles on screen. A group that opens later still starts at step 0.
+  const drawnNothing = open.length === 0 ? { ...next, groupKey: prev.groupKey, questionId: prev.questionId } : next
+  if (same(drawnNothing, prev)) return
   await update($, wizardAtom, current => prunedWizard(current, open))
 }
 
@@ -350,30 +382,37 @@ async function withFolder<T>($: EngineInterface, job: (folder: string) => Promis
   return folder === undefined ? undefined : job(folder)
 }
 
-// What the handlers need, read fresh at each press: the open questions, the window on screen and the pruned wizard.
-type Snapshot = { wizard: Wizard; groups: WindowGroup[]; group: WindowGroup | undefined; leaving: Record<string, number> }
+// What the handlers need, read fresh at each press: the open questions, the group on screen and the pruned wizard.
+type Snapshot = {
+  open: Question[]
+  wizard: Wizard
+  groups: Group[]
+  group: Group | undefined
+  leaving: Record<string, number>
+}
 
 async function snapshot($: EngineInterface): Promise<Snapshot> {
   const fading = await read($, leaving)
   const open = openQuestions(await read($, board), fading)
   const wizard = prunedWizard(await read($, wizardAtom), open)
-  const groups = flow.windowsOf(open)
-  return { wizard, groups, group: flow.activeWindow(groups, wizard), leaving: fading }
+  const groups = flow.groupsOf(open)
+  return { open, wizard, groups, group: flow.activeGroup(groups, wizard), leaving: fading }
 }
 
-function clearPicks(prev: Wizard, ids: readonly string[]): Wizard {
+function clearPicks(prev: Wizard, ids: readonly string[], first: string | null): Wizard {
   const drop = new Set(ids)
   return {
     ...prev,
     step: 0,
+    questionId: first,
     picks: Object.fromEntries(Object.entries(prev.picks).filter(([id]) => !drop.has(id))),
     other: prev.other !== null && drop.has(prev.other) ? null : prev.other,
   }
 }
 
-// Submit all: each question of the window gets its answer through the answer path, then its picks are cleared and the
+// Submit all: each question of the group gets its answer through the answer path, then its picks are cleared and the
 // step goes back to the first question. Nothing is written unless every question has a pick.
-async function submitWindow($: EngineInterface, group: WindowGroup, current: Wizard): Promise<void> {
+async function submitGroup($: EngineInterface, group: Group, current: Wizard): Promise<void> {
   const items = flow.submittable(group, current)
   const folder = await folderOf($)
   if (items === undefined || folder === undefined || submitting.has(group.key)) return
@@ -381,7 +420,7 @@ async function submitWindow($: EngineInterface, group: WindowGroup, current: Wiz
   try {
     for (const { id, pick } of items) await answerEntry($, folder, id, pick.key, pick.text)
     const ids = items.map(item => item.id)
-    await update($, wizardAtom, prev => clearPicks(prev, ids))
+    await update($, wizardAtom, prev => clearPicks(prev, ids, group.questions[0]?.id ?? null))
   } finally {
     submitting.delete(group.key)
   }
@@ -389,25 +428,26 @@ async function submitWindow($: EngineInterface, group: WindowGroup, current: Wiz
 
 async function submitCurrent($: EngineInterface): Promise<void> {
   const { group, wizard } = await snapshot($)
-  if (group !== undefined) await submitWindow($, group, wizard)
+  if (group !== undefined) await submitGroup($, group, wizard)
 }
 
-// Records a pick for one question. A card that is fading takes nothing; a window of one question submits at once,
-// otherwise the wizard moves to the next step.
+// Records a pick for one question and moves the wizard on. A card that is fading takes nothing. Nothing is submitted
+// here: the last question's Submit all is the only submit path.
 async function pickOption($: EngineInterface, id: string, choice: Pick): Promise<void> {
-  const { wizard, group, leaving: fading } = await snapshot($)
+  const { open, group, leaving: fading } = await snapshot($)
   if (group === undefined || fading[id] !== undefined || !group.questions.some(question => question.id === id)) return
-  const chosen = flow.choose(wizard, group, id, choice)
-  const picked: Wizard = { ...chosen.wizard, other: chosen.wizard.other === id ? null : chosen.wizard.other }
-  if (chosen.submit) return submitWindow($, group, picked)
-  await update($, wizardAtom, () => picked)
+  await update($, wizardAtom, prev => {
+    const chosen = flow.choose(prunedWizard(prev, open), group, id, choice)
+    return { ...chosen, other: chosen.other === id ? null : chosen.other }
+  })
 }
 
-// Moves the wizard with the window on screen; a move that needs the window goes through here.
-async function moveWizard($: EngineInterface, move: (current: Wizard, group: WindowGroup) => Wizard): Promise<void> {
-  const { group } = await snapshot($)
+// Moves the wizard with the group on screen; a move that needs the group goes through here. The move starts from the
+// wizard as the pane drew it (pruned now), not from the stored one, which the next poll may still have to re-anchor.
+async function moveWizard($: EngineInterface, move: (current: Wizard, group: Group) => Wizard): Promise<void> {
+  const { open, group } = await snapshot($)
   if (group === undefined) return
-  await update($, wizardAtom, prev => move(prev, group))
+  await update($, wizardAtom, prev => move(prunedWizard(prev, open), group))
 }
 
 // Opens or closes the "Other…" field of a question. The draft is typed into the field itself, never written here.
@@ -447,15 +487,8 @@ const actionsFor = ($: EngineInterface): PaneActions => ({
   pick: (id, key) => report($, pickOption($, id, { key })),
   toggleOther: id => report($, toggleOther($, id)),
   submitOther: (id, text) => report($, submitOther($, id, text)),
-  toggleExpanded: id => report($, moveWizard($, current => flow.toggleExpanded(current, id))),
-  back: () => report($, moveWizard($, current => flow.back(current))),
+  back: () => report($, moveWizard($, (current, group) => flow.back(current, group))),
   next: () => report($, moveWizard($, (current, group) => flow.next(current, group))),
-  jump: index => report($, moveWizard($, (current, group) => flow.jump(current, group, index))),
-  selectWindow: key =>
-    report(
-      $,
-      moveWizard($, (current, group) => (group.key === key ? current : flow.selectWindow(current, key))),
-    ),
   submit: () => report($, submitCurrent($)),
 })
 
@@ -520,7 +553,9 @@ export const register: Register = on => {
     const fading = await read($, leaving)
     const open = openQuestions(current, fading)
     const wizard = prunedWizard(await read($, wizardAtom), open)
-    const windows = flow.windowsOf(open)
+    const groups = flow.groupsOf(open)
+    const active = flow.activeGroup(groups, wizard)
+    const screen = active === undefined ? undefined : flow.screenOf(active, wizard)
     const view: PaneView = {
       questions: open,
       lines: statusLines(lang, current, {
@@ -531,13 +566,13 @@ export const register: Register = on => {
       }),
       now,
       leaving: fading,
-      windows,
-      active: flow.activeWindow(windows, wizard),
+      groups,
+      active,
       wizard,
-      screen: undefined,
+      screen,
+      surface: e.surface,
     }
-    const screen = view.active === undefined ? undefined : flow.screenOf(view.active, wizard)
-    return renderPane($.ui.resolve(e), { ...view, screen }, actionsFor($), lang)
+    return renderPane($.ui.resolve(e), view, actionsFor($), lang, heldFor(e.surface, e.requestId))
   })
 
   // The band row above the prompt: drawn only while a question is open and no survey is up.
@@ -547,8 +582,9 @@ export const register: Register = on => {
     const lang = await read($, langAtom)
     return renderBand(
       $.ui.resolve(e),
-      { lang, questions: open.length, windows: flow.windowsOf(open).length },
+      { lang, questions: open.length, groups: flow.groupsOf(open).length, surface: e.surface },
       () => report($, openPane($)),
+      heldFor(e.surface, e.requestId),
     )
   })
 }
