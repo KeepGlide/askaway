@@ -446,6 +446,30 @@ test('the tree names the group by its project, each session by its title in titl
   await ui.unmount()
 })
 
+test('the card draws the risk and age on the title row, and two blank lines before the options', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    const nodes = nodesOf(await ui.drawn())
+    const textOf = (node: Record<string, unknown>): string =>
+      (Array.isArray(node.children) ? node.children : []).map(child => (typeof child === 'string' ? child : '')).join('')
+    const childTexts = (node: Record<string, unknown>): string[] =>
+      (Array.isArray(node.children) ? node.children : [])
+        .filter((child): child is Record<string, unknown> => typeof child === 'object' && child !== null && (child as Record<string, unknown>).type === 'Text')
+        .map(textOf)
+    const titleRow = nodes.find(node => node.type === 'Box' && childTexts(node)[0] === 'Title q-l1-aaaaaa')
+    expect((titleRow?.props as Record<string, unknown> | undefined)?.flexDirection).toBe('row')
+    expect(childTexts(titleRow ?? {})[1]?.startsWith(riskLabel('pt', 'low'))).toBe(true)
+    const optionList = nodes.find(
+      node => node.type === 'Box' && nodesOf(node).some(inner => keyOfNode(inner) === 'opt-q-l1-aaaaaa-A') && nodesOf(node).some(inner => keyOfNode(inner) === 'opt-q-l1-aaaaaa-B') && (node.props as Record<string, unknown> | undefined)?.gap === 2,
+    )
+    expect((optionList?.props as Record<string, unknown> | undefined)?.marginTop).toBe(1)
+    await ui.unmount()
+  }
+})
+
 test('a single-question window: Submit all is dim until its pick, then primary, and writes the answer', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   const { writes, clock } = stubHost(on, files)

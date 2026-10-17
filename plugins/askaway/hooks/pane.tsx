@@ -179,8 +179,9 @@ const digitOf = (position: number): string | undefined => (position <= 8 ? Strin
 // A hotkey is drawn only while the card's Other field is shut.
 const hotkeyFor = (card: CardContext, key: string | undefined): string | undefined => (card.isTyping ? undefined : key)
 
-// One question on screen: the title in bold, the risk and age line, the question, the explanation box, the numbered
-// options with "Other…", a separator, and the Back / Next or Submit all row. One blank line sits under the nav row.
+// One question on screen: the title in bold with the risk and age beside it, the question, the explanation box, two blank
+// lines, the numbered options with "Other…", a separator, and the Back / Next or Submit all row. One blank line sits under
+// the nav row.
 function renderQuestion(
   ui: Ui,
   lang: Lang,
@@ -202,11 +203,13 @@ function renderQuestion(
   const sections = sectionsOf(lang, question)
   return (
     <Box key={`card-${question.id}`} flexDirection="column" gap={1} borderStyle="round" borderDimColor={isLeaving} paddingX={1} paddingBottom={1}>
-      <Text bold dimColor={isLeaving}>{questionLabel(question)}</Text>
-      <Text dimColor={isLeaving}>{`${riskLabel(lang, question.risk)} · ${ageLabel(lang, question.ts, view.now)}`}</Text>
+      <Box flexDirection="row" flexWrap="wrap" gap={2}>
+        <Text bold dimColor={isLeaving}>{questionLabel(question)}</Text>
+        <Text dimColor>{`${riskLabel(lang, question.risk)} · ${ageLabel(lang, question.ts, view.now)}`}</Text>
+      </Box>
       <Text bold dimColor={isLeaving}>{question.question}</Text>
       {sections.length > 0 && renderExplanation(ui, sections, isLeaving)}
-      <Box flexDirection="column" gap={2}>
+      <Box flexDirection="column" gap={2} marginTop={1}>
         {question.options.map((option, position) => renderOption(ui, lang, actions, card, option, position))}
         {renderOther(ui, lang, actions, card)}
       </Box>
