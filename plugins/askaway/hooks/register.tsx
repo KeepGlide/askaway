@@ -180,6 +180,8 @@ async function mergeBoard($: EngineInterface, next: Board): Promise<void> {
   const merged = withLocalAnswers(next, prev)
   if (sameBoard(prev, merged)) return
   await update($, board, () => merged)
+  // The band passes (`next(e)`) while nothing is open, so it may hold no subscription: ask for the draw.
+  $.ui.invalidate('ui.render')
 }
 
 // The pane draws from the clock in two ways: the age labels (to the minute) and the delivery lines (their marks are
@@ -475,6 +477,8 @@ export const register: Register = on => {
       // The first poll is awaited, so the first prompt and the first draw already see the folder. Only the interval
       // polls hand answers to the prompt, and they need this session's id.
       await pollInbox($, folder).catch((error: unknown) => logFailure($, error))
+      // A hot reload keeps the board, so the first poll writes nothing: the band and the pane are drawn on request.
+      $.ui.invalidate('ui.render')
       const ownSession = await $.session.id().catch(() => undefined)
       poller = $.clock.every(POLL_MS, () => report($, pollInbox($, folder, ownSession)))
     }
