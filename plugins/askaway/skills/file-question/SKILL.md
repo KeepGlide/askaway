@@ -20,6 +20,11 @@ later in the Askaway panel, and the answer comes back into your session.
   or the run is unattended.
 - A decision the user would want to make (scope, a trade-off, a choice with
   lasting consequences) would otherwise be a guess.
+- Any question you would otherwise write in the reply and then wait for: a
+  handoff pause ("continue here or open a new window?"), an authorization
+  round, a choice of approach. File it, keep the recommended option, and you
+  may repeat the question in the reply. A question that lives only in chat text
+  never reaches the panel.
 - Do not file facts you can check yourself, or routine steps.
 
 ## How to file
