@@ -270,6 +270,8 @@ Verification: `tests/askaway.test.ts` tests the table on its own (`heldButtons`)
 `held (terminal)` and `held (desktop)` check that a redraw keeps every Button's handle, and that a press renews only the
 pressed option's. Live check on the desktop (0.4.0-beta.3, 2026-10-17, held buttons, KeepGlide mark beside Submit all): every
 Button answered on the first click, confirmed by the user through an Askaway question answered in that pane.
+Live check on the desktop (0.4.0-beta.5, 2026-10-17): gains and losses as two sections, "└ " before each tradeoff and the
+KeepGlide mark after the counter and after Submit all, confirmed the same way (answer A).
 
 Two guards keep the drawn state from changing for nothing:
 - `tickClock` (`hooks/register.tsx`) counts only the open questions. An answered question draws no age label,
