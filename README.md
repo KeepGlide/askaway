@@ -71,16 +71,26 @@ sequenceDiagram
 
 ## 🚀 Installation
 
+The catalog lives in [KeepGlide/claude-plugins](https://github.com/KeepGlide/claude-plugins), the KeepGlide marketplace. This repository holds only the Askaway plugin.
+
+One command installs the marketplace and the plugin (Claude Code 2.1.292 or later):
+
+```bash
+claude plugin install askaway --marketplace KeepGlide/claude-plugins
+```
+
+Or step by step:
+
 ### 1️⃣ Add the marketplace
 
 ```bash
-claude plugin marketplace add KeepGlide/askaway
+claude plugin marketplace add KeepGlide/claude-plugins
 ```
 
 ### 2️⃣ Install the plugin
 
 ```bash
-claude plugin install askaway@askaway
+claude plugin install askaway@keepglide
 ```
 
 ### 3️⃣ Load it
@@ -90,7 +100,7 @@ Restart Claude Code, or run `/reload-plugins` inside a session if your version h
 ### Uninstall
 
 ```bash
-claude plugin uninstall askaway@askaway
+claude plugin uninstall askaway@keepglide
 ```
 
 ## 🤖 Install with an AI agent (spec)
@@ -109,8 +119,8 @@ Ground rules:
 |---|---|---|---|
 | 1 | Check Python 3 | `python3 --version` | Prints `Python 3.` and a minor version; exit 0. |
 | 2 | Check Claude Code | `claude --version` | Prints a version and `(Claude Code)`; exit 0. |
-| 3 | 🧑 Add the marketplace | `claude plugin marketplace add KeepGlide/askaway` | Exit 0; `claude plugin marketplace list` shows `askaway`. |
-| 4 | 🧑 Install the plugin | `claude plugin install askaway@askaway` | Exit 0; `claude plugin list` shows `askaway`. |
+| 3 | 🧑 Add the marketplace | `claude plugin marketplace add KeepGlide/claude-plugins` | Exit 0; `claude plugin marketplace list` shows `keepglide`. |
+| 4 | 🧑 Install the plugin | `claude plugin install askaway@keepglide` | Exit 0; `claude plugin list` shows `askaway@keepglide`. |
 | 5 | Make a test state folder | `mkdir -p /tmp/askaway-test` | Exit 0; the folder is empty. |
 | 6 | Check away mode | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" away status` | Prints `{"away": false}`. |
 | 7 | File a test question | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Test","question":"Pick A?","options":[{"key":"A","label":"Yes"},{"key":"B","label":"No"}],"recommended":"A"}'` | Prints `{"id": "q-…", "recommended": "A", "action": "continue"}`. |
@@ -120,7 +130,7 @@ Ground rules:
 
 ✅ **Done when:** steps 1, 2, 6, 7 and 8 match. Steps 3, 4 and 9 match once the user has approved them.
 
-To undo: `claude plugin uninstall askaway@askaway`, `claude plugin marketplace remove askaway`, and delete `/tmp/askaway-test`.
+To undo: `claude plugin uninstall askaway@keepglide`, `claude plugin marketplace remove keepglide`, and delete `/tmp/askaway-test`.
 
 ## 🧭 Usage
 

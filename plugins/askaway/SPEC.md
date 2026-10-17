@@ -311,9 +311,9 @@ recommended option, and the explanation fields when they help; continue on `reco
 
 ## Packaging
 
-- `.claude-plugin/marketplace.json` (repository root): marketplace `askaway` with one plugin,
-  `askaway`, whose source is `./plugins/askaway`. Installed with
-  `claude plugin marketplace add KeepGlide/askaway` and `claude plugin install askaway@askaway`.
+- The catalog is not in this repository. It lives in `KeepGlide/claude-plugins` (marketplace `keepglide`), whose
+  entry `askaway` is a `git-subdir` source pointing at `plugins/askaway` of this repository. Installed with
+  `claude plugin marketplace add KeepGlide/claude-plugins` and `claude plugin install askaway@keepglide`.
 - `plugins/askaway/.claude-plugin/plugin.json`: the manifest; `"hooks": "./hooks/command-hooks.json"`
   declares the command hooks (`deliver`, `ask-guard`, `pause-guard`), which use
   `python3` and `${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py`.

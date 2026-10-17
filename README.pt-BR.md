@@ -71,16 +71,26 @@ sequenceDiagram
 
 ## 🚀 Instalação
 
+O catálogo fica em [KeepGlide/claude-plugins](https://github.com/KeepGlide/claude-plugins), o marketplace da KeepGlide. Este repositório guarda só o plugin Askaway.
+
+Um comando instala o marketplace e o plugin (Claude Code 2.1.292 ou mais novo):
+
+```bash
+claude plugin install askaway --marketplace KeepGlide/claude-plugins
+```
+
+Ou passo a passo:
+
 ### 1️⃣ Adicione o marketplace
 
 ```bash
-claude plugin marketplace add KeepGlide/askaway
+claude plugin marketplace add KeepGlide/claude-plugins
 ```
 
 ### 2️⃣ Instale o plugin
 
 ```bash
-claude plugin install askaway@askaway
+claude plugin install askaway@keepglide
 ```
 
 ### 3️⃣ Carregue o plugin
@@ -90,7 +100,7 @@ Reinicie o Claude Code, ou rode `/reload-plugins` dentro de uma sessão se a sua
 ### Desinstalar
 
 ```bash
-claude plugin uninstall askaway@askaway
+claude plugin uninstall askaway@keepglide
 ```
 
 ## 🤖 Instalação por um agente de IA (spec)
@@ -109,8 +119,8 @@ Regras básicas:
 |---|---|---|---|
 | 1 | Verificar o Python 3 | `python3 --version` | Imprime `Python 3.` e uma versão menor; código de saída 0. |
 | 2 | Verificar o Claude Code | `claude --version` | Imprime uma versão e `(Claude Code)`; código de saída 0. |
-| 3 | 🧑 Adicionar o marketplace | `claude plugin marketplace add KeepGlide/askaway` | Código de saída 0; `claude plugin marketplace list` mostra `askaway`. |
-| 4 | 🧑 Instalar o plugin | `claude plugin install askaway@askaway` | Código de saída 0; `claude plugin list` mostra `askaway`. |
+| 3 | 🧑 Adicionar o marketplace | `claude plugin marketplace add KeepGlide/claude-plugins` | Código de saída 0; `claude plugin marketplace list` mostra `keepglide`. |
+| 4 | 🧑 Instalar o plugin | `claude plugin install askaway@keepglide` | Código de saída 0; `claude plugin list` mostra `askaway@keepglide`. |
 | 5 | Criar uma pasta de estado de teste | `mkdir -p /tmp/askaway-test` | Código de saída 0; a pasta está vazia. |
 | 6 | Verificar o modo ausente | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" away status` | Imprime `{"away": false}`. |
 | 7 | Registrar uma pergunta de teste | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Test","question":"Pick A?","options":[{"key":"A","label":"Yes"},{"key":"B","label":"No"}],"recommended":"A"}'` | Imprime `{"id": "q-…", "recommended": "A", "action": "continue"}`. |
@@ -120,7 +130,7 @@ Regras básicas:
 
 ✅ **Pronto quando:** os passos 1, 2, 6, 7 e 8 batem. Os passos 3, 4 e 9 batem depois que o usuário aprovar.
 
-Para desfazer: `claude plugin uninstall askaway@askaway`, `claude plugin marketplace remove askaway` e apague `/tmp/askaway-test`.
+Para desfazer: `claude plugin uninstall askaway@keepglide`, `claude plugin marketplace remove keepglide` e apague `/tmp/askaway-test`.
 
 ## 🧭 Uso
 

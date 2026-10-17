@@ -23,7 +23,6 @@ cd plugins/askaway/scripts && python3 -m pytest tests -q
 
 | Path | What it holds |
 |---|---|
-| `.claude-plugin/marketplace.json` | The `askaway` marketplace entry that points to the plugin |
 | `plugins/askaway/.claude-plugin/plugin.json` | The plugin manifest; it points to the command hooks |
 | `plugins/askaway/hooks/` | The mod: `register.tsx` (wiring, polling, commands), `model.ts`, `wizard.ts`, `i18n.ts`, `pane.tsx`, `look.ts`; `hooks.json` loads the mod, `command-hooks.json` holds the command hooks |
 | `plugins/askaway/scripts/askaway.py` | The CLI (`ask`, `answer`, `status`, `list`, `away`, `prune`) and the hook modes (`hook ask-guard`, `hook pause-guard`, `hook deliver`) |
