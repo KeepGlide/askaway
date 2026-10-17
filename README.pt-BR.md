@@ -14,6 +14,19 @@
 
 Um agente que precisa de uma decisão enquanto você está ausente tem duas más opções: parar e esperar, ou adivinhar. O Askaway oferece uma terceira. O agente registra a pergunta com uma opção recomendada e continua trabalhando nela. Você responde depois no painel do Askaway, e as suas respostas voltam para a sessão que perguntou.
 
+O agente segue trabalhando no que não depende da sua resposta. Ao voltar, o toast e o botão da faixa acima do prompt avisam que há perguntas esperando. Você abre o painel e encontra todas as perguntas registradas por qualquer sessão de qualquer projeto, um cartão por vez, cada um com o que o agente acrescentou para você julgar:
+
+- **Contexto e origem:** a tarefa e o passo que parou;
+- **Analogia:** uma comparação que deixa o trade-off claro;
+- **Por que** a opção recomendada;
+- **Como** ela funciona depois de aceita;
+- **O que ganhamos** e **O que perdemos** com ela;
+- **Urgência:** se bloqueia e quando;
+- **Como desfazer:** o que custa mudar a escolha depois;
+- **cada opção** com o seu trade-off e uma nota de aderência.
+
+Você escolhe uma opção ou escreve a sua, avança para a próxima pergunta pelos botões ou pelas teclas de atalho e envia todas as respostas de uma vez. Cada uma é entregue automaticamente à sessão que perguntou, sem nenhum passo seu.
+
 O Askaway não:
 
 - responde por você: só você responde, o agente nunca responde;

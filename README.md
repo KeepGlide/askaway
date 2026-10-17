@@ -14,6 +14,19 @@
 
 An agent that needs a decision while you are away has two bad options: stop and wait, or guess. Askaway gives it a third one. The agent files the question with a recommended option and keeps working on it. You answer later in the Askaway panel, and your answers go back to the session that asked.
 
+The agent keeps doing what does not depend on your answer. When you are back, the toast and the band button above the prompt tell you questions are waiting. You open the panel and find every question filed by any session of any project, one card at a time, each with what the agent added to help you judge it:
+
+- **Context and origin:** the task and the step that stopped;
+- **Analogy:** a comparison that makes the trade-off clear;
+- **Why** the recommended option;
+- **How** it works once accepted;
+- **What we gain** and **What we lose** with it;
+- **Urgency:** whether it blocks and when;
+- **Undo:** what it costs to change the choice later;
+- **each option** with its trade-off and a fit score.
+
+You pick an option or write your own, move to the next question with the buttons or the hotkeys, and submit all the answers at once. Each one is delivered automatically to the session that asked, with no step on your side.
+
 Askaway does not:
 
 - answer for you: only you answer, the agent never does;
