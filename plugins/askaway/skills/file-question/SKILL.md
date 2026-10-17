@@ -25,7 +25,7 @@ later in the Askaway panel, and the answer comes back into your session.
 ## How to file
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache backend","question":"Which cache should the service use?","context":"Sizing the API for three workers; the cache sits in front of the reads.","options":[{"key":"A","label":"Redis","tradeoff":"one more service to run","fit":88},{"key":"B","label":"In-process","tradeoff":"lost on restart","fit":40}],"recommended":"A","why":"Workers share one cache, so a hit on one serves all three.","how":"Redis runs as a container next to the API; the cache client points at it.","gains":"Hits are shared across workers and survive a restart.","losses":"One more service to run and monitor.","risk":"low"}'
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache backend","question":"Which cache should the service use?","context":"Sizing the API for three workers; the cache sits in front of the reads.","options":[{"key":"A","label":"Redis","tradeoff":"Safe to accept and easy to change later; one more service to run and monitor","fit":88},{"key":"B","label":"In-process","tradeoff":"Give up sharing hits across workers; the cache is lost on restart","fit":40}],"recommended":"A","why":"Workers share one cache, so a hit on one serves all three.","how":"Redis runs as a service in `docker-compose.yml` next to the API; the cache client points at it.","gains":"Hits are shared across workers and survive a restart.","losses":"One more service to run and monitor.","risk":"low"}'
 ```
 
 The CLI prints one JSON line: `{"id":"q-...","recommended":"A","action":"continue"}`.
@@ -37,7 +37,7 @@ Fields (SPEC.md, "State folder"):
 | Field | Required | Notes |
 |---|---|---|
 | `question` | yes | Up to 400 characters. |
-| `options` | yes | At least 2 objects: `key` (unique, such as `A`), `label`, optional `tradeoff` (one line), optional `fit` (integer 0-100 or null). |
+| `options` | yes | At least 2 objects: `key` (unique, such as `A`), `label`, optional `tradeoff` (one line; the rules below say what it holds), optional `fit` (integer 0-100 or null). |
 | `recommended` | yes | One of the option keys. |
 | `title` | no | Up to 60 characters; defaults to the question, clipped. |
 | `context` | no, always fill | Where the question comes from: the task and the step that stopped. Up to 600 characters. |
@@ -46,7 +46,7 @@ Fields (SPEC.md, "State folder"):
 | `gains` | no, always fill | One or two sentences on what the user gains with it. Up to 300 characters. |
 | `losses` | no, always fill | One or two sentences on what the user gives up or risks with it. Up to 300 characters. |
 | `analogy`, `urgency`, `undo` | no | Add `analogy` when a comparison makes the trade-off clear, `urgency` when there is a deadline (e.g. `Blocks in ~8 min`), `undo` when reversing the choice is costly (e.g. `changing later ≈ 10 min`). |
-| `risk` | no | `low` (default), `medium` or `high`. |
+| `risk` | no | The risk of accepting the recommended option: `low` (default) is safe to accept and easy to change later; `medium` is reversible but costs rework; `high` is irreversible, or touches real files, credentials or money, and pauses the session. |
 | `pause` | no | `true` pauses this session until the user answers. |
 | `run_kind` | no | `main`, `subagent`, `goal`, `loop`, `bash` or `codex`. |
 
@@ -77,5 +77,12 @@ Do not pass `session` or `project`: the CLI fills them from the environment and 
   smallest real one. Never leave a field empty or write a placeholder.
 - Add `analogy`, `urgency` or `undo` when the table says they help.
 - Keep `question` and `options` short and concrete.
+- The recommended option's `tradeoff` says how safe it is to accept it, whether it can be changed later, and what else
+  weighs on it (cost, time, what is lost). Each other option's `tradeoff` says what you give up by picking it.
+- Put every command, skill, agent, file or flag that an explanation field names between backticks, such as
+  `software-test-engineer` or `hooks/pane.tsx`. A slash command may stand bare (`/reload-plugins`). The panel draws
+  these names in the accent color and does not draw the backticks.
+  Keep the JSON inside single quotes, as in the example, or pipe it to `askaway.py ask` on stdin: inside double
+  quotes the shell would run a backticked name as a command.
 - Never invent an answer, and never file a question to hand over routine work.
 - Never call `answer` yourself: only the user answers.

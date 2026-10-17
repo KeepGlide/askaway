@@ -21,8 +21,6 @@ Terms:
 
 ## State folder: `~/.claude/state/askaway/` (`ASKAWAY_HOME` env var overrides it; tests use it)
 
-The folder keeps the name `inbox` from earlier versions, so existing data keeps working.
-
 One JSON file per item; never one shared file (no append races, no 4 MiB limit).
 
 - `q/<id>.json` — the question (written once by askaway.py, atomically: temp file in `q/` + os.replace):
@@ -133,7 +131,7 @@ It fails open: any error exits 0 with no output. The command hooks are declared 
 ## Commands
 
 - `/askaway` — opens the panel. When the panel is not placed, it answers with a text list of the open questions.
-- `/askaway lang pt|en|auto` — sets the language (see "Language").
+- `/askaway lang pt-BR|en|auto` — sets the language; the default is `auto`, the environment's locale (see "Language").
 - `/askaway away` — toggles `away.json` and reports the new state.
 
 There are no other public commands. The `/inbox` commands of earlier versions are not part of v1.
@@ -143,7 +141,7 @@ There are no other public commands. The `/inbox` commands of earlier versions ar
 Detected from the environment: the first of `LC_ALL`, `LC_MESSAGES`, `LANG`, `LANGUAGE` that is
 set (non-empty). A value that starts with `pt` means Portuguese; anything else means English
 (`detectLang`, `hooks/i18n.ts`).
-`/askaway lang pt|en` stores the choice in the mod's `$.store` key `lang`; `auto` clears it, and the
+`/askaway lang pt-BR|en` stores the choice (`pt-BR` as `pt`) in the mod's `$.store` key `lang`; `auto` clears it, and the
 locale decides again. A stored `pt` or `en` wins over the detected language (`resolveLang`, `hooks/i18n.ts`). The panel and the band text are translated (`hooks/i18n.ts`, English and
 Brazilian Portuguese, with identical key sets). The model-facing lines are always English and are never translated.
 
@@ -164,7 +162,7 @@ Pane id `askaway`, title "Askaway" (`hooks/pane.tsx`, `hooks/register.tsx`). Col
 Draw order, top to bottom: header, tree of the open questions, question card, status lines. The status lines come
 last because they change height as answers are delivered. On the desktop a Button drawn below a block that grows lost
 its presses (the first click was dropped); this is the same finding as another mod's (comment above its
-status list). `hooks/pane.tsx` lines 70-71.
+status list). `hooks/pane.tsx`, `renderPane`.
 
 - **Header**: the Askaway logo, then "Questions waiting" ("Perguntas aguardando"; `pane.heading`, `hooks/i18n.ts`), with the counter on the right. The logo is the violet
   SVG on the desktop (`hooks/logo.ts`, `#8B5CF6`) and the "?" glyph in the accent color on the terminal
@@ -187,16 +185,25 @@ status list). `hooks/pane.tsx` lines 70-71.
     of the last session are indented with `paddingLeft={4}` (`renderSession`, `renderTreeQuestion`, `hooks/pane.tsx`).
   - The card shows the questions of one group at a time (the group on screen); the other groups stay in the tree only,
     and the picks of every group are kept.
+- **KeepGlide mark**: an SVG of the KeepGlide tile (`hooks/keepglide.ts`, `renderKeepGlide`, `hooks/logo-element.tsx`),
+  drawn on the desktop only: 24px before the counter in the header (key `keepglide-counter`, `KEEPGLIDE_HEADER_SIZE`)
+  and 28px before the Submit all button (key `keepglide-submit`, `KEEPGLIDE_SUBMIT_SIZE`). The terminal draws no mark.
 - **Question card**, one question at a time, bordered, rows separated by a gap. Top to bottom:
   - the title row: the question's title, bold, with its risk and age beside it, muted, "<risk label> · <age label>"
-    (`riskLabel`, `ageLabel`); the row wraps the risk under the title when it does not fit. A question with no title is
+    (`riskLabel`, `ageLabel`); the row wraps the risk under the title when it does not fit. The risk label (low, medium,
+    high) is the risk of accepting the recommended option, as the filing agent judged it. A question with no title is
     named by its text, cut to 24 characters with "…";
   - the question text, bold;
   - the explanation box, when at least one of its sections is set: a box on a light blue ground (`#EFF6FF`, ink
     `#1F2937`, `EXPLAIN_COLORS`). Its sections, each drawn only when its field is set: 🧭 Context and origin, 🔁 Analogy,
     💡 Why <rec>, 🛠️ How, one section for gains and losses (🎁 What we gain · ⚖️ What we lose; its heading names only
-    the halves that are set), then ⏱️ Urgency and ↩️ Undo (pt: ⏱️ Urgência, ↩️ Como desfazer). The box sits before the options (`sectionsOf`, `renderExplanation`, `hooks/pane.tsx`, `hooks/model.ts`);
-  - the options, one full-width Button each, "N. Label", with the option's one-line tradeoff dim under it. The options
+    the halves that are set), then ⏱️ Urgency and ↩️ Undo (pt: ⏱️ Urgência, ↩️ Como desfazer). Each section is one line,
+    "heading: text" (pt: "💡 Por que A: <why>"): the heading in bold, then the text, wrapping as one paragraph. Every name
+    in the text (a slash command, or anything the agent wrote between backticks) is drawn in the accent color
+    (`ACCENT_COLOR`), its backticks not drawn (`piecesOf`, `renderSection`, `hooks/model.ts`, `hooks/pane.tsx`). The box
+    sits before the options (`sectionsOf`, `renderExplanation`, `hooks/pane.tsx`, `hooks/model.ts`);
+  - the options, one full-width Button each, "N. Label", with the option's tradeoff under it: one line, its first letter
+    capitalized, indented one cell (`paddingLeft={1}`), dim only while the card fades. The options
     are in a column with `gap={2}` and `marginTop={1}`, so two blank lines part them from the explanation box
     (`renderQuestion`, `hooks/pane.tsx`). The recommended option reads "N. Label (Recommended)"
     (Portuguese: "Recomendada") and is bold while not picked. The picked option is the primary button;
@@ -207,8 +214,9 @@ status list). `hooks/pane.tsx` lines 70-71.
   - the nav row: [← Back] (Portuguese: "← Voltar") on every question, dim on the first; [Next →] (Portuguese:
     "Próxima →") on every question but the last; on the last one, [Submit all (n)] (Portuguese: "Enviar tudo (n)"),
     where n is the number of questions of the group, dim until every question of the group has a pick.
-- **Hotkeys**: options take the digits 1 to 9 in order; "Other…" takes the next digit (none after nine); Back `b`,
-  Next `n`, Submit all `s`. No hotkey is drawn while the Other field is open, so typed text presses no button.
+- **Hotkeys**: options take the digits 1 to 9 in order on every surface; "Other…" takes the next digit (none after
+  nine). Back `b`, Next `n` and Submit all `s` are drawn on the terminal only (`letterFor`, `hooks/pane.tsx`): the
+  desktop clicks them. No hotkey is drawn while the Other field is open, so typed text presses no button.
 - **Choosing**: an option, or "Other…" with its text, records the pick and moves on: to the first question without a
   pick after the current one (wrapping to the start), or, once every question of the group has a pick, to the last
   question, where Submit all is. After each pick the group stays selected. Nothing is written until Submit all.
@@ -234,7 +242,7 @@ status list). `hooks/pane.tsx` lines 70-71.
 
 Decision: every Button of the pane and of the band keeps its press handle across redraws, on the desktop and on the
 terminal alike. The plugin does not hold the focus ring any more (there is no `ui.focus` hook); the engine moves the
-ring as it does for any plugin, and the pane's hotkeys (digits, `b`, `n`, `s`) are the keyboard path on both surfaces.
+ring as it does for any plugin, and the pane's hotkeys (the digits on both surfaces; `b`, `n`, `s` on the terminal) are its keyboard path.
 
 Why: the engine hands a Button a new press handle on every redraw, unless the very same element object comes back. On
 the desktop a click moves the focus onto the Button, and that move redraws the site just before the press arrives. The
@@ -248,29 +256,26 @@ How (`hooks/held.ts`, `heldButtons()`):
   `look` is everything the Button draws: its label, variant, dim state and hotkey.
 - The press of a held element runs the handler that the latest `hold` stored for its key, so a Button that changed
   (a new pick, a new question) still runs its current handler.
-- One table per site: `heldFor(surface, requestId)` (`hooks/register.tsx` line 76). The pane's table goes to
-  `renderPane` (`hooks/pane.tsx` line 66) and the band's to `renderBand` (`hooks/band.tsx` line 15). Every Button goes
+- One table per site: `heldFor(surface, requestId)` (`hooks/register.tsx`). The pane's table goes to
+  `renderPane` (`hooks/pane.tsx`) and the band's to `renderBand` (`hooks/band.tsx`). Every Button goes
   through `hold`: each option, Other…, Back, Next, Submit all, the band's Answer and each status ✕.
 - The Other field is an Input. The engine matches an Input by its key, so the field is not held.
 
 Verification: `tests/askaway.test.ts` tests the table on its own (`heldButtons`), and the engine tests
 `held (terminal)` and `held (desktop)` check that a redraw keeps every Button's handle, and that a press renews only the
-pressed option's. Live check on the desktop (0.3.4, 2026-10-17): every Button answered on the first click, and the
-app log showed no `ui_press not handled` line after the release.
+pressed option's. Live check on the desktop (0.4.0-beta.3, 2026-10-17, held buttons, KeepGlide mark beside Submit all): every
+Button answered on the first click, confirmed by the user through an Askaway question answered in that pane.
 
 Two guards keep the drawn state from changing for nothing:
-- `tickClock` (`hooks/register.tsx` line 203) counts only the open questions. An answered question draws no age label,
+- `tickClock` (`hooks/register.tsx`) counts only the open questions. An answered question draws no age label,
   so a tick for it alone would redraw an equal pane; the clock is written only when the drawn age labels or status
   lines change.
-- `pruneWizardState` (`hooks/register.tsx` lines 257-264) skips the write when nothing is open and only the wizard's
-  `groupKey` would change (the field is `groupKey`, `hooks/wizard.ts` line 13). With nothing open the pane draws no
+- `pruneWizardState` (`hooks/register.tsx`) skips the write when nothing is open and only the wizard's
+  `groupKey` would change (the field is `groupKey`, `hooks/wizard.ts`). With nothing open the pane draws no
   card, so that write would only redraw the pane. A group that opens later still starts at step 0.
 
 Known limit: the accent `#1E40AF` (`hooks/look.ts`) is low contrast on a dark theme (2.03:1 on a dark background,
 per the comment in `hooks/look.ts`). The engine gives the mod no theme signal, so the color cannot switch with the theme.
-
-The live desktop check that every button answered the first click (as reported) was made with the former focus
-hook, not with held buttons; it does not cover this version.
 
 ## Polling
 
