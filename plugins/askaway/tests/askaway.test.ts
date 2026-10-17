@@ -7,6 +7,7 @@ import {
   groupBySession,
   listText,
   parseQuestion,
+  piecesOf,
   projectLabel,
   riskLabel,
   sectionsOf,
@@ -446,6 +447,30 @@ test('the tree names the group by its project, each session by its title in titl
   await ui.unmount()
 })
 
+test('the KeepGlide mark is drawn 24px beside the counter and 28px beside Submit all on the desktop, and nowhere on the terminal', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    // The drawn tree keeps no key on an Svg (only Box and Button keep theirs), so each mark is placed by its neighbour:
+    // the header mark sits right before the counter, the other right before the Submit all button.
+    const nodes = nodesOf(await ui.drawn())
+    const markAt = nodes.flatMap((node, index) => (node.type === 'Svg' && (node.props as Record<string, unknown>).alt === 'KeepGlide' ? [index] : []))
+    if (surface === 'desktop') {
+      expect(markAt).toHaveLength(2)
+      const counterAt = nodes.findIndex(node => node.type === 'Text' && Array.isArray(node.children) && node.children.includes('1 pendente · 1 grupo'))
+      const submitAt = nodes.findIndex(node => keyOfNode(node) === 'submit-all')
+      expect(markAt[0]).toBe(counterAt - 1)
+      expect(markAt[1]).toBe(submitAt - 1)
+      expect(markAt.map(index => (nodes[index].props as Record<string, unknown>).width)).toEqual([24, 28])
+    } else {
+      expect(markAt).toHaveLength(0)
+    }
+    await ui.unmount()
+  }
+})
+
 test('the card draws the risk and age on the title row, and two blank lines before the options', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   stubHost(on, files)
@@ -641,8 +666,8 @@ test('each option is one full-width column with its tradeoff under it, numbered,
   for (const key of ['optrow-q-l1-aaaaaa-A', 'optrow-q-l1-aaaaaa-B']) {
     expect((await ui.find({ type: 'Box', key }))?.props.flexDirection).toBe('column')
   }
-  expect(await ui.find({ type: 'Text', text: 'cheap' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'slow' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Cheap' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Slow' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -782,8 +807,8 @@ test('only the recommended option says "(Recomendada)", and the card has no JEV 
   expect(await ui.findAll({ type: 'Text', text: '🎯' })).toHaveLength(0)
   const texts = await textsOf(ui)
   expect(texts.some(text => text.startsWith('🔷') || text.includes('JEV'))).toBe(false)
-  // The recommended option is B here, so the explanation names it.
-  expect(texts).toContain('💡 Por que B')
+  // The recommended option is B here, so the explanation names it: one line, heading then text.
+  expect(texts).toContain('💡 Por que B: It is smaller.')
   await ui.unmount()
 })
 
@@ -798,14 +823,14 @@ test('each explanation section shows only when its field is set, in one box unde
   await $.session.start(SESSION)
   const ui = await mountPane($)
   const texts = await textsOf(ui)
-  expect(texts.filter(text => text.startsWith('🧭'))).toEqual(['🧭 Contexto e origem'])
-  expect(texts).toContain('Why now.')
-  expect(texts).toContain('🔁 Analogia')
-  expect(texts).toContain('Like a phone book.')
-  expect(texts).toContain('💡 Por que A')
-  expect(texts).toContain('🛠️ Como')
-  expect(texts).toContain('🎁 O que ganhamos · ⚖️ O que perdemos')
-  expect(texts).toContain('Fast reads. A file to back up.')
+  // A section is one Text, "heading: text": its whole line, and the bold heading as a Text of its own before the body.
+  expect(texts.filter(text => text.startsWith('🧭'))).toEqual(['🧭 Contexto e origem: Why now.', '🧭 Contexto e origem: '])
+  expect(texts).toContain('🔁 Analogia: Like a phone book.')
+  expect(texts).toContain('💡 Por que A: It is smaller.')
+  expect(texts).toContain('🛠️ Como: A table.')
+  expect(texts).toContain('🎁 O que ganhamos · ⚖️ O que perdemos: Fast reads. A file to back up.')
+  // Urgency and undo are not set on this question, so their headings are not drawn.
+  expect(texts.some(text => text.startsWith('⏱️') || text.startsWith('↩️'))).toBe(false)
   await ui.unmount()
 })
 
@@ -820,14 +845,12 @@ test('the card draws urgency and undo last in the explanation box, with their Po
   await $.session.start(SESSION)
   const ui = await mountPane($)
   const texts = await textsOf(ui)
-  const gainsHeading = texts.indexOf('🎁 O que ganhamos · ⚖️ O que perdemos')
-  const urgencyHeading = texts.indexOf('⏱️ Urgência')
-  const undoHeading = texts.indexOf('↩️ Como desfazer')
-  expect(gainsHeading).toBeGreaterThanOrEqual(0)
-  expect(urgencyHeading).toBeGreaterThan(gainsHeading)
-  expect(undoHeading).toBeGreaterThan(urgencyHeading)
-  expect(texts).toContain('Blocks in ~8 min')
-  expect(texts).toContain('Changing later ≈ 10 min')
+  const gainsLine = texts.indexOf('🎁 O que ganhamos · ⚖️ O que perdemos: Fast reads. A file to back up.')
+  const urgencyLine = texts.indexOf('⏱️ Urgência: Blocks in ~8 min')
+  const undoLine = texts.indexOf('↩️ Como desfazer: Changing later ≈ 10 min')
+  expect(gainsLine).toBeGreaterThanOrEqual(0)
+  expect(urgencyLine).toBeGreaterThan(gainsLine)
+  expect(undoLine).toBeGreaterThan(urgencyLine)
   await ui.unmount()
 })
 
@@ -840,13 +863,11 @@ test('a losses-only question shows its subtitle for the losses alone, and a gain
   await $.session.start(SESSION)
   const ui = await mountPane($)
   const losses = await textsOf(ui)
-  expect(losses).toContain('⚖️ O que perdemos')
-  expect(losses).toContain('Extra file.')
+  expect(losses).toContain('⚖️ O que perdemos: Extra file.')
   expect(losses.some(text => text.startsWith('🎁'))).toBe(false)
   await ui.press({ key: 'nav-next' })
   const gains = await textsOf(ui)
-  expect(gains).toContain('🎁 O que ganhamos')
-  expect(gains).toContain('Quick answers.')
+  expect(gains).toContain('🎁 O que ganhamos: Quick answers.')
   expect(gains.some(text => text.startsWith('⚖️'))).toBe(false)
   await ui.unmount()
 })
@@ -870,12 +891,95 @@ test('a legacy question with tradeoff and no how, gains, losses or session title
   await $.session.start(SESSION)
   const ui = await mountPane($)
   const texts = await textsOf(ui)
-  expect(texts).toContain('💡 Por que A')
-  expect(texts).toContain('It is smaller.')
-  expect(texts).toContain('cheap')
+  expect(texts).toContain('💡 Por que A: It is smaller.')
+  expect(texts).toContain('Cheap')
   expect(texts.filter(text => /^(🛠️|🎁|⚖️)/u.test(text))).toEqual([])
   expect(texts.filter(text => text.trim() === '')).toEqual([])
   await ui.unmount()
+})
+
+test('a name in an explanation is drawn in the accent color, a slash command bare and a backticked one without its backticks', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { how: 'Run /reload-plugins, then open `frontend-code-engineer`.' })],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    const nodes = nodesOf(await ui.drawn())
+    const accentChildren = nodes
+      .filter(node => node.type === 'Text' && (node.props as Record<string, unknown> | undefined)?.color === ACCENT_COLOR)
+      .map(node => node.children)
+    expect(accentChildren).toContainEqual(['/reload-plugins'])
+    expect(accentChildren).toContainEqual(['frontend-code-engineer'])
+    // The section is still one line for a reader, with no backtick drawn anywhere.
+    expect(await textsOf(ui)).toContain('🛠️ Como: Run /reload-plugins, then open frontend-code-engineer.')
+    const drawnText = nodes.flatMap(node => (Array.isArray(node.children) ? node.children : [])).filter((child): child is string => typeof child === 'string')
+    expect(drawnText.some(text => text.includes('`'))).toBe(false)
+    await ui.unmount()
+  }
+})
+
+test('an option tradeoff written in lowercase is drawn capitalized, in a box indented one cell, on both surfaces', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    const nodes = nodesOf(await ui.drawn())
+    const indentedLine = (line: string): boolean =>
+      nodes.some(
+        node =>
+          node.type === 'Box' &&
+          (node.props as Record<string, unknown> | undefined)?.paddingLeft === 1 &&
+          nodesOf(node).some(inner => inner.type === 'Text' && Array.isArray(inner.children) && inner.children.includes(line)),
+      )
+    expect(indentedLine('Cheap')).toBe(true)
+    expect(indentedLine('Slow')).toBe(true)
+    expect(await ui.find({ type: 'Text', text: 'cheap' })).toBeUndefined()
+    await ui.unmount()
+  }
+})
+
+test('model: piecesOf draws a slash command as a name and leaves the rest of the text plain', () => {
+  expect(piecesOf('Plain text.')).toEqual([{ text: 'Plain text.', isName: false }])
+  expect(piecesOf('Run /reload-plugins now')).toEqual([
+    { text: 'Run ', isName: false },
+    { text: '/reload-plugins', isName: true },
+    { text: ' now', isName: false },
+  ])
+  expect(piecesOf('/askaway lang pt')).toEqual([
+    { text: '/askaway', isName: true },
+    { text: ' lang pt', isName: false },
+  ])
+})
+
+test('model: piecesOf takes a backticked name without its backticks, and no path or URL slash is a name', () => {
+  expect(piecesOf('use `software-test-engineer` here')).toEqual([
+    { text: 'use ', isName: false },
+    { text: 'software-test-engineer', isName: true },
+    { text: ' here', isName: false },
+  ])
+  expect(piecesOf('https://x.y/path')).toEqual([{ text: 'https://x.y/path', isName: false }])
+  expect(piecesOf('a/b')).toEqual([{ text: 'a/b', isName: false }])
+  expect(piecesOf('src/hooks/pane.tsx')).toEqual([{ text: 'src/hooks/pane.tsx', isName: false }])
+  // A home path is a path, and a command keeps neither the colon nor the dot that ends its sentence.
+  expect(piecesOf('see ~/projects/foo')).toEqual([{ text: 'see ~/projects/foo', isName: false }])
+  expect(piecesOf('Run /reload-plugins: now')).toEqual([
+    { text: 'Run ', isName: false },
+    { text: '/reload-plugins', isName: true },
+    { text: ': now', isName: false },
+  ])
+  expect(piecesOf('then /clear.')).toEqual([
+    { text: 'then ', isName: false },
+    { text: '/clear', isName: true },
+    { text: '.', isName: false },
+  ])
+})
+
+test('model: piecesOf of an empty text is no piece, and a backtick never closed stays plain', () => {
+  expect(piecesOf('')).toEqual([])
+  expect(piecesOf('open `never closed')).toEqual([{ text: 'open `never closed', isName: false }])
 })
 
 test('a pending answer shows "enviada", then "entregue" for 30 seconds after the pane first sees the delivery', async ($, on) => {
@@ -1568,7 +1672,7 @@ test('a group answered from outside while another is open: the pane shows the fi
   await ui.unmount()
 })
 
-test('hotkeys: each option its digit, Other the next, then b, n and s; none on any Button while the Other field is open', async ($, on) => {
+test('hotkeys: each option its digit, Other the next, then b, n and s on the terminal; none while the Other field is open', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
@@ -1590,7 +1694,18 @@ test('hotkeys: each option its digit, Other the next, then b, n and s; none on a
   const buttons = await ui.findAll({ type: 'Button' })
   expect(buttons.length).toBeGreaterThan(0)
   for (const button of buttons) expect(button.props.hotkey).toBeUndefined()
+  await ui.press({ key: 'other-q-l1-aaaaaa' })
   await ui.unmount()
+  // The desktop keeps the digits and drops the letters: Back, Next and Submit all are clicked there.
+  const desk = await mountPane($, 'desktop')
+  const deskHotkey = async (key: string): Promise<unknown> => (await desk.find({ type: 'Button', key }))?.props.hotkey
+  expect(await deskHotkey('opt-q-l1-aaaaaa-A')).toBe('1')
+  expect(await deskHotkey('other-q-l1-aaaaaa')).toBe('3')
+  expect(await deskHotkey('nav-back')).toBeUndefined()
+  expect(await deskHotkey('nav-next')).toBeUndefined()
+  await desk.press({ key: 'nav-next' })
+  expect(await deskHotkey('submit-all')).toBeUndefined()
+  await desk.unmount()
 })
 
 test('draw order: every status line is drawn after the card\'s Back and Next buttons', async ($, on) => {

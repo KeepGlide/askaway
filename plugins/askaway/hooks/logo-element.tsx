@@ -3,11 +3,15 @@
 import type { Elements, RenderElement, RenderSurface } from 'claude-code'
 
 import { ACCENT_COLOR } from './look'
+import { KEEPGLIDE_ALT, keepglideSvg } from './keepglide'
 import { LOGO_GLYPH, askawaySvg } from './logo'
 
 type Ui = Elements[RenderSurface]
 
 const LOGO_SIZE = 16
+// The KeepGlide mark is drawn larger beside Submit all than in the header, where it keeps to the row's height.
+export const KEEPGLIDE_HEADER_SIZE = 24
+export const KEEPGLIDE_SUBMIT_SIZE = 28
 
 export function renderLogo(ui: Ui, surface: RenderSurface): RenderElement {
   if (surface === 'desktop' && 'Svg' in ui) {
@@ -20,4 +24,12 @@ export function renderLogo(ui: Ui, surface: RenderSurface): RenderElement {
       {LOGO_GLYPH}
     </Text>
   )
+}
+
+// The KeepGlide mark beside the counter and the Submit all button, at the size each placement asks for. Desktop only:
+// the terminal draws no picture.
+export function renderKeepGlide(ui: Ui, surface: RenderSurface, key: string, size: number): RenderElement | false {
+  if (surface !== 'desktop' || !('Svg' in ui)) return false
+  const { Svg } = ui
+  return <Svg key={key} source={keepglideSvg({ size })} alt={KEEPGLIDE_ALT} width={size} height={size} />
 }

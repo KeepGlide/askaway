@@ -9,12 +9,13 @@ import { t, type Lang } from './i18n'
 import type { HeldButtons } from './held'
 import { DIVIDER_COLUMNS, DIVIDER_HEIGHT, DIVIDER_PX, dividerSvg } from './divider'
 import { ACCENT_COLOR, EXPLAIN_COLORS, STATUS_COLORS } from './look'
-import { renderLogo } from './logo-element'
+import { KEEPGLIDE_HEADER_SIZE, KEEPGLIDE_SUBMIT_SIZE, renderKeepGlide, renderLogo } from './logo-element'
 import {
   OTHER_INPUT_PREFIX,
   OTHER_KEY,
   ageLabel,
   counterText,
+  piecesOf,
   projectLabel,
   riskLabel,
   sectionsOf,
@@ -58,6 +59,7 @@ type CardContext = {
   isLeaving: boolean
   isTyping: boolean
   held: HeldButtons
+  surface: RenderSurface
 }
 
 // The title line names a question by its title; a question with no title is named by its text, cut short.
@@ -76,7 +78,10 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
           {renderLogo(ui, view.surface)}
           <Text bold>{t(lang, 'pane.heading')}</Text>
         </Box>
-        <Text>{counterText(lang, view.questions)}</Text>
+        <Box flexDirection="row" alignItems="center" gap={1}>
+          {renderKeepGlide(ui, view.surface, 'keepglide-counter', KEEPGLIDE_HEADER_SIZE)}
+          <Text>{counterText(lang, view.questions)}</Text>
+        </Box>
       </Box>
       {view.groups.length > 0 && renderTree(ui, lang, view)}
       {screen !== undefined && renderQuestion(ui, lang, view, actions, screen, held)}
@@ -173,11 +178,19 @@ function questionLabel(question: Question): string {
   return text.length > TITLE_MAX ? `${text.slice(0, TITLE_MAX - 1)}…` : text
 }
 
+// The tradeoff under an option starts with a capital letter, whatever the agent wrote.
+const capitalized = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1)
+
 // An option answers to its digit: 1 to 9 for the first nine positions, none after.
 const digitOf = (position: number): string | undefined => (position <= 8 ? String(position + 1) : undefined)
 
 // A hotkey is drawn only while the card's Other field is shut.
 const hotkeyFor = (card: CardContext, key: string | undefined): string | undefined => (card.isTyping ? undefined : key)
+
+// Back, Next and Submit all take a letter on the terminal only, where the keyboard is the way through the pane; the
+// desktop draws them without one, and its options keep their digits.
+const letterFor = (card: CardContext, key: string): string | undefined =>
+  card.surface === 'terminal' ? hotkeyFor(card, key) : undefined
 
 // One question on screen: the title in bold with the risk and age beside it, the question, the explanation box, two blank
 // lines, the numbered options with "Other…", a separator, and the Back / Next or Submit all row. One blank line sits under
@@ -198,6 +211,7 @@ function renderQuestion(
     isLeaving: view.leaving[question.id] !== undefined,
     isTyping: view.wizard.other === question.id,
     held,
+    surface: view.surface,
   }
   const { isLeaving } = card
   const sections = sectionsOf(lang, question)
@@ -276,7 +290,11 @@ function renderOption(
           {isBold ? <Text bold dimColor={isLeaving}>{text}</Text> : text}
         </Button>
       ))}
-      {option.tradeoff !== undefined && <Text dimColor={isLeaving}>{option.tradeoff}</Text>}
+      {option.tradeoff !== undefined && (
+        <Box paddingLeft={1}>
+          <Text dimColor={isLeaving}>{capitalized(option.tradeoff)}</Text>
+        </Box>
+      )}
     </Box>
   )
 }
@@ -320,13 +338,14 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
 }
 
 // Back, and forward: Next on every question but the last; on the last one, Submit all, which writes every answer of the
-// group and needs every question picked. A dim button does nothing when pressed.
+// group and needs every question picked, with the KeepGlide mark beside it on the desktop. A dim button does nothing when
+// pressed. Back, Next and Submit all carry their letters on the terminal only (letterFor).
 function renderNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: Screen): RenderElement {
   const { Box, Button } = ui
   const { question, isLeaving, held } = card
   const isBackOff = !screen.canBack || isLeaving
   const label = t(lang, 'nav.back')
-  const hotkey = hotkeyFor(card, 'b')
+  const hotkey = letterFor(card, 'b')
   const onPress = () => {
     if (isBackOff) return
     actions.back()
@@ -345,7 +364,7 @@ function renderNext(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext,
   const { Button } = ui
   const isOff = !screen.canNext || card.isLeaving
   const label = t(lang, 'nav.next')
-  const hotkey = hotkeyFor(card, 'n')
+  const hotkey = letterFor(card, 'n')
   const onPress = () => {
     if (isOff) return
     actions.next()
@@ -356,25 +375,40 @@ function renderNext(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext,
 }
 
 function renderSubmitAll(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: Screen): RenderElement {
-  const { Button } = ui
+  const { Box, Button } = ui
   const isOff = !screen.canSubmit || card.isLeaving
   const label = t(lang, 'review.submit', { n: screen.total })
-  const hotkey = hotkeyFor(card, 's')
+  const hotkey = letterFor(card, 's')
   const onPress = () => {
     if (isOff) return
     actions.submit()
   }
-  return card.held.hold('submit-all', [label, isOff, hotkey], onPress, press => (
-    <Button key="submit-all" label={label} variant={isOff ? 'secondary' : 'primary'} dimColor={isOff} hotkey={hotkey} onPress={press} />
-  ))
+  return (
+    <Box key="submit-row" flexDirection="row" alignItems="center" gap={1}>
+      {renderKeepGlide(ui, card.surface, 'keepglide-submit', KEEPGLIDE_SUBMIT_SIZE)}
+      {card.held.hold('submit-all', [label, isOff, hotkey], onPress, press => (
+        <Button key="submit-all" label={label} variant={isOff ? 'secondary' : 'primary'} dimColor={isOff} hotkey={hotkey} onPress={press} />
+      ))}
+    </Box>
+  )
 }
 
+// One section of the explanation, on one wrapping line: the heading in bold, a colon, then the text, with every command,
+// skill or agent name the agent wrote in the accent color (piecesOf).
 function renderSection(ui: Ui, section: Section, isLeaving: boolean): RenderElement {
-  const { Box, Text } = ui
+  const { Text } = ui
   return (
-    <Box key={`section-${section.heading}`} flexDirection="column">
-      <Text bold color={EXPLAIN_COLORS.ink} dimColor={isLeaving}>{section.heading}</Text>
-      <Text color={EXPLAIN_COLORS.ink} dimColor={isLeaving}>{section.body}</Text>
-    </Box>
+    <Text key={`section-${section.heading}`} color={EXPLAIN_COLORS.ink} dimColor={isLeaving}>
+      <Text bold>{`${section.heading}: `}</Text>
+      {piecesOf(section.body).map((piece, index) =>
+        piece.isName ? (
+          <Text key={`name-${index}`} color={ACCENT_COLOR}>
+            {piece.text}
+          </Text>
+        ) : (
+          piece.text
+        ),
+      )}
+    </Text>
   )
 }

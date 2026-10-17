@@ -322,3 +322,23 @@ export function listText(lang: Lang, questions: readonly Question[], isAway: boo
 
 // The key prefix of the Other field.
 export const OTHER_INPUT_PREFIX = 'other-input-'
+
+// The pieces of an explanation text: plain runs, and the names a reader may act on, drawn in the accent color. A name
+// is a slash command (`/reload-plugins`, `/askaway lang pt` up to its first space) or anything the agent wrote between
+// backticks (a skill, an agent, a file, a flag); the backticks themselves are not drawn.
+export type TextPiece = { text: string; isName: boolean }
+
+const NAME_PATTERN = /`([^`\n]+)`|(?<![\w/.:~])(\/[a-z](?:[\w:-]*\w)?)/g
+
+export function piecesOf(text: string): TextPiece[] {
+  const pieces: TextPiece[] = []
+  let last = 0
+  for (const match of text.matchAll(NAME_PATTERN)) {
+    const index = match.index ?? 0
+    if (index > last) pieces.push({ text: text.slice(last, index), isName: false })
+    pieces.push({ text: match[1] ?? match[2] ?? '', isName: true })
+    last = index + match[0].length
+  }
+  if (last < text.length) pieces.push({ text: text.slice(last), isName: false })
+  return pieces
+}
