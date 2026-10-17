@@ -7,7 +7,7 @@ import type { EngineInterface, Register, RenderSurface } from 'claude-code'
 import type { Answer, Board, Delivery, PromptMarker, Question } from '../types'
 import { renderBand } from './band'
 import { heldButtons, type HeldButtons } from './held'
-import { detectLang, resolveLang, t, type Lang } from './i18n'
+import { detectLang, langName, resolveLang, t, type Lang } from './i18n'
 import { renderPane, type PaneActions, type PaneView } from './pane'
 import {
   EMPTY_BOARD,
@@ -38,8 +38,15 @@ const FADE_MS = 250
 // The plugin's own store keys: the ids of the expired status lines the person dismissed, and the chosen language.
 const CLEARED_KEY = 'cleared'
 const LANG_KEY = 'lang'
-// The values /askaway lang accepts; "auto" follows the environment.
-const LANG_CHOICES: readonly string[] = ['pt', 'en', 'auto']
+// The choices of /askaway lang, as typed (case does not matter; `pt` and `pt_br` still work); `pt-BR` is stored as
+// the dictionary's `pt`, and `auto` follows the environment. A Map, so `constructor` and the like are not choices.
+const LANG_CHOICES: ReadonlyMap<string, string> = new Map([
+  ['pt-br', 'pt'],
+  ['pt_br', 'pt'],
+  ['pt', 'pt'],
+  ['en', 'en'],
+  ['auto', 'auto'],
+])
 const DEFAULT_LANG: Lang = 'en'
 
 // The drawn state. The pane and the band draw from these; the poll and the handlers write them, so each change
@@ -467,13 +474,14 @@ function openPane($: EngineInterface): Promise<{ isPlaced: boolean }> {
   return $.ui.open({ id: PANE, title: TITLE, focus: true })
 }
 
-// /askaway lang pt|en|auto: stores the choice in the plugin's store and switches the language at once.
+// /askaway lang pt-BR|en|auto (default auto: the environment's locale): stores the choice and switches the language at once.
 async function setLang($: EngineInterface, value: string): Promise<string> {
-  if (!LANG_CHOICES.includes(value)) return t(await read($, langAtom), 'command.langInvalid')
-  await $.store.set(LANG_KEY, value)
-  const chosen = resolveLang(value, await detectedLang($))
+  const choice = LANG_CHOICES.get(value.toLowerCase())
+  if (choice === undefined) return t(await read($, langAtom), 'command.langInvalid')
+  await $.store.set(LANG_KEY, choice)
+  const chosen = resolveLang(choice, await detectedLang($))
   await update($, langAtom, () => chosen)
-  return t(chosen, 'command.langSet', { lang: chosen })
+  return t(chosen, 'command.langSet', { lang: langName(chosen) })
 }
 
 async function awayText($: EngineInterface, lang: Lang): Promise<string> {

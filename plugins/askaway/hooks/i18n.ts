@@ -55,14 +55,14 @@ const EN = {
   'toast.newQuestion': 'New question: {title}',
   'toast.undelivered': 'Answer {key} for {id} was not delivered; answer again in the session.',
   'command.describeOpen': 'Open the Askaway pane with the pending questions',
-  'command.describeLang': 'Set the language: /askaway lang pt|en|auto',
+  'command.describeLang': 'Set the language: /askaway lang pt-BR|en|auto (default auto, the environment locale)',
   'command.describeAway': 'Toggle away mode: questions go to the Askaway inbox',
   'command.opened': 'Askaway pane opened.',
   'command.awayOn': 'Askaway away mode is on.',
   'command.awayOff': 'Askaway away mode is off.',
   'command.awayUnavailable': 'Askaway away mode is unavailable: no state folder (HOME is unset).',
   'command.langSet': 'Askaway language is now {lang}.',
-  'command.langInvalid': 'Use /askaway lang pt, en or auto.',
+  'command.langInvalid': 'Use /askaway lang pt-BR, en or auto.',
   'list.head.one': 'Askaway: 1 open',
   'list.head.many': 'Askaway: {n} open',
   'list.awayOn': ', away mode on',
@@ -117,14 +117,14 @@ const PT: Record<MessageKey, string> = {
   'toast.newQuestion': 'Nova pergunta: {title}',
   'toast.undelivered': 'A resposta {key} de {id} não foi entregue; responda de novo na sessão.',
   'command.describeOpen': 'Abre o painel do Askaway com as perguntas pendentes',
-  'command.describeLang': 'Define o idioma: /askaway lang pt|en|auto',
+  'command.describeLang': 'Define o idioma: /askaway lang pt-BR|en|auto (padrão auto, o idioma do ambiente)',
   'command.describeAway': 'Liga ou desliga o modo ausente: as perguntas vão para a caixa do Askaway',
   'command.opened': 'Painel do Askaway aberto.',
   'command.awayOn': 'Modo ausente do Askaway ligado.',
   'command.awayOff': 'Modo ausente do Askaway desligado.',
   'command.awayUnavailable': 'O modo ausente não está disponível: sem pasta de estado (HOME não definido).',
   'command.langSet': 'O idioma do Askaway agora é {lang}.',
-  'command.langInvalid': 'Use /askaway lang pt, en ou auto.',
+  'command.langInvalid': 'Use /askaway lang pt-BR, en ou auto.',
   'list.head.one': 'Askaway: 1 pendente',
   'list.head.many': 'Askaway: {n} pendentes',
   'list.awayOn': ', modo ausente ligado',
@@ -134,6 +134,9 @@ const PT: Record<MessageKey, string> = {
 export const MESSAGES: Readonly<Record<Lang, Readonly<Record<MessageKey, string>>>> = { en: EN, pt: PT }
 
 const isLang = (value: unknown): value is Lang => value === 'en' || value === 'pt'
+
+// The name a person reads for a language: the dictionary's `pt` is Brazilian Portuguese.
+export const langName = (lang: Lang): string => (lang === 'pt' ? 'pt-BR' : 'en')
 
 export function detectLang(env: LangEnv): Lang {
   const locale = LOCALE_VARS.map(name => env[name]).find(value => value !== undefined && value.trim() !== '')

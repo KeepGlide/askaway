@@ -1108,7 +1108,14 @@ test('/askaway lang en switches the pane to English at once, and the choice is k
   expect(await ui.find({ type: 'Text', text: 'Questions waiting' })).toBeDefined()
   expect(await labelOf(ui, 'submit-all')).toBe('Submit all (1)')
   await ui.unmount()
-  expect(await run($, 'lang xx')).toEqual({ text: 'Use /askaway lang pt, en or auto.' })
+  expect(await run($, 'lang xx')).toEqual({ text: 'Use /askaway lang pt-BR, en or auto.' })
+  // Object keys of the prototype are not choices either; nothing is stored for them.
+  expect(await run($, 'lang constructor')).toEqual({ text: 'Use /askaway lang pt-BR, en or auto.' })
+  expect(await run($, 'lang __proto__')).toEqual({ text: 'Use /askaway lang pt-BR, en or auto.' })
+  expect(await run($, 'lang en')).toEqual({ text: 'Askaway language is now en.' })
+  // The older spellings of Brazilian Portuguese still work, whatever the case.
+  expect((await run($, 'lang pt')).text).toBe('O idioma do Askaway agora é pt-BR.')
+  expect((await run($, 'lang PT_BR')).text).toBe('O idioma do Askaway agora é pt-BR.')
   await clock.advance(0)
 })
 
@@ -1116,7 +1123,7 @@ test('/askaway lang pt then the pane reads in pt-BR, even when the environment s
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   stubHost(on, files, true, {}, {}, { LANG: 'en_US.UTF-8' })
   await $.session.start(SESSION)
-  expect((await run($, 'lang pt')).text).toBe('O idioma do Askaway agora é pt.')
+  expect((await run($, 'lang pt-BR')).text).toBe('O idioma do Askaway agora é pt-BR.')
   const ui = await mountPane($)
   expect(await ui.find({ type: 'Text', text: 'Perguntas aguardando' })).toBeDefined()
   expect(await labelOf(ui, 'submit-all')).toBe('Enviar tudo (1)')
