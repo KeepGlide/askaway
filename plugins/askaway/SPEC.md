@@ -219,7 +219,7 @@ joined by "\n". The d/ markers (`via:"prompt"`) are written first, only where ab
 - Free text (key `other`): `The user answered Askaway question <id> (<title>): their own answer (Other): "<text>".`
 - Ask-guard and pause-guard reasons: see "Hook modes".
 
-The agent instruction lives in `skills/askaway/SKILL.md`: file a question with options, a
+The agent instruction lives in `skills/file-question/SKILL.md`: file a question with options, a
 recommended option, and the explanation fields when they help; continue on `recommended` unless
 `action` is `pause`.
 
@@ -232,4 +232,4 @@ recommended option, and the explanation fields when they help; continue on `reco
   declares the command hooks (`deliver`, `ask-guard`, `pause-guard`), which use
   `python3` and `${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py`.
 - `plugins/askaway/hooks/hooks.json`: the mod, `{"modules":["./register.tsx"]}`.
-- `plugins/askaway/skills/askaway/SKILL.md`: the skill agents read before they file a question.
+- `plugins/askaway/skills/file-question/SKILL.md`: the skill agents read before they file a question.

@@ -154,7 +154,7 @@ Each option sits on its own line, with its trade-off under it, like Claude Code'
 
 ## 🧠 How agents file questions
 
-Each agent reads the skill `skills/askaway/SKILL.md` and files a question with the CLI instead of asking and waiting. An agent files a question when any of these is true:
+Each agent reads the skill `skills/file-question/SKILL.md` and files a question with the CLI instead of asking and waiting. An agent files a question when any of these is true:
 
 - the permission mode is `bypassPermissions`;
 - away mode is on (`away.json` has `"on": true`);

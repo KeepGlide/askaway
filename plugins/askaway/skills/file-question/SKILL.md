@@ -1,5 +1,5 @@
 ---
-name: askaway
+name: file-question
 description: File a question for the user through the Askaway inbox when you need a decision and the user may be away (bypass permissions, away mode, or an unattended run). Use it instead of guessing or blocking. Each question carries a recommended option you continue with unless the question is paused.
 ---
 

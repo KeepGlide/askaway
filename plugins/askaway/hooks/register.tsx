@@ -465,7 +465,11 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const current = await currentLang($)
     await update($, langAtom, () => current)
-    await $.command.register({ name: 'askaway', description: t(current, 'command.describeOpen') })
+    // A failed registration (a name already taken, say) must not stop the poll below: the band and the pane draw
+    // from the board, and the folder is read only while the poller runs.
+    await $.command.register({ name: 'askaway', description: t(current, 'command.describeOpen') }).catch((error: unknown) =>
+      logFailure($, error),
+    )
     const storedIds = await $.store.get(CLEARED_KEY)
     const ids = Array.isArray(storedIds) ? storedIds.filter((id): id is string => typeof id === 'string') : []
     await update($, cleared, () => ids)

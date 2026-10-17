@@ -154,7 +154,7 @@ Cada opção fica numa linha, com o trade-off embaixo, como o diálogo de pergun
 
 ## 🧠 Como os agentes registram perguntas
 
-Cada agente lê a skill `skills/askaway/SKILL.md` e registra uma pergunta pela CLI, em vez de perguntar e esperar. Um agente registra a pergunta quando qualquer uma destas condições é verdadeira:
+Cada agente lê a skill `skills/file-question/SKILL.md` e registra uma pergunta pela CLI, em vez de perguntar e esperar. Um agente registra a pergunta quando qualquer uma destas condições é verdadeira:
 
 - o modo de permissão é `bypassPermissions`;
 - o modo ausente está ligado (`away.json` tem `"on": true`);
