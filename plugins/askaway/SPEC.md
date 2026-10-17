@@ -14,9 +14,10 @@ Two parts, one shared folder:
   toggle, its own store keys and the hand-off prompt.
 
 Terms:
-- **Window**: one asking session (`session`). A question with no session belongs to the window
-  `project:<project>`.
-- **Round**: the open questions of one window.
+- **Group**: the open questions of one project (`project`). The group's label is the project's name.
+- **Session**: the questions of a group that were asked by one session (`session`). A question with no
+  session sits in its group under the session label "the session" ("a sessão").
+- **Round**: the open questions of one group; Submit all writes the round of the group on screen.
 
 ## State folder: `~/.claude/state/askaway/` (`ASKAWAY_HOME` env var overrides it; tests use it)
 
@@ -46,7 +47,7 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   80 chars. It is null when there is no session, no transcript or the lookup fails; the lookup
   never fails the ask. Questions filed by the AskUserQuestion hook get it the same way. Session
   ids that are not plain tokens (`[A-Za-z0-9_-]`) are never looked up.
-  `how` (how the option works), `gains` and `losses` are optional explanation fields for the
+  `how` (how the option works), `gains`, `losses`, `urgency` and `undo` are optional explanation fields for the
   panel, each validated like `why`; questions filed before they existed load unchanged (missing
   keys read as null).
   `pause` is true when the caller says so or `risk` is `high`.
@@ -140,62 +141,141 @@ There are no other public commands. The `/inbox` commands of earlier versions ar
 ## Language
 
 Detected from the environment: the first of `LC_ALL`, `LC_MESSAGES`, `LANG`, `LANGUAGE` that is
-set (non-empty). A value that starts with `pt` means Portuguese; anything else means English.
+set (non-empty). A value that starts with `pt` means Portuguese; anything else means English
+(`detectLang`, `hooks/i18n.ts`).
 `/askaway lang pt|en` stores the choice in the mod's `$.store` key `lang`; `auto` clears it, and the
-locale decides again. The panel and the band text are translated (`hooks/i18n.ts`, English and
+locale decides again. A stored `pt` or `en` wins over the detected language (`resolveLang`, `hooks/i18n.ts`). The panel and the band text are translated (`hooks/i18n.ts`, English and
 Brazilian Portuguese, with identical key sets). The model-facing lines are always English and are never translated.
 
 ## Band button and toast
 
-- A band row above the prompt (`ui.render` on `AbovePrompt`) shows only while open questions exist:
-  "📥 <n> question(s) waiting · <w> window(s)" with an **Answer** button. The button has hotkey `1`
-  (a bare digit works from an empty composer) and opens the panel.
-- When a new open question arrives, the mod shows one toast: `Askaway: <title>`. A question already
-  waiting when the session starts does not toast; the first poll only primes the seen ids.
+- A band row above the prompt (`ui.render` on `AbovePrompt`, `hooks/band.tsx`) is drawn only while open questions exist
+  and no survey is up. It reads, left to right: the Askaway logo, "<n> questions waiting · <n> groups"
+  (Portuguese: "<n> perguntas aguardando · <n> grupos"; `band.text`, `hooks/i18n.ts`), and an **Answer**
+  button (Portuguese: "Responder"). The button has hotkey `1` (a bare digit works from an empty composer)
+  and opens the panel.
+- When a new open question arrives, the mod shows one toast: `New question: <title>` (Portuguese: `Nova pergunta: <title>`).
+  A question already waiting when the session starts does not toast; the first poll only primes the seen ids.
 
 ## Panel
 
-Pane id `askaway`, title "Askaway". Header "📥 Askaway" with the counter. Status lines sit at the top.
+Pane id `askaway`, title "Askaway" (`hooks/pane.tsx`, `hooks/register.tsx`). Colors are in `hooks/look.ts`.
 
-- **Window selector**: shown only when there are 2 or more windows; one button per window,
-  "<label> (n)", the active one primary.
-- **Question screen**, one question at a time:
-  - a tabs row: one tab per question of the window, "1 Title", "2 Title", … (a question with no
-    title is named by its text, cut short); the current tab is bold. For a window of 2 or more
-    questions a "Submit" tab follows, dim until every question has a pick;
-  - origin line (magenta, bold); a dim risk and age line;
-  - the question, in bold;
-  - the dim JEV line ("🔷 A 82% · B 55%") when any option has a fit;
-  - the numbered options, one per line: "1. Label", with the option's one-line tradeoff dim under
-    it. The recommended option reads "N. Label (Recommended)" and is bold while not picked. The
-    picked option is the primary button;
-  - "N. Other…" is the last option; it opens a text field under it (autofocused; the text is
-    sent on Enter);
-  - a "More" toggle that shows the explanation sections;
-  - the nav row [← Back] [Next →] for a window of 2 or more questions. Next needs a pick on the
-    current question. On the last question Next becomes [Review], which opens the review screen
-    with the button "Submit all (n)".
-- **Choosing**: an option records the pick and moves to the next question. A window with one
-  question submits at once.
-- **Explanations** (per question, behind "More"): 🧭 context, 🔁 analogy, 💡 why <rec>, 🛠️ how,
-  🎁 gains · ⚖️ losses. Each section appears only when its field is set.
-- **Review screen**: "Review your answers"; one row per question (number, question, and the chosen
-  label or "Other: <text>"); a click on a row jumps to that question; buttons [← Back] [Submit all (n)].
-- **Submit all** writes every answer of the window's round at once. Each answer goes through the
-  first-writer-wins path of `a/` (the card fades for 250 ms first). Then the picks of those questions
-  are cleared and the step resets.
-- **Picks** survive a re-poll. Picks for questions that are no longer open are dropped.
-- **Status lines** (newest first), green (`#166534` ink on `#DCFCE7`):
+Draw order, top to bottom: header, tree of the open questions, question card, status lines. The status lines come
+last because they change height as answers are delivered. On the desktop a Button drawn below a block that grows lost
+its presses (the first click was dropped); this is the same finding as another mod's (comment above its
+status list). `hooks/pane.tsx` lines 70-71.
+
+- **Header**: the Askaway logo, then "Questions waiting" ("Perguntas aguardando"; `pane.heading`, `hooks/i18n.ts`), with the counter on the right. The logo is the violet
+  SVG on the desktop (`hooks/logo.ts`, `#8B5CF6`) and the "?" glyph in the accent color on the terminal
+  (`hooks/logo-element.tsx`). The counter reads "<n> pending · <n> groups" ("<n> pendentes · <n> grupos"), or
+  "Nothing pending" ("Nenhuma pendente") when no question is open (`counterText`, `hooks/model.ts`).
+- **Tree of the open questions** (drawn when at least one question is open). The questions are grouped by GROUP =
+  their `project`, in the order of each group's oldest question. Every open group is drawn in turn, one under the other,
+  in a Box keyed `group-<project path>`. No group draws a Button: a group's label is a Text.
+  - Group label: the project's basename with hyphens and underscores turned into spaces, title-cased
+    ("my-sample_project" becomes "My Sample Project"). Session label: the session's title, title-cased the same way;
+    "the session" ("a sessão") when there is no title (`projectLabel`, `sessionLabelOf`, `titleCase`, `hooks/model.ts`).
+    Minor words stay lower-case after the first word (English: a, an, and, as, at, but, by, for, in, of, on, or,
+    the, to, via, with; Portuguese: its own list, `MINOR_WORDS`). A word that already has a capital stays as typed.
+  - **Label of each group**: a bold row. It is in the accent color (`ACCENT_COLOR`, `hooks/look.ts`) for the group on
+    screen (the wizard's `groupKey` while that group is open, else the first open group), and has no color for the others.
+    Its sessions are rows below it: "├ <session>", and
+    "└ <session>" for the last one, indented with the Box's `paddingLeft`. Each question of a session is a row
+    with a mark and its title: ● the question on screen (bold, in the accent color), ✓ picked, ○ not yet picked.
+    The questions of a session that is not the last are indented with `paddingLeft={1}` and prefixed "│  "; those
+    of the last session are indented with `paddingLeft={4}` (`renderSession`, `renderTreeQuestion`, `hooks/pane.tsx`).
+  - The card shows the questions of one group at a time (the group on screen); the other groups stay in the tree only,
+    and the picks of every group are kept.
+- **Question card**, one question at a time, bordered, rows separated by a gap. Top to bottom:
+  - the title row: the question's title, bold, with its risk and age beside it, muted, "<risk label> · <age label>"
+    (`riskLabel`, `ageLabel`); the row wraps the risk under the title when it does not fit. A question with no title is
+    named by its text, cut to 24 characters with "…";
+  - the question text, bold;
+  - the explanation box, when at least one of its sections is set: a box on a light blue ground (`#EFF6FF`, ink
+    `#1F2937`, `EXPLAIN_COLORS`). Its sections, each drawn only when its field is set: 🧭 Context and origin, 🔁 Analogy,
+    💡 Why <rec>, 🛠️ How, one section for gains and losses (🎁 What we gain · ⚖️ What we lose; its heading names only
+    the halves that are set), then ⏱️ Urgency and ↩️ Undo (pt: ⏱️ Urgência, ↩️ Como desfazer). The box sits before the options (`sectionsOf`, `renderExplanation`, `hooks/pane.tsx`, `hooks/model.ts`);
+  - the options, one full-width Button each, "N. Label", with the option's one-line tradeoff dim under it. The options
+    are in a column with `gap={2}` and `marginTop={1}`, so two blank lines part them from the explanation box
+    (`renderQuestion`, `hooks/pane.tsx`). The recommended option reads "N. Label (Recommended)"
+    (Portuguese: "Recomendada") and is bold while not picked. The picked option is the primary button;
+  - "N. Other…" is the last option (Portuguese: "Outra…"). Its button opens and shuts a text field under it
+    (autofocused). Enter in that field ("Done" / "Pronto") records the typed text as the pick (key `other`); blank
+    text records nothing. Once recorded, the text shows under the button and the button is primary. A surface with
+    no Input draws no Other option (`renderOther`);
+  - the nav row: [← Back] (Portuguese: "← Voltar") on every question, dim on the first; [Next →] (Portuguese:
+    "Próxima →") on every question but the last; on the last one, [Submit all (n)] (Portuguese: "Enviar tudo (n)"),
+    where n is the number of questions of the group, dim until every question of the group has a pick.
+- **Hotkeys**: options take the digits 1 to 9 in order; "Other…" takes the next digit (none after nine); Back `b`,
+  Next `n`, Submit all `s`. No hotkey is drawn while the Other field is open, so typed text presses no button.
+- **Choosing**: an option, or "Other…" with its text, records the pick and moves on: to the first question without a
+  pick after the current one (wrapping to the start), or, once every question of the group has a pick, to the last
+  question, where Submit all is. After each pick the group stays selected. Nothing is written until Submit all.
+  A card that is fading after a press takes no pick.
+- **Next** moves to the next question whether or not it has a pick; **Back** moves to the previous one. Next does
+  nothing on the last question.
+- **Submit all (n)** writes every answer of the group's round at once. On each press the card dims at once; each
+  answer then goes through the first-writer-wins path of `a/`, and the card fades for 250 ms (`FADE_MS`). Then the
+  picks of those questions are cleared and the step goes back to the first question. When other groups stay open, the
+  card then shows the first question of the first group still open.
+- **Picks** survive a re-poll. Picks, and an open Other field, of questions that are no longer open are dropped.
+- **Status lines** (bottom of the pane, newest first), green (`#166534` ink on `#DCFCE7`):
   - "⏳ Answer <key> sent to <window>" while the answer has no d/ marker;
-  - "✅ Answer <key> delivered to <window> (read by the session)", hidden 30 s after it is first seen;
+  - "✅ Answer <key> delivered to <window> (read by the session)", hidden 30 s after it is first seen
+    (`DELIVERED_SHOWN_MS`, `hooks/model.ts`);
   - "⚠️ <window> ended before reading answer <key>" and "⚠️ Answer <key> expired unread". The two ⚠️
     lines stay until their ✕ is pressed; the press records the id in `$.store` key `cleared`
     (non-destructive: no q/, a/ or d/ file changes).
-  `<window>` is "<project> · <session_title>".
+  `<window>` is "<project name> · <session title>" (the project's last path segment, then the session title; the
+  part that is missing is left out), the same label that the tree uses for a session.
+
+## Focus and clicks
+
+Decision: every Button of the pane and of the band keeps its press handle across redraws, on the desktop and on the
+terminal alike. The plugin does not hold the focus ring any more (there is no `ui.focus` hook); the engine moves the
+ring as it does for any plugin, and the pane's hotkeys (digits, `b`, `n`, `s`) are the keyboard path on both surfaces.
+
+Why: the engine hands a Button a new press handle on every redraw, unless the very same element object comes back. On
+the desktop a click moves the focus onto the Button, and that move redraws the site just before the press arrives. The
+press then names a retired handle and is dropped, so the first click did nothing and the answer was written by the
+second click (both as reported; the log line "ui_press not handled" is not in this repo).
+
+How (`hooks/held.ts`, `heldButtons()`):
+- `begin()` opens a draw; `end()` lets go of the keys not held since `begin()`.
+- `hold(key, look, onPress, make)` returns the element it made last time for that key when `JSON.stringify(look)` is
+  unchanged, so the engine sees the same element and keeps its handle. A changed look calls `make` for a new element.
+  `look` is everything the Button draws: its label, variant, dim state and hotkey.
+- The press of a held element runs the handler that the latest `hold` stored for its key, so a Button that changed
+  (a new pick, a new question) still runs its current handler.
+- One table per site: `heldFor(surface, requestId)` (`hooks/register.tsx` line 76). The pane's table goes to
+  `renderPane` (`hooks/pane.tsx` line 66) and the band's to `renderBand` (`hooks/band.tsx` line 15). Every Button goes
+  through `hold`: each option, Other…, Back, Next, Submit all, the band's Answer and each status ✕.
+- The Other field is an Input. The engine matches an Input by its key, so the field is not held.
+
+Verification: `tests/askaway.test.ts` tests the table on its own (`heldButtons`), and the engine tests
+`held (terminal)` and `held (desktop)` check that a redraw keeps every Button's handle, and that a press renews only the
+pressed option's. Live check on the desktop (0.3.4, 2026-10-17): every Button answered on the first click, and the
+app log showed no `ui_press not handled` line after the release.
+
+Two guards keep the drawn state from changing for nothing:
+- `tickClock` (`hooks/register.tsx` line 203) counts only the open questions. An answered question draws no age label,
+  so a tick for it alone would redraw an equal pane; the clock is written only when the drawn age labels or status
+  lines change.
+- `pruneWizardState` (`hooks/register.tsx` lines 257-264) skips the write when nothing is open and only the wizard's
+  `groupKey` would change (the field is `groupKey`, `hooks/wizard.ts` line 13). With nothing open the pane draws no
+  card, so that write would only redraw the pane. A group that opens later still starts at step 0.
+
+Known limit: the accent `#1E40AF` (`hooks/look.ts`) is low contrast on a dark theme (2.03:1 on a dark background,
+per the comment in `hooks/look.ts`). The engine gives the mod no theme signal, so the color cannot switch with the theme.
+
+The live desktop check that every button answered the first click (as reported) was made with the former focus
+hook, not with held buttons; it does not cover this version.
 
 ## Polling
 
-The mod lists `q/` and `a/` with `$.fs.list` on a `$.clock` timer every 5 s while the session runs.
+The mod lists `q/`, `a/` and `d/` with `$.fs.list` on a `$.clock` timer every 5 s while the session runs
+(`hooks/register.tsx`: `POLL_MS`, `readBoard`).
 It merges the folder into the board and never takes back an answer that a press wrote: a local
 answer stays while its question is listed and the folder read does not show it yet.
 
@@ -209,8 +289,9 @@ joined by "\n". The d/ markers (`via:"prompt"`) are written first, only where ab
 
 - Never twice: the marker is the guard, and an in-flight guard covers overlapping polls.
 - A busy session gets nothing until its turn completes.
-- If the submit fails after the markers are written, the answers stay marked delivered and the
-  failure is logged (no retry).
+- If the submit fails after the markers are written, the answers stay marked delivered, the failure is logged, and
+  a toast says each answer was not delivered (`toast.undelivered`: "Answer <key> for <id> was not delivered; answer
+  again in the session."). No retry.
 
 ## Model-facing lines (English, never translated; `askaway.py` `_delivery_line` and `model.ts` `deliveryLine` stay identical)
 

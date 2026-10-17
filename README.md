@@ -2,7 +2,7 @@
 
 [![🇺🇸 English](https://img.shields.io/badge/%F0%9F%87%BA%F0%9F%87%B8-English-blue.svg)](README.md) [![🇧🇷 Português (Brasil)](https://img.shields.io/badge/%F0%9F%87%A7%F0%9F%87%B7-Portugu%C3%AAs%20(Brasil)-green.svg)](README.pt-BR.md)
 
-**Askaway is a question inbox for Claude Code:** agents file questions with a recommended default while you are away, you answer them in a real panel, all at once per window, and the work continues on the recommended option unless the question is risky.
+**Askaway is a question inbox for Claude Code:** agents file questions with a recommended default while you are away, you answer them in a real panel, all at once per project, and the work continues on the recommended option unless the question is risky.
 
 <p align="center"><img src="assets/askaway-icon.svg" width="120" alt="Askaway icon"></p>
 
@@ -22,11 +22,12 @@ Askaway does not:
 
 ## ✨ Features
 
-- **One question at a time**, with numbered options, an "Other…" field and a review step.
-- **Submit all**: every answer for one window (one asking session) is written at once.
-- **Band button and toast**: a button above the prompt (hotkey `1`) appears while questions wait, and a toast announces each new one.
-- **Trade-offs and fit**: each option can show a one-line trade-off and a fit score; the recommended option is marked "(Recommended)" in bold.
-- **Explanations on demand**: context, analogy, why, how, gains and losses, behind a "More" toggle.
+- **A tree of open questions**: the pane lists every open question grouped by project, with each session under its project and each question marked as on screen (●), answered (✓) or waiting (○). Every project with open questions is drawn in turn, one under the other; a project's name is text, not a button.
+- **One question card at a time**: the title with its risk and age beside it, the question, its explanation in a highlighted box, then the numbered options (hotkeys 1-9) and an "Other…" field.
+- **Next question after each answer**: picking an option moves to the next question without an answer, so the group comes up in order.
+- **Submit all**: on the project's last question, one button sends every answer of that project at once.
+- **Band button and toast**: a band above the prompt (`{n} questions waiting · {n} groups`, with an **Answer** button on hotkey `1`) opens the pane while questions wait, and a toast announces each new one.
+- **Recommended option**: it says "(Recommended)" in its label and is in bold unless it is the pick.
 - **Two languages**: English and Brazilian Portuguese, from your locale or with `/askaway lang`.
 - **Risk-aware**: a risky question pauses its session until you answer; the others let it continue.
 
@@ -38,7 +39,7 @@ Components and the file flow:
 flowchart LR
     agent["Agent needs a decision"] -->|"ask: writes a question"| folder[("State folder: q/ questions")]
     folder -->|"poll every 5 s"| band["Band button and toast"]
-    band --> panel["Panel: one question at a time, then review"]
+    band --> panel["Panel: tree of questions by project, one card at a time, Submit all"]
     panel -->|"Submit all: writes a/ answers"| answers[("State folder: a/ answers")]
     answers -->|"deliver hook or idle hand-off"| agent
 ```
@@ -137,12 +138,17 @@ To undo: `claude plugin uninstall askaway@askaway`, `claude plugin marketplace r
 
 Answering a question:
 
-1. Press `1` from an empty prompt, or click the band button, to open the panel.
-2. For each question, click an option, or **Other…** and type your own answer. **Next** moves on.
-3. On the review step, check the answers. Click a row to change it.
-4. Click **Submit all**. The answers go to the session that asked. A window with one question submits when you pick its option.
+1. Press `1` from an empty prompt, or click the band's **Answer** button, to open the pane. The header shows the Askaway logo, the heading **Questions waiting** and the count of pending questions and groups.
+2. The tree lists the open questions of the project on screen: its name in dark blue, then each session (`├` or `└`) with its questions under it. A mark says where each question stands: `●` the one on screen, `✓` answered, `○` waiting. The other projects are drawn in turn too, one under the other, with their own sessions and questions; their names are text, not buttons.
+3. The card of the question on screen shows, from top to bottom: the title in bold with its risk and age beside it, the question in bold, the explanation in a highlighted box (context and origin, analogy, why the recommended option, how, what we gain, what we lose, urgency, how to undo), then the options.
+4. Click an option to record it. The pane moves to the next question without an answer (wrapping to the start if needed), or to the last question once every question has one. Nothing is sent yet.
+5. For your own answer, click **Other…**, type it and press Enter. Enter records the text as the answer, the button stays primary and the text shows under it. Hotkeys are off while the field is open.
+6. **Back** (`b`) goes to the previous question. **Next** (`n`) goes to the next question, with or without an answer. It is on every question but the last.
+7. On the project's last question, the forward button is **Submit all (N)**, where N is the number of questions of the project. It is pressable only once every question has an answer. Pressing it (hotkey `s`) sends every answer of the project to the sessions that asked. Nothing is sent before this button.
 
-Each option sits on its own line, with its trade-off under it, like Claude Code's own question dialog. The recommended option says "(Recommended)" in its label and is shown in bold. Press **More** to read the context, the analogy, the reasons and the gains and losses.
+Keys: a digit (1-9) picks the option with that number, `b` is Back, `n` is Next and `s` is Submit all. The band's **Answer** button keeps hotkey `1`.
+
+Each option sits on its own line, with its trade-off under it. The recommended option says "(Recommended)" in its label and is shown in bold unless it is the pick.
 
 ## 🎛️ Configuration
 
@@ -173,12 +179,12 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache b
 | Field | Required | Notes |
 |---|---|---|
 | `question` | yes | Up to 400 characters. |
-| `options` | yes | At least 2 objects with `key` (unique, such as `A`), `label`, and optional `tradeoff` (one line) and `fit` (integer 0-100, or null). |
+| `options` | yes | At least 2 objects with `key` (unique, such as `A`), `label`, and optional `tradeoff` (one line, shown under the option) and `fit` (integer 0-100, or null; stored, not drawn in the panel yet). |
 | `recommended` | yes | One of the option keys. |
 | `title` | no | Up to 60 characters; defaults to the question, clipped. |
 | `context` | no | Up to 600 characters. |
 | `why` | no | One or two sentences on why the recommended option. |
-| `how`, `gains`, `losses`, `analogy`, `urgency`, `undo` | no | Explanation fields for the panel. |
+| `how`, `gains`, `losses`, `analogy`, `urgency`, `undo` | no | Explanation fields, shown in the highlighted box of the card. |
 | `risk` | no | `low` (default), `medium` or `high`. |
 | `pause` | no | `true` pauses the session until you answer. `risk: high` does the same. |
 | `run_kind` | no | `main`, `subagent`, `goal`, `loop`, `bash` or `codex`. |

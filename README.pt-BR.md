@@ -2,7 +2,7 @@
 
 [![🇺🇸 English](https://img.shields.io/badge/%F0%9F%87%BA%F0%9F%87%B8-English-blue.svg)](README.md) [![🇧🇷 Português (Brasil)](https://img.shields.io/badge/%F0%9F%87%A7%F0%9F%87%B7-Portugu%C3%AAs%20(Brasil)-green.svg)](README.pt-BR.md)
 
-**O Askaway é uma caixa de perguntas para o Claude Code:** agentes registram perguntas com uma opção recomendada padrão enquanto você está ausente, você responde no painel, tudo de uma vez por janela, e o trabalho continua na opção recomendada, a menos que a pergunta seja arriscada.
+**O Askaway é uma caixa de perguntas para o Claude Code:** agentes registram perguntas com uma opção recomendada padrão enquanto você está ausente, você responde no painel, tudo de uma vez por projeto, e o trabalho continua na opção recomendada, a menos que a pergunta seja arriscada.
 
 <p align="center"><img src="assets/askaway-icon.svg" width="120" alt="Ícone do Askaway"></p>
 
@@ -22,11 +22,12 @@ O Askaway não:
 
 ## ✨ Recursos
 
-- **Uma pergunta por vez**, com opções numeradas, um campo "Outra resposta…" e uma etapa de revisão.
-- **Enviar tudo**: todas as respostas de uma janela (uma sessão que perguntou) são gravadas de uma vez.
-- **Botão na faixa e aviso**: um botão acima do prompt (atalho `1`) aparece enquanto há perguntas esperando, e um aviso anuncia cada nova pergunta.
-- **Trade-offs e encaixe**: cada opção pode mostrar um trade-off de uma linha e uma pontuação de encaixe; a opção recomendada leva "(Recomendada)" em negrito.
-- **Explicações sob demanda**: contexto, analogia, porquê, como, ganhos e perdas, atrás de um botão "Ver mais".
+- **Uma árvore de perguntas abertas**: o painel lista todas as perguntas abertas agrupadas por projeto, com cada sessão embaixo do seu projeto e cada pergunta marcada como na tela (●), respondida (✓) ou esperando (○). Os outros projetos aparecem em sequência, um embaixo do outro; o nome de cada um é texto, não botão.
+- **Um cartão de pergunta por vez**: o título com o risco e a idade ao lado, a pergunta, a explicação numa caixa destacada e, depois, as opções numeradas (atalhos 1-9) e um campo "Outra…".
+- **Próxima pergunta depois de cada resposta**: escolher uma opção avança para a próxima pergunta sem resposta, então o grupo segue em ordem.
+- **Enviar tudo**: na última pergunta do projeto, um único botão envia todas as respostas desse projeto de uma vez.
+- **Botão na faixa e aviso**: uma faixa acima do prompt (`{n} perguntas aguardando · {n} grupos`, com o botão **Responder** no atalho `1`) abre o painel enquanto há perguntas esperando, e um aviso anuncia cada nova pergunta.
+- **Opção recomendada**: ela leva "(Recomendada)" no rótulo e fica em negrito, a menos que seja a escolhida.
 - **Dois idiomas**: inglês e português do Brasil, pelo locale ou com `/askaway lang`.
 - **Atento ao risco**: uma pergunta arriscada pausa a sua sessão até você responder; as demais deixam a sessão continuar.
 
@@ -38,7 +39,7 @@ Componentes e o fluxo dos arquivos:
 flowchart LR
     agent["Agente precisa de uma decisão"] -->|"ask: grava uma pergunta"| folder[("Pasta de estado: perguntas em q/")]
     folder -->|"consulta a cada 5 s"| band["Botão na faixa e aviso"]
-    band --> panel["Painel: uma pergunta por vez, depois revisão"]
+    band --> panel["Painel: árvore por projeto, um cartão por vez, Enviar tudo"]
     panel -->|"Enviar tudo: grava as respostas em a/"| answers[("Pasta de estado: respostas em a/")]
     answers -->|"hook de entrega ou entrega com sessão ociosa"| agent
 ```
@@ -137,12 +138,17 @@ Para desfazer: `claude plugin uninstall askaway@askaway`, `claude plugin marketp
 
 Como responder uma pergunta:
 
-1. Aperte `1` com o prompt vazio, ou clique no botão da faixa, para abrir o painel.
-2. Em cada pergunta, clique numa opção, ou em **Outra…** e digite a sua resposta. **Próxima** avança.
-3. Na etapa de revisão, confira as respostas. Clique numa linha para mudá-la.
-4. Clique em **Enviar tudo**. As respostas vão para a sessão que perguntou. Uma janela com uma pergunta é enviada quando você escolhe a opção.
+1. Aperte `1` com o prompt vazio, ou clique no botão **Responder** da faixa, para abrir o painel. O cabeçalho mostra o logo do Askaway, o título **Perguntas aguardando** e a contagem de perguntas e grupos pendentes.
+2. A árvore lista as perguntas abertas do projeto na tela: o nome dele em azul-escuro, depois cada sessão (`├` ou `└`) com as suas perguntas embaixo. Uma marca mostra em que pé está cada pergunta: `●` a da tela, `✓` respondida, `○` esperando. Os outros projetos também aparecem em sequência, um embaixo do outro, com as suas sessões e perguntas; o nome de cada um é texto, não botão.
+3. O cartão da pergunta na tela mostra, de cima para baixo: o título em negrito com o risco e a idade ao lado, a pergunta em negrito, a explicação numa caixa destacada (contexto e origem, analogia, por que a opção recomendada, como, o que ganhamos, o que perdemos, urgência, como desfazer) e, depois, as opções.
+4. Clique numa opção para registrá-la. O painel avança para a próxima pergunta sem resposta (voltando ao início se preciso), ou para a última pergunta quando todas já têm uma. Nada é enviado ainda.
+5. Para responder com texto próprio, clique em **Outra…**, digite e aperte Enter. O Enter registra o texto como a resposta, o botão continua em destaque e o texto aparece embaixo dele. Os atalhos ficam desligados enquanto o campo está aberto.
+6. **Voltar** (`b`) vai para a pergunta anterior. **Próxima** (`n`) vai para a próxima pergunta, com ou sem resposta. Ela aparece em todas, menos na última.
+7. Na última pergunta do projeto, o botão de avançar é **Enviar tudo (N)**, em que N é o número de perguntas do projeto. Ele só fica disponível quando todas as perguntas têm resposta. Ao apertá-lo (atalho `s`), todas as respostas do projeto vão para as sessões que perguntaram. Nada é enviado antes desse botão.
 
-Cada opção fica numa linha, com o trade-off embaixo, como o diálogo de perguntas do próprio Claude Code. A opção recomendada diz "(Recomendada)" no rótulo e aparece em negrito. Clique em **Ver mais** para ler o contexto, a analogia, os motivos e os ganhos e perdas.
+Teclas: um dígito (1-9) escolhe a opção com esse número; `b` é Voltar, `n` é Próxima e `s` é Enviar tudo. O botão **Responder** da faixa mantém o atalho `1`.
+
+Cada opção fica numa linha, com o trade-off embaixo. A opção recomendada diz "(Recomendada)" no rótulo e aparece em negrito, a menos que seja a escolhida.
 
 ## 🎛️ Configuração
 
@@ -173,12 +179,12 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache b
 | Campo | Obrigatório | Observações |
 |---|---|---|
 | `question` | sim | Até 400 caracteres. |
-| `options` | sim | Pelo menos 2 objetos com `key` (única, como `A`), `label` e, opcionalmente, `tradeoff` (uma linha) e `fit` (inteiro de 0 a 100, ou null). |
+| `options` | sim | Pelo menos 2 objetos com `key` (única, como `A`), `label` e, opcionalmente, `tradeoff` (uma linha, mostrada embaixo da opção) e `fit` (inteiro de 0 a 100, ou null; guardado, mas ainda não mostrado no painel). |
 | `recommended` | sim | Uma das chaves de opção. |
 | `title` | não | Até 60 caracteres; o padrão é a pergunta, cortada. |
 | `context` | não | Até 600 caracteres. |
 | `why` | não | Uma ou duas frases sobre por que a opção recomendada. |
-| `how`, `gains`, `losses`, `analogy`, `urgency`, `undo` | não | Campos de explicação para o painel. |
+| `how`, `gains`, `losses`, `analogy`, `urgency`, `undo` | não | Campos de explicação, mostrados na caixa destacada do cartão. |
 | `risk` | não | `low` (padrão), `medium` ou `high`. |
 | `pause` | não | `true` pausa a sessão até você responder. `risk: high` faz o mesmo. |
 | `run_kind` | não | `main`, `subagent`, `goal`, `loop`, `bash` ou `codex`. |

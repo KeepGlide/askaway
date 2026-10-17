@@ -1,6 +1,10 @@
 ---
 name: file-question
 description: File a question for the user through the Askaway inbox when you need a decision and the user may be away (bypass permissions, away mode, or an unattended run). Use it instead of guessing or blocking. Each question carries a recommended option you continue with unless the question is paused.
+metadata:
+  domain: agentic
+  owner: sophia-phillipa
+  created: "2026-10-16"
 ---
 
 # Askaway
@@ -21,7 +25,7 @@ later in the Askaway panel, and the answer comes back into your session.
 ## How to file
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache backend","question":"Which cache should the service use?","options":[{"key":"A","label":"Redis","tradeoff":"one more service to run","fit":88},{"key":"B","label":"In-process","tradeoff":"lost on restart","fit":40}],"recommended":"A","why":"Shared across workers.","risk":"low"}'
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache backend","question":"Which cache should the service use?","context":"Sizing the API for three workers; the cache sits in front of the reads.","options":[{"key":"A","label":"Redis","tradeoff":"one more service to run","fit":88},{"key":"B","label":"In-process","tradeoff":"lost on restart","fit":40}],"recommended":"A","why":"Workers share one cache, so a hit on one serves all three.","how":"Redis runs as a container next to the API; the cache client points at it.","gains":"Hits are shared across workers and survive a restart.","losses":"One more service to run and monitor.","risk":"low"}'
 ```
 
 The CLI prints one JSON line: `{"id":"q-...","recommended":"A","action":"continue"}`.
@@ -36,9 +40,12 @@ Fields (SPEC.md, "State folder"):
 | `options` | yes | At least 2 objects: `key` (unique, such as `A`), `label`, optional `tradeoff` (one line), optional `fit` (integer 0-100 or null). |
 | `recommended` | yes | One of the option keys. |
 | `title` | no | Up to 60 characters; defaults to the question, clipped. |
-| `context` | no | Up to 600 characters. |
-| `why` | no | One or two sentences on why the recommended option. |
-| `how`, `gains`, `losses`, `analogy`, `urgency`, `undo` | no | Explanation fields for the panel. |
+| `context` | no, always fill | Where the question comes from: the task and the step that stopped. Up to 600 characters. |
+| `why` | no, always fill | One or two sentences on why the recommended option. |
+| `how` | no, always fill | One or two sentences on how the recommended option works. Up to 400 characters. |
+| `gains` | no, always fill | One or two sentences on what the user gains with it. Up to 300 characters. |
+| `losses` | no, always fill | One or two sentences on what the user gives up or risks with it. Up to 300 characters. |
+| `analogy`, `urgency`, `undo` | no | Add `analogy` when a comparison makes the trade-off clear, `urgency` when there is a deadline (e.g. `Blocks in ~8 min`), `undo` when reversing the choice is costly (e.g. `changing later ≈ 10 min`). |
 | `risk` | no | `low` (default), `medium` or `high`. |
 | `pause` | no | `true` pauses this session until the user answers. |
 | `run_kind` | no | `main`, `subagent`, `goal`, `loop`, `bash` or `codex`. |
@@ -63,7 +70,12 @@ Do not pass `session` or `project`: the CLI fills them from the environment and 
 ## Rules
 
 - File one question per decision. Do not file the same question twice.
-- Keep `question` and `options` short and concrete; add `how`, `gains` and `losses`
-  only when they help the user choose.
+- Fill `context`, `why`, `how`, `gains` and `losses` in every question, one or two
+  sentences each, so the user can judge the trade-off in the panel without opening
+  the conversation.
+- When the option has no material gain or loss, say so in that field and name the
+  smallest real one. Never leave a field empty or write a placeholder.
+- Add `analogy`, `urgency` or `undo` when the table says they help.
+- Keep `question` and `options` short and concrete.
 - Never invent an answer, and never file a question to hand over routine work.
 - Never call `answer` yourself: only the user answers.
