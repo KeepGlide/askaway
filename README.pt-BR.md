@@ -8,7 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Acesso antecipado (0.4.0-beta.5):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável.
+> ⚠️ **Acesso antecipado (0.4.0-beta.6):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável.
 
 ## 💡 O que é
 
@@ -23,15 +23,19 @@ O agente segue trabalhando no que não depende da sua resposta. Ao voltar, o toa
 - **O que ganhamos** e **O que perdemos** com ela;
 - **Urgência:** se bloqueia e quando;
 - **Como desfazer:** o que custa mudar a escolha depois;
-- **cada opção** com o seu trade-off e uma nota de aderência.
+- **cada opção** com o seu trade-off e a nota de aderência, desenhada depois dele como `· fit 88`.
 
-Você escolhe uma opção ou escreve a sua, avança para a próxima pergunta pelos botões ou pelas teclas de atalho e envia todas as respostas de uma vez. Cada uma é entregue automaticamente à sessão que perguntou, sem nenhum passo seu.
+Você escolhe uma opção ou escreve a sua, avança para a próxima pergunta pelos botões ou pelas teclas de atalho e envia todas as respostas do grupo com **Enviar tudo**. Cada uma é entregue automaticamente à sessão que perguntou, sem nenhum passo seu.
+
+![O painel do Askaway ao lado dos painéis Context e Environment: dois projetos, quatro sessões, cinco perguntas, um cartão aberto](assets/window-en.png)
+
+O Askaway faz mais do que te dar tempo para responder sem parar o agente. Cada pergunta chega com o contexto, a comparação, o raciocínio e o custo de cada opção, então você decide com os mesmos fatos que o agente tinha, e decide bem.
 
 O Askaway não:
 
-- responde por você: só você responde, o agente nunca responde;
+- responde por você: agentes não devem responder perguntas. A CLI tem um comando `answer`, e a skill proíbe os agentes de chamá-lo;
 - faz chamadas de rede: perguntas e respostas são arquivos na sua máquina;
-- para o trabalho a cada pergunta: só as perguntas arriscadas pausam a sessão que perguntou.
+- para o trabalho a cada pergunta: só uma pergunta arriscada pausa uma sessão, e só a sessão cujo id a pergunta traz.
 
 ## ✨ Vantagens
 
@@ -39,7 +43,7 @@ O Askaway não:
 - **Uma árvore por projeto e sessão.** Cada projeto com perguntas abertas é um grupo, com as sessões e as perguntas dele logo abaixo.
 - **Uma opção recomendada.** Cada pergunta traz a opção que o agente escolheria, então a sessão segue trabalhando em vez de esperar por você.
 - **Primeiro clique no desktop.** Cada botão mantém o seu identificador de clique entre as redesenhas (`hooks/held.ts`), que era a causa do primeiro clique que o desktop perdia.
-- **Pausa conforme o risco.** Uma pergunta marcada como `high`, ou que o agente define como pausa, pausa a sessão que perguntou. As outras deixam a sessão continuar.
+- **Pausa conforme o risco.** Uma pergunta marcada como `high`, ou que o agente define como pausa, pausa a sessão cujo id ela traz. Uma pergunta registrada sem id de sessão, como a do Codex, não pausa nada. As outras deixam a sessão continuar.
 - **Dois idiomas.** Inglês e português do Brasil, pelo seu locale ou com `/askaway lang`.
 
 ## ⚙️ Como funciona
@@ -78,15 +82,15 @@ sequenceDiagram
 
 ## 📋 Requisitos
 
-- Claude Code que carrega mods e ganchos de plugins. Última verificação com o Claude Code 2.1.296 (`claude --version`).
-- Python 3 como `python3` no seu `PATH`, só com a biblioteca padrão. Última verificação com o Python 3.12.3.
+- Claude Code que carrega mods e ganchos de plugins. Testado com o Claude Code 2.1.296 (`claude --version`).
+- Python 3.12 ou mais novo como `python3` no seu `PATH`, só com a biblioteca padrão (o script usa o comando `type`). Testado com o Python 3.12.3.
 - Nenhuma conta, serviço ou chave de API.
 
 ## 🚀 Instalação
 
 O catálogo fica em [KeepGlide/claude-plugins](https://github.com/KeepGlide/claude-plugins), o marketplace da KeepGlide. Este repositório guarda só o plugin Askaway.
 
-Um comando instala o marketplace e o plugin (Claude Code 2.1.292 ou mais novo):
+Um comando instala o marketplace e o plugin (testado com o Claude Code 2.1.296):
 
 ```bash
 claude plugin install askaway --marketplace KeepGlide/claude-plugins
@@ -126,7 +130,7 @@ Regras básicas:
 - 🧑 precisa de aprovação do usuário: os passos 3, 4 e 9 mudam a configuração do Claude Code ou abrem o painel dele.
 - 💸 Nenhum passo custa dinheiro. O Askaway não faz chamadas de rede.
 - Plataformas: os passos de shell foram verificados só no Linux.
-- `${CLAUDE_PLUGIN_ROOT}` é a pasta do plugin `askaway` instalado. O Claude Code define essa variável para ganchos e skills; num shell, defina-a você mesmo antes dos comandos. Cada comando leva o próprio `ASKAWAY_HOME`, então a pasta de teste nunca toca a pasta de estado real.
+- `${CLAUDE_PLUGIN_ROOT}` é a pasta do plugin `askaway` instalado, a que os ganchos e a skill usam; num shell, defina-a você mesmo antes dos comandos. Cada comando leva o próprio `ASKAWAY_HOME`, então a pasta de teste nunca toca a pasta de estado real.
 
 | # | Passo | Rodar | Expect |
 |---|---|---|---|
@@ -136,8 +140,8 @@ Regras básicas:
 | 4 | 🧑 Instalar o plugin | `claude plugin install askaway@keepglide` | Código de saída 0; `claude plugin list` mostra `askaway@keepglide`. |
 | 5 | Criar uma pasta de estado de teste | `mkdir -p /tmp/askaway-test` | Código de saída 0; a pasta está vazia. |
 | 6 | Verificar o modo ausente | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" away status` | Imprime `{"away": false}`. |
-| 7 | Registrar uma pergunta de teste | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Test","question":"Pick A?","options":[{"key":"A","label":"Yes"},{"key":"B","label":"No"}],"recommended":"A"}'` | Imprime `{"id": "q-…", "recommended": "A", "action": "continue"}`. |
-| 8 | Verificar a regra de pausa | Passo 7 de novo, com `"risk":"high"` acrescentado ao JSON | Imprime `"action": "pause"`. |
+| 7 | Registrar uma pergunta de teste | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Test","question":"Pick A?","context":"Install spec check of the Askaway CLI.","options":[{"key":"A","label":"Yes","tradeoff":"Safe to accept and easy to change later","fit":90},{"key":"B","label":"No","tradeoff":"Keeps the current behavior","fit":10}],"recommended":"A","why":"A is the safe default for this test.","how":"The session continues on A at once.","gains":"The check finishes without a human.","losses":"Nothing is changed by the test.","analogy":"A dry run before the real job.","urgency":"Can wait","undo":"changing later ≈ 1 min","risk":"low"}'` | Imprime `{"id": "q-…", "recommended": "A", "action": "continue"}`. |
+| 8 | Verificar a regra de pausa | Passo 7 de novo, com `"risk":"high"` no lugar de `"risk":"low"` | Imprime `"action": "pause"`. |
 | 9 | 🧑 Abrir o painel (numa sessão do Claude Code) | `/askaway` | A janela do painel do Askaway abre. |
 | 10 | Devolver ao usuário | nenhum | Informe cada resultado, a pasta `/tmp/askaway-test` e qualquer passo pulado. Peça ao usuário para apagar `/tmp/askaway-test`. |
 
@@ -151,12 +155,12 @@ Os agentes registram perguntas em vez de parar. Você responde no painel, um car
 
 ![A faixa do Askaway acima do prompt](assets/band-en.png)
 
-Enquanto há perguntas abertas, uma faixa fica acima do prompt: `2 perguntas aguardando · 1 grupo`, com um botão **Responder** na tecla `1`. Um aviso anuncia cada pergunta nova.
+Enquanto há perguntas abertas, uma faixa fica acima do prompt: `2 perguntas aguardando · 1 grupo`, com um botão **Responder** na tecla `1`. Um aviso anuncia cada pergunta nova que chega com a sessão aberta; as perguntas já abertas quando ela começa não geram aviso.
 
 ### Responder uma pergunta
 
 1. Aperte `1` com o prompt vazio, ou clique em **Responder** na faixa, para abrir o painel. O cabeçalho mostra o logo do Askaway, o título **Perguntas aguardando** e o contador, como `2 pendentes · 1 grupo`.
-2. A árvore lista cada projeto com perguntas abertas, um abaixo do outro. O projeto na tela fica na cor de destaque. Embaixo de cada projeto, as sessões (`├` ou `└`) guardam as suas perguntas. Uma marca mostra em que ponto está cada pergunta: `●` a que está na tela, `✓` respondida, `○` aguardando. Os nomes de projeto e de sessão são texto, não botões.
+2. A árvore lista cada projeto com perguntas abertas, um abaixo do outro. O projeto na tela fica na cor de destaque. Embaixo de cada projeto, as sessões (`├` ou `└`) guardam as suas perguntas. Uma marca mostra em que ponto está cada pergunta: `●` a que está na tela, `✓` com opção escolhida, `○` aguardando. Nada é enviado até **Enviar tudo**. Os nomes de projeto e de sessão são texto, não botões.
 3. Clique numa opção para registrá-la. O painel avança para a próxima pergunta sem resposta, voltando ao início se preciso, ou para a última pergunta quando todas já têm resposta. Nada é enviado ainda.
 4. Para responder com as suas palavras, clique em **Outra…**, digite e aperte Enter (o botão do campo diz **Pronto**). O texto vira a resposta, e as teclas ficam desligadas enquanto o campo estiver aberto.
 5. **← Voltar** vai para a pergunta anterior. **Próxima →** vai para a seguinte, com ou sem resposta. Ele aparece em todas as perguntas, menos na última.
@@ -168,19 +172,19 @@ As linhas de estado no fim do painel mostram onde está cada resposta: `⏳` env
 
 O cartão desenha estas partes de cima para baixo. Os rótulos são os do painel em português (pt-BR).
 
-1. **Linha do título:** o título em negrito, seguido do rótulo de risco e da idade, por exemplo `⚠️ risco médio · há 12 min`. Sem título, o texto da pergunta é cortado em 24 caracteres e mostrado no lugar. O risco quebra para baixo do título quando não cabe na linha.
+1. **Linha do título:** o título em negrito, seguido do rótulo de risco e da idade, por exemplo `⚠️ risco médio · há 12 min`. Uma pergunta registrada sem `title` recebe a pergunta cortada em 60 caracteres como título (a CLI faz isso). O painel corta em 24 caracteres só um título armazenado vazio. O risco quebra para baixo do título quando não cabe na linha.
 2. **A pergunta:** o texto da pergunta, em negrito. Sempre presente.
-3. **A caixa de explicação:** uma caixa azul-clara, desenhada só quando o agente preencheu pelo menos um dos campos abaixo. Cada seção é uma linha, `título: texto`, e cada uma só aparece quando o seu campo está preenchido:
+3. **O bloco de explicação:** o bloco abaixo da pergunta, desenhado só quando pelo menos um dos campos abaixo está preenchido. Cada seção é uma linha, `título: texto`, e cada uma só aparece quando o seu campo está preenchido:
    - **🧭 Contexto e origem** (`context`): de onde vem a pergunta.
    - **🔁 Analogia** (`analogy`): uma comparação que deixa a troca clara.
    - **💡 Por que A** (`why`): por que a opção recomendada. A letra é a chave recomendada.
    - **🛠️ Como** (`how`): como a opção recomendada funciona.
-   - **🎁 O que ganhamos · ⚖️ O que perdemos** (`gains`, `losses`): uma seção só. O título cita apenas as metades preenchidas.
+   - **🎁 O que ganhamos** (`gains`) e **⚖️ O que perdemos** (`losses`): duas seções, cada uma desenhada só quando o campo está preenchido.
    - **⏱️ Urgência** (`urgency`): o prazo, quando existe.
-   - **↩️ Como desfazer** (`undo`): o custo de reverter a escolha, quando ele é alto.
+   - **↩️ Como desfazer** (`undo`): o custo de reverter a escolha; desenhado sempre que estiver preenchido.
 
-   A skill pede que os agentes preencham contexto, por que, como, ganhos e perdas em toda pergunta, então essas seções costumam aparecer. Analogia, urgência e desfazer aparecem só quando o agente as preencheu. Nomes que o agente escreveu como comandos de barra ou entre crases ficam na cor de destaque.
-4. **As opções:** numeradas `1. Rótulo`, cada uma numa linha própria, com a troca dela embaixo. A opção recomendada traz `(Recomendada)` depois do rótulo e fica em negrito até ser escolhida. A opção escolhida é o botão preenchido. A última é **Outra…**, com o número seguinte ao das opções.
+   A CLI exige todos esses campos, então todo cartão registrado por ela traz todos. Nomes que o agente escreveu como comandos de barra ou entre crases ficam na cor de destaque.
+4. **As opções:** numeradas `1. Rótulo`, cada uma numa linha própria, com a troca dela embaixo e a nota de aderência depois da troca, como `· fit 88`. A opção recomendada traz `(Recomendada)` depois do rótulo e fica em negrito até ser escolhida. A opção escolhida é o botão preenchido. A última é **Outra…**, com o número seguinte ao das opções.
 5. **A linha de navegação:** **← Voltar** (apagado na primeira pergunta), **Próxima →** (em todas, menos na última), ou na última **Enviar tudo (N)** (veja o passo 6 acima).
 
 ### Rótulo de risco
@@ -219,11 +223,13 @@ O modo ausente é uma das três formas de o agente saber que você está ausente
 
 ## 🧠 Como os agentes registram perguntas
 
-Cada agente lê a skill `skills/file-question/SKILL.md` e registra a pergunta com a CLI, em vez de perguntar e esperar. Um agente registra uma pergunta quando qualquer uma destas condições vale:
+Cada agente lê a skill `plugins/askaway/skills/file-question/SKILL.md` e registra a pergunta com a CLI, em vez de perguntar e esperar. Um agente registra uma pergunta quando qualquer uma destas condições vale:
 
 - o modo de permissão é `bypassPermissions`;
 - o modo ausente está ligado (`away.json` tem `"on": true`);
 - a variável de ambiente `CLAUDE_CODE_SESSION_ATTENDED` é `0`.
+
+O gancho `ask-guard` roda antes de toda chamada de `AskUserQuestion`. Quando uma dessas condições vale, ele recusa a chamada e entrega ao agente um esqueleto JSON de cada pergunta, com os campos a preencher, para registrar com a CLI. Nada é guardado até o agente registrar.
 
 Fora disso, a pergunta é feita no Claude Code como de costume. A CLI imprime uma linha JSON:
 
@@ -238,22 +244,22 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache b
 | Campo | Obrigatório | Observações |
 |---|---|---|
 | `question` | sim | Até 400 caracteres. |
-| `options` | sim | Pelo menos 2 objetos com `key` (única, como `A`), `label` e, opcionais, `tradeoff` (uma linha; as regras abaixo dizem o que ela traz) e `fit` (inteiro de 0 a 100, ou nulo). O painel ainda não desenha `fit`. |
+| `options` | sim | Pelo menos 2 objetos, cada um com `key` única (como `A`), `label`, `tradeoff` e `fit`. `tradeoff` (até 300 caracteres) e `fit` (inteiro de 0 a 100) são obrigatórios em toda opção; `fit` nulo é recusado. O painel desenha o fit depois da troca, como `· fit 88`. |
 | `recommended` | sim | Uma das chaves das opções. |
-| `title` | não | Até 60 caracteres; o padrão é a pergunta, cortada. |
-| `context` | não, sempre preencher | De onde vem a pergunta: a tarefa e o passo que parou. Até 600 caracteres. |
-| `why` | não, sempre preencher | Uma ou duas frases sobre por que a opção recomendada. Até 300 caracteres. |
-| `how` | não, sempre preencher | Uma ou duas frases sobre como a opção recomendada funciona. Até 400 caracteres. |
-| `gains` | não, sempre preencher | Uma ou duas frases sobre o que o usuário ganha com ela. Até 300 caracteres. |
-| `losses` | não, sempre preencher | Uma ou duas frases sobre o que o usuário abre mão ou arrisca com ela. Até 300 caracteres. |
-| `analogy`, `urgency`, `undo` | não | Use `analogy` quando uma comparação deixa a troca clara, `urgency` quando há prazo (por exemplo `Blocks in ~8 min`), `undo` quando reverter a escolha é caro (por exemplo `changing later ≈ 10 min`). Até 300 caracteres cada. |
+| `title` | não | Até 60 caracteres. Quando falta, a pergunta é cortada em 60 caracteres e usada como título. |
+| `context` | sim | De onde vem a pergunta: a tarefa e o passo que parou. Até 600 caracteres. |
+| `why` | sim | Uma ou duas frases sobre por que a opção recomendada. Até 300 caracteres. |
+| `how` | sim | Uma ou duas frases sobre como a opção recomendada funciona. Até 400 caracteres. |
+| `gains` | sim | Uma ou duas frases sobre o que o usuário ganha com ela. Até 300 caracteres. |
+| `losses` | sim | Uma ou duas frases sobre o que o usuário abre mão ou arrisca com ela. Até 300 caracteres. |
+| `analogy`, `urgency`, `undo` | sim | `analogy` é uma comparação que deixa a troca clara; `urgency` é o prazo, como `Can wait` ou `Blocks in ~8 min`; `undo` é o custo de reverter a escolha, como `changing later ≈ 10 min`. Até 300 caracteres cada. |
 | `risk` | não | O risco de aceitar a opção recomendada: `low` (padrão) é seguro de aceitar e fácil de mudar depois; `medium` é reversível, mas custa retrabalho; `high` é irreversível, ou toca arquivos reais, credenciais ou dinheiro, e pausa a sessão. |
 | `pause` | não | `true` pausa esta sessão até o usuário responder. |
 | `run_kind` | não | `main`, `subagent`, `goal`, `loop`, `bash` ou `codex`. |
 
 Não passe `session` nem `project`: a CLI os preenche a partir do ambiente e do diretório de trabalho. Texto acima do limite é cortado, não recusado.
 
-Depois de registrar, o agente continua na `recommended`, a menos que a saída traga `"action": "pause"`. Uma entrada inválida imprime `"action": "continue"` com um campo `error`, por exemplo `options must be a list of at least 2 items` (mensagem da CLI, em inglês).
+Depois de registrar, o agente continua na `recommended`, a menos que a saída traga `"action": "pause"`. Uma entrada inválida imprime `"action": "refile"` com um `error` que cita os campos que faltam, por exemplo `missing fields: analogy; option A: fit` (mensagem da CLI, em inglês). O agente completa esses campos e registra a pergunta de novo; nunca segue sem registrar. Só uma falha interna imprime `"action": "continue"` com `"error": "internal error"`, e então nada foi registrado.
 
 ## 🗂️ Pasta de estado
 
@@ -262,24 +268,28 @@ Depois de registrar, o agente continua na `recommended`, a menos que a saída tr
 ├── q/<id>.json   a pergunta, gravada uma vez
 ├── a/<id>.json   a resposta, vale a primeira gravação
 ├── d/<id>.json   a marca de entrega
-└── away.json     modo ausente: {"on": true, "ts": ...}
+├── away.json     modo ausente: {"on": true, "ts": ...}
+└── last_prune    quando a última limpeza rodou (a data de modificação)
 ```
+
+As gravações passam antes por um arquivo oculto `.<nome>.<hex>.tmp` e depois são renomeadas no lugar; a limpeza remove os arquivos `.tmp` antigos.
 
 `ASKAWAY_HOME` substitui `~/.claude/state/askaway`. O contrato completo está em [plugins/askaway/SPEC.md](plugins/askaway/SPEC.md).
 
 ## 🔒 Privacidade
 
-- Perguntas, respostas e marcas de entrega são arquivos JSON simples na sua pasta de estado. Nada sai da sua máquina.
+- Perguntas, respostas e marcas de entrega são arquivos JSON simples na sua pasta de estado. Os arquivos nunca saem da sua máquina. O texto da resposta é injetado no prompt da sessão que perguntou, então chega ao modelo que essa sessão usa.
 - O Askaway não faz chamadas de rede próprias.
 - O texto da pergunta é o que o agente escreveu. Mantenha segredos fora dele.
-- Uma resposta que nenhuma sessão consegue receber é encerrada como expirada depois de 7 dias.
+- Uma resposta ainda não lida 7 dias depois de enviada é encerrada como expirada. A verificação roda sob demanda, nos ganchos de qualquer sessão, e vale mesmo que a sessão que perguntou ainda esteja viva. Uma resposta cuja sessão que perguntou foi liberada pelo Claude Desktop é encerrada na hora, assim que o gancho de qualquer sessão rodar.
 
 ## 🩺 Solução de problemas
 
 | Sintoma | Causa provável | Correção |
 |---|---|---|
 | Sem botão na faixa e sem aviso | Nenhuma pergunta está aberta, ou esta versão do Claude Code não carrega mods | Rode `/askaway`. Se não estiver disponível, confira a versão do Claude Code (veja Requisitos). |
-| A CLI imprime `"action": "continue"` com um `error` | A entrada é inválida, por exemplo tem menos de duas opções | Corrija o campo citado em `error` e registre a pergunta de novo. |
+| A CLI imprime `"action": "refile"` com um `error` | A entrada é inválida ou está incompleta, por exemplo falta um campo, `fit` é nulo ou há menos de duas opções | Complete os campos citados em `error` e registre a pergunta de novo. |
+| A CLI imprime `"error": "internal error"` | Falha interna; nada foi registrado | Siga na opção recomendada e informe o texto do erro. |
 | O painel está no idioma errado | As variáveis de locale dizem outra coisa | Rode `/askaway lang en` ou `/askaway lang pt-BR`. |
 | Uma resposta nunca chega à sessão | A sessão ainda não leu, ou a resposta expirou depois de 7 dias | Confira com `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" status <id>`; a linha de estado no painel mostra o estado da entrega. |
 

@@ -8,7 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Early access (0.4.0-beta.5):** the mod API moves between Claude Code releases, so expect changes until a stable release.
+> ⚠️ **Early access (0.4.0-beta.6):** the mod API moves between Claude Code releases, so expect changes until a stable release.
 
 ## 💡 What it is
 
@@ -23,15 +23,19 @@ The agent keeps doing what does not depend on your answer. When you are back, th
 - **What we gain** and **What we lose** with it;
 - **Urgency:** whether it blocks and when;
 - **Undo:** what it costs to change the choice later;
-- **each option** with its trade-off and a fit score.
+- **each option** with its trade-off and its fit score, drawn after the trade-off as `· fit 88`.
 
-You pick an option or write your own, move to the next question with the buttons or the hotkeys, and submit all the answers at once. Each one is delivered automatically to the session that asked, with no step on your side.
+You pick an option or write your own, move to the next question with the buttons or the hotkeys, and send all the answers of the group with **Submit all**. Each one is delivered automatically to the session that asked, with no step on your side.
+
+![The Askaway pane beside the Context and Environment panes: two projects, four sessions, five questions, one card open](assets/window-en.png)
+
+Askaway does more than give you time to answer without stopping the agent. Every question arrives with the context, the comparison, the reasoning and the cost of each option, so you decide with the same facts the agent had, and decide well.
 
 Askaway does not:
 
-- answer for you: only you answer, the agent never does;
+- answer for you: agents must not answer a question. The CLI has an `answer` command, and the skill forbids agents to call it;
 - make network calls: questions and answers are files on your machine;
-- stop the work for every question: only risky questions pause the session that asked.
+- stop the work for every question: only a risky question pauses a session, and only the session whose id the question carries.
 
 ## ✨ Advantages
 
@@ -39,7 +43,7 @@ Askaway does not:
 - **A tree by project and session.** Each project with open questions is a group, with its sessions and their questions under it.
 - **A recommended default.** Every question carries the option the agent would take, so the session keeps working instead of waiting for you.
 - **First click on the desktop.** Each button keeps its press handle across redraws (`hooks/held.ts`), which is the cause of the first click the desktop used to drop.
-- **Risk-aware pausing.** A question marked `high`, or one the agent sets to pause, pauses the session that asked. The others let it continue.
+- **Risk-aware pausing.** A question marked `high`, or one the agent sets to pause, pauses the session whose id it carries. A question filed without a session id, such as one from Codex, pauses nothing. The others let the session continue.
 - **Two languages.** English and Brazilian Portuguese, from your locale or with `/askaway lang`.
 
 ## ⚙️ How it works
@@ -78,15 +82,15 @@ sequenceDiagram
 
 ## 📋 Requirements
 
-- Claude Code that loads mods and plugin hooks. Last checked with Claude Code 2.1.296 (`claude --version`).
-- Python 3 as `python3` on your `PATH`, standard library only. Last checked with Python 3.12.3.
+- Claude Code that loads mods and plugin hooks. Tested with Claude Code 2.1.296 (`claude --version`).
+- Python 3.12 or newer as `python3` on your `PATH`, standard library only (the script uses the `type` statement). Tested with Python 3.12.3.
 - No account, service or API key.
 
 ## 🚀 Installation
 
 The catalog lives in [KeepGlide/claude-plugins](https://github.com/KeepGlide/claude-plugins), the KeepGlide marketplace. This repository holds only the Askaway plugin.
 
-One command installs the marketplace and the plugin (Claude Code 2.1.292 or later):
+One command installs the marketplace and the plugin (tested with Claude Code 2.1.296):
 
 ```bash
 claude plugin install askaway --marketplace KeepGlide/claude-plugins
@@ -126,7 +130,7 @@ Ground rules:
 - 🧑 needs the user's OK: steps 3, 4 and 9 change Claude Code's configuration or open its panel.
 - 💸 No step costs money. Askaway makes no network calls.
 - Platforms: the shell steps were checked on Linux only.
-- `${CLAUDE_PLUGIN_ROOT}` is the installed `askaway` plugin folder. Claude Code sets it for hooks and skills; in a shell, set it yourself before the commands. Each command carries its own `ASKAWAY_HOME`, so the test folder never touches the real state folder.
+- `${CLAUDE_PLUGIN_ROOT}` is the installed `askaway` plugin folder, the one the hooks and the skill use. In a shell, set it yourself before the commands. Each command carries its own `ASKAWAY_HOME`, so the test folder never touches the real state folder.
 
 | # | Step | Run | Expect |
 |---|---|---|---|
@@ -136,8 +140,8 @@ Ground rules:
 | 4 | 🧑 Install the plugin | `claude plugin install askaway@keepglide` | Exit 0; `claude plugin list` shows `askaway@keepglide`. |
 | 5 | Make a test state folder | `mkdir -p /tmp/askaway-test` | Exit 0; the folder is empty. |
 | 6 | Check away mode | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" away status` | Prints `{"away": false}`. |
-| 7 | File a test question | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Test","question":"Pick A?","options":[{"key":"A","label":"Yes"},{"key":"B","label":"No"}],"recommended":"A"}'` | Prints `{"id": "q-…", "recommended": "A", "action": "continue"}`. |
-| 8 | Check the pause rule | Step 7 again, with `"risk":"high"` added to the JSON | Prints `"action": "pause"`. |
+| 7 | File a test question | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Test","question":"Pick A?","context":"Install spec check of the Askaway CLI.","options":[{"key":"A","label":"Yes","tradeoff":"Safe to accept and easy to change later","fit":90},{"key":"B","label":"No","tradeoff":"Keeps the current behavior","fit":10}],"recommended":"A","why":"A is the safe default for this test.","how":"The session continues on A at once.","gains":"The check finishes without a human.","losses":"Nothing is changed by the test.","analogy":"A dry run before the real job.","urgency":"Can wait","undo":"changing later ≈ 1 min","risk":"low"}'` | Prints `{"id": "q-…", "recommended": "A", "action": "continue"}`. |
+| 8 | Check the pause rule | Step 7 again, with `"risk":"high"` instead of `"risk":"low"` | Prints `"action": "pause"`. |
 | 9 | 🧑 Open the panel (in a Claude Code session) | `/askaway` | The Askaway panel opens. |
 | 10 | Hand back to the user | none | Report each result, the folder `/tmp/askaway-test` and any skipped step. Ask the user to delete `/tmp/askaway-test`. |
 
@@ -151,12 +155,12 @@ Agents file questions instead of stopping. You answer them in the panel, one car
 
 ![The Askaway band above the prompt](assets/band-en.png)
 
-While questions are open, a band sits above the prompt: `2 questions waiting · 1 group`, with an **Answer** button on hotkey `1`. A toast announces each new question.
+While questions are open, a band sits above the prompt: `2 questions waiting · 1 group`, with an **Answer** button on hotkey `1`. A toast announces each new question that arrives while the session is open; questions already open when it starts get no toast.
 
 ### Answering a question
 
 1. Press `1` from an empty prompt, or click **Answer** on the band, to open the pane. The header shows the Askaway logo, the heading **Questions waiting** and the counter, such as `2 pending · 1 group`.
-2. The tree lists every project with open questions, one under the other. The project on screen is in the accent color. Under each project, its sessions (`├` or `└`) hold their questions. A mark shows where each question stands: `●` the one on screen, `✓` answered, `○` waiting. Project and session names are text, not buttons.
+2. The tree lists every project with open questions, one under the other. The project on screen is in the accent color. Under each project, its sessions (`├` or `└`) hold their questions. A mark shows where each question stands: `●` the one on screen, `✓` a picked option, `○` waiting. Nothing is sent until **Submit all**. Project and session names are text, not buttons.
 3. Click an option to record it. The pane moves to the next question without an answer, wrapping to the start if needed, or to the last question once every question has one. Nothing is sent yet.
 4. For your own answer, click **Other…**, type it and press Enter (the field's button reads **Done**). The text is recorded as the answer, and the hotkeys stay off while the field is open.
 5. **← Back** goes to the previous question. **Next →** goes to the next one, with or without an answer. It is on every question but the last.
@@ -168,19 +172,19 @@ Status lines at the bottom of the pane show where each answer is: `⏳` sent, `�
 
 The card draws these parts from top to bottom. The labels are the English ones; the panel shows them in Portuguese when the language is `pt-BR`.
 
-1. **Title row:** the title in bold, then the risk label and the age, for example `⚠️ medium risk · 12 min ago`. With no title, the question text is cut to 24 characters and shown in its place. The risk wraps under the title when there is no room.
+1. **Title row:** the title in bold, then the risk label and the age, for example `⚠️ medium risk · 12 min ago`. A question filed without `title` gets its question clipped to 60 characters as its title (the CLI does it). The pane cuts a stored empty title to 24 characters. The risk wraps under the title when there is no room.
 2. **The question:** the question text, in bold. Always present.
-3. **The explanation box:** a light blue box, drawn only when the agent filled at least one of the fields below. Each section is one line, `heading: text`, and each is drawn only when its field is set:
+3. **The explanation block:** the block under the question, drawn only when at least one of the fields below is set. Each section is one line, `heading: text`, and each is drawn only when its field is set:
    - **🧭 Context and origin** (`context`): where the question comes from.
    - **🔁 Analogy** (`analogy`): a comparison that makes the trade-off clear.
    - **💡 Why A** (`why`): why the recommended option. The letter is the recommended key.
    - **🛠️ How** (`how`): how the recommended option works.
-   - **🎁 What we gain · ⚖️ What we lose** (`gains`, `losses`): one section. Its heading names only the halves that are set.
+   - **🎁 What we gain** (`gains`) and **⚖️ What we lose** (`losses`): two sections, each drawn only when its field is set.
    - **⏱️ Urgency** (`urgency`): the deadline, when there is one.
-   - **↩️ Undo** (`undo`): the cost of reversing the choice, when it is high.
+   - **↩️ Undo** (`undo`): the cost of reversing the choice; drawn whenever it is filled.
 
-   The skill asks agents to fill context, why, how, gains and losses on every question, so those usually appear. Analogy, urgency and undo appear only when the agent set them. Names the agent wrote as slash commands or in backticks are drawn in the accent color.
-4. **The options:** numbered `1. Label`, each on its own line with its trade-off under it. The recommended option reads `(Recommended)` after its label and is bold until it is picked. The picked option is the filled button. The last one is **Other…**, with the next number after the options.
+   The CLI requires all of these fields, so every card filed through it carries them all. Names the agent wrote as slash commands or in backticks are drawn in the accent color.
+4. **The options:** numbered `1. Label`, each on its own line with its trade-off under it and its fit after the trade-off, as `· fit 88`. The recommended option reads `(Recommended)` after its label and is bold until it is picked. The picked option is the filled button. The last one is **Other…**, with the next number after the options.
 5. **The nav row:** **← Back** (dim on the first question), **Next →** (every question but the last), or on the last question **Submit all (N)** (see step 6 above).
 
 ### Risk label
@@ -219,11 +223,13 @@ Away mode is one of three ways an agent learns you are away; the others are the 
 
 ## 🧠 How agents file questions
 
-Each agent reads the skill `skills/file-question/SKILL.md` and files a question with the CLI instead of asking and waiting. An agent files a question when any of these is true:
+Each agent reads the skill `plugins/askaway/skills/file-question/SKILL.md` and files a question with the CLI instead of asking and waiting. An agent files a question when any of these is true:
 
 - the permission mode is `bypassPermissions`;
 - away mode is on (`away.json` has `"on": true`);
 - the environment variable `CLAUDE_CODE_SESSION_ATTENDED` is `0`.
+
+The `ask-guard` hook runs before every `AskUserQuestion` call. When one of these conditions holds, it denies the call and gives the agent a JSON skeleton of each question, with the fields to fill, to file with the CLI. Nothing is stored until the agent files it.
 
 Otherwise the question is asked in Claude Code as usual. The CLI prints one JSON line:
 
@@ -238,22 +244,22 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache b
 | Field | Required | Notes |
 |---|---|---|
 | `question` | yes | Up to 400 characters. |
-| `options` | yes | At least 2 objects: `key` (unique, such as `A`), `label`, optional `tradeoff` (one line; the rules below say what it holds) and optional `fit` (integer 0-100 or null). The panel does not draw `fit` yet. |
+| `options` | yes | At least 2 objects, each with a unique `key` (such as `A`), a `label`, a `tradeoff` and a `fit`. `tradeoff` (up to 300 characters) and `fit` (integer 0-100) are required for every option; `fit` set to `null` is refused. The panel draws the fit after the trade-off as `· fit 88`. |
 | `recommended` | yes | One of the option keys. |
-| `title` | no | Up to 60 characters; defaults to the question, clipped. |
-| `context` | no, always fill | Where the question comes from: the task and the step that stopped. Up to 600 characters. |
-| `why` | no, always fill | One or two sentences on why the recommended option. Up to 300 characters. |
-| `how` | no, always fill | One or two sentences on how the recommended option works. Up to 400 characters. |
-| `gains` | no, always fill | One or two sentences on what the user gains with it. Up to 300 characters. |
-| `losses` | no, always fill | One or two sentences on what the user gives up or risks with it. Up to 300 characters. |
-| `analogy`, `urgency`, `undo` | no | Add `analogy` when a comparison makes the trade-off clear, `urgency` when there is a deadline (e.g. `Blocks in ~8 min`), `undo` when reversing the choice is costly (e.g. `changing later ≈ 10 min`). Up to 300 characters each. |
+| `title` | no | Up to 60 characters. When it is missing, the question is clipped to 60 characters and used as the title. |
+| `context` | yes | Where the question comes from: the task and the step that stopped. Up to 600 characters. |
+| `why` | yes | One or two sentences on why the recommended option. Up to 300 characters. |
+| `how` | yes | One or two sentences on how the recommended option works. Up to 400 characters. |
+| `gains` | yes | One or two sentences on what the user gains with it. Up to 300 characters. |
+| `losses` | yes | One or two sentences on what the user gives up or risks with it. Up to 300 characters. |
+| `analogy`, `urgency`, `undo` | yes | `analogy` is a comparison that makes the trade-off clear; `urgency` is the deadline, such as `Can wait` or `Blocks in ~8 min`; `undo` is the cost of reversing the choice, such as `changing later ≈ 10 min`. Up to 300 characters each. |
 | `risk` | no | The risk of accepting the recommended option: `low` (default) is safe to accept and easy to change later; `medium` is reversible but costs rework; `high` is irreversible, or touches real files, credentials or money, and pauses the session. |
 | `pause` | no | `true` pauses this session until the user answers. |
 | `run_kind` | no | `main`, `subagent`, `goal`, `loop`, `bash` or `codex`. |
 
 Do not pass `session` or `project`: the CLI fills them from the environment and the working directory. Text longer than its limit is cut, not refused.
 
-After filing, the agent continues on `recommended` unless the output says `"action": "pause"`. An invalid entry prints `"action": "continue"` with an `error` field, for example `options must be a list of at least 2 items`.
+After filing, the agent continues on `recommended` unless the output says `"action": "pause"`. An invalid entry prints `"action": "refile"` with an `error` that names the missing fields, for example `missing fields: analogy; option A: fit`. The agent completes those fields and files the question again; it never continues without filing. Only an internal failure prints `"action": "continue"` with `"error": "internal error"`, and then nothing was filed.
 
 ## 🗂️ State folder
 
@@ -262,24 +268,28 @@ After filing, the agent continues on `recommended` unless the output says `"acti
 ├── q/<id>.json   the question, written once
 ├── a/<id>.json   the answer, first writer wins
 ├── d/<id>.json   the delivery marker
-└── away.json     away mode: {"on": true, "ts": ...}
+├── away.json     away mode: {"on": true, "ts": ...}
+└── last_prune    when the last prune ran (its mtime)
 ```
+
+Writes go to a hidden `.<name>.<hex>.tmp` file first and are then renamed into place; prune removes the stale `.tmp` files.
 
 `ASKAWAY_HOME` replaces `~/.claude/state/askaway`. The full contract is in [plugins/askaway/SPEC.md](plugins/askaway/SPEC.md).
 
 ## 🔒 Privacy
 
-- Questions, answers and delivery markers are plain JSON files in your state folder. Nothing leaves your machine.
+- Questions, answers and delivery markers are plain JSON files in your state folder. The files never leave your machine. The answer text is injected into the asking session's prompt, so it reaches the model that session uses.
 - Askaway makes no network calls of its own.
 - Question text is whatever the agent wrote. Keep secrets out of it.
-- An answer that no session can receive is closed as expired after 7 days.
+- An answer that is still unread 7 days after you sent it is closed as expired. The check runs on demand in the hooks of any session, and it applies even if the asking session is still alive. An answer whose asking session Claude Desktop has released is closed at once, as soon as any session's hook runs.
 
 ## 🩺 Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | No band button and no toast | No question is open, or this Claude Code version does not load mods | Run `/askaway`. If it is unavailable, check the Claude Code version (see Requirements). |
-| The CLI prints `"action": "continue"` with an `error` | The entry is invalid, for example it has fewer than two options | Fix the field named in `error` and file the question again. |
+| The CLI prints `"action": "refile"` with an `error` | The entry is invalid or incomplete, for example a field is missing, `fit` is `null` or there are fewer than two options | Complete the fields named in `error` and file the question again. |
+| The CLI prints `"error": "internal error"` | An internal failure; nothing was filed | Continue on the recommended option and report the error text. |
 | The panel is in the wrong language | The locale variables say otherwise | Run `/askaway lang en` or `/askaway lang pt-BR`. |
 | An answer never reaches the session | The session has not read it yet, or the answer expired after 7 days | Check it with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" status <id>`; the status line in the panel shows the delivery state. |
 

@@ -26,7 +26,7 @@ cd plugins/askaway/scripts && python3 -m pytest tests -q
 | `plugins/askaway/.claude-plugin/plugin.json` | The plugin manifest; it points to the command hooks |
 | `plugins/askaway/hooks/` | The mod: `register.tsx` (wiring, polling, commands), `model.ts`, `wizard.ts`, `i18n.ts`, `pane.tsx`, `look.ts`; `hooks.json` loads the mod, `command-hooks.json` holds the command hooks |
 | `plugins/askaway/scripts/askaway.py` | The CLI (`ask`, `answer`, `status`, `list`, `away`, `prune`) and the hook modes (`hook ask-guard`, `hook pause-guard`, `hook deliver`) |
-| `plugins/askaway/skills/askaway/SKILL.md` | The skill that tells an agent how to file a question |
+| `plugins/askaway/skills/file-question/SKILL.md` | The skill that tells an agent how to file a question |
 | `plugins/askaway/SPEC.md` | The spec: state folder contract, CLI, hooks and panel |
 | `plugins/askaway/tests/` | TypeScript tests |
 | `plugins/askaway/scripts/tests/` | Python tests |
