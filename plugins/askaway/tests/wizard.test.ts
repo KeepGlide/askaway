@@ -4,12 +4,14 @@ import {
   EMPTY_WIZARD,
   activeWindow,
   back,
+  canReview,
   choose,
   jump,
   next,
   pruneWizard,
   screenOf,
   selectWindow,
+  settle,
   submittable,
   toggleExpanded,
   windowKeyOf,
@@ -103,7 +105,6 @@ test('screenOf shows the first question with no back, and next waits for a pick'
   expect(screen.question.id).toBe('q-a-000001')
   expect(screen.canBack).toBe(false)
   expect(screen.canNext).toBe(false)
-  expect(screen.pick).toBeUndefined()
 })
 
 test('screenOf shows the review after the last question, with every row and submit only when all are picked', () => {
@@ -184,11 +185,58 @@ test('next on a window of one question stays on its only question', () => {
   expect(next({ ...EMPTY_WIZARD, picks: { 'q-a-000001': A } }, group).step).toBe(0)
 })
 
-test('jump lands on the given step and clamps it to the review', () => {
+test('next on the last question with a gap stays there; with every question picked it reaches the review', () => {
+  const group = groupOf(question('q-a-000001', 10), question('q-b-000002', 20))
+  const gap: Wizard = { ...EMPTY_WIZARD, step: 1, picks: { 'q-b-000002': B } }
+  expect(next(gap, group)).toBe(gap)
+  expect(next({ ...gap, picks: { 'q-a-000001': A, 'q-b-000002': B } }, group).step).toBe(2)
+})
+
+test('choose on the last question with a gap lands on the first unpicked question, not the review', () => {
+  const group = groupOf(question('q-a-000001', 10), question('q-b-000002', 20), question('q-c-000003', 30))
+  const chosen = choose({ ...EMPTY_WIZARD, step: 2 }, group, 'q-c-000003', A)
+  expect(chosen.wizard.step).toBe(0)
+  expect(screenOf(group, chosen.wizard).kind).toBe('question')
+  expect(choose({ ...EMPTY_WIZARD, step: 1, picks: { 'q-a-000001': A } }, group, 'q-b-000002', A).wizard.step).toBe(2)
+})
+
+test('settle keeps a question step, and moves a review step with a gap to the first unpicked question', () => {
+  const group = groupOf(question('q-a-000001', 10), question('q-b-000002', 20), question('q-c-000003', 30))
+  const onReview: Wizard = { ...EMPTY_WIZARD, step: 3, picks: { 'q-b-000002': B } }
+  expect(settle(onReview, group).step).toBe(0)
+  expect(settle({ ...onReview, step: 1 }, group).step).toBe(1)
+  expect(settle({ ...onReview, picks: { 'q-a-000001': A, 'q-b-000002': B, 'q-c-000003': A } }, group).step).toBe(3)
+})
+
+test('prune dropping the current question while another is unpicked never leaves the step on the review', () => {
+  const wizard: Wizard = { ...EMPTY_WIZARD, step: 2, picks: { 'q-a-000001': A } }
+  // q-c-000003 was answered elsewhere: the window now holds q-a and q-b, and only q-a has a pick.
+  const pruned = pruneWizard(wizard, ['q-a-000001', 'q-b-000002'], 2)
+  const prunedGroup = groupOf(question('q-a-000001', 10), question('q-b-000002', 20))
+  expect(settle(pruned, prunedGroup).step).toBe(1)
+})
+
+test('jump lands on a question step, and never below the first', () => {
   const group = groupOf(question('q-a-000001', 10), question('q-b-000002', 20), question('q-c-000003', 30))
   expect(jump(EMPTY_WIZARD, group, 1).step).toBe(1)
-  expect(jump(EMPTY_WIZARD, group, 9).step).toBe(3)
   expect(jump(EMPTY_WIZARD, group, -1).step).toBe(0)
+})
+
+test('jump to the review step (index === total) works only when every question has a pick', () => {
+  const group = groupOf(question('q-a-000001', 10), question('q-b-000002', 20), question('q-c-000003', 30))
+  const partial = pickedAll(['q-a-000001', 'q-b-000002'])
+  expect(canReview(group, pickedAll(['q-a-000001', 'q-b-000002', 'q-c-000003']))).toBe(true)
+  expect(canReview(group, partial)).toBe(false)
+  expect(jump(partial, group, 3)).toBe(partial)
+  expect(jump(EMPTY_WIZARD, group, 9).step).toBe(0)
+  expect(jump(pickedAll(['q-a-000001', 'q-b-000002', 'q-c-000003']), group, 3).step).toBe(3)
+})
+
+test('a window of one question has no review step, so jump does not reach one', () => {
+  const single = groupOf(question('q-a-000001', 10))
+  const picked = pickedAll(['q-a-000001'])
+  expect(canReview(single, picked)).toBe(false)
+  expect(jump(picked, single, 1).step).toBe(0)
 })
 
 test('toggleExpanded flips one question\'s explanation and leaves the others', () => {
@@ -221,7 +269,7 @@ test('pruneWizard drops the picks, expanded flags and Other draft of questions n
     windowKey: 's1',
     step: 0,
     picks: { 'q-a-000001': A, 'q-gone-000002': B },
-    other: { id: 'q-gone-000002', text: 'draft' },
+    other: 'q-gone-000002',
     expanded: { 'q-a-000001': true, 'q-gone-000002': true },
   }
   const pruned = pruneWizard(wizard, ['q-a-000001'], 1)
@@ -231,9 +279,9 @@ test('pruneWizard drops the picks, expanded flags and Other draft of questions n
   expect(Object.keys(wizard.picks)).toEqual(['q-a-000001', 'q-gone-000002'])
 })
 
-test('pruneWizard keeps an Other draft whose question is still open', () => {
-  const wizard: Wizard = { ...EMPTY_WIZARD, other: { id: 'q-a-000001', text: 'draft' } }
-  expect(pruneWizard(wizard, ['q-a-000001'], 1).other).toEqual({ id: 'q-a-000001', text: 'draft' })
+test('pruneWizard keeps the Other field of a question that is still open', () => {
+  const wizard: Wizard = { ...EMPTY_WIZARD, other: 'q-a-000001' }
+  expect(pruneWizard(wizard, ['q-a-000001'], 1).other).toBe('q-a-000001')
 })
 
 test('pruneWizard clamps the step to the size of the window on screen after the drop', () => {

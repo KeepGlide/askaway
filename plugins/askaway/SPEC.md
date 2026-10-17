@@ -159,11 +159,22 @@ Pane id `askaway`, title "Askaway". Header "📥 Askaway" with the counter. Stat
 
 - **Window selector**: shown only when there are 2 or more windows; one button per window,
   "<label> (n)", the active one primary.
-- **Question screen**: progress "Question 2 of 5"; origin line (magenta, bold); risk and age;
-  the question; the fit line ("🔷 A 82% · B 55%") when any option has a fit; the numbered options
-  "1  label" with 🎯 on the recommended one and, when expanded, the option's dim tradeoff line;
-  an "Other…" button that opens a text field; a "More" toggle that shows the explanation
-  sections; and the navigation row [← Back] [Next →]. Next needs a pick on the current question.
+- **Question screen**, one question at a time:
+  - a tabs row: one tab per question of the window, "1 Title", "2 Title", … (a question with no
+    title is named by its text, cut short); the current tab is bold. For a window of 2 or more
+    questions a "Submit" tab follows, dim until every question has a pick;
+  - origin line (magenta, bold); a dim risk and age line;
+  - the question, in bold;
+  - the dim JEV line ("🔷 A 82% · B 55%") when any option has a fit;
+  - the numbered options, one per line: "1. Label", with the option's one-line tradeoff dim under
+    it. The recommended option reads "N. Label (Recommended)" and is bold while not picked. The
+    picked option is the primary button;
+  - "N. Other…" is the last option; it opens a text field under it (autofocused; the text is
+    sent on Enter);
+  - a "More" toggle that shows the explanation sections;
+  - the nav row [← Back] [Next →] for a window of 2 or more questions. Next needs a pick on the
+    current question. On the last question Next becomes [Review], which opens the review screen
+    with the button "Submit all (n)".
 - **Choosing**: an option records the pick and moves to the next question. A window with one
   question submits at once.
 - **Explanations** (per question, behind "More"): 🧭 context, 🔁 analogy, 💡 why <rec>, 🛠️ how,

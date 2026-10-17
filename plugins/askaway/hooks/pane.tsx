@@ -40,7 +40,6 @@ export type PaneActions = {
   dismiss: (id: string) => void
   pick: (id: string, key: string) => void
   toggleOther: (id: string) => void
-  typeOther: (id: string, text: string) => void
   submitOther: (id: string, text: string) => void
   toggleExpanded: (id: string) => void
   back: () => void
@@ -57,6 +56,9 @@ type CardContext = {
   isLeaving: boolean
 }
 
+// A tab names its question by the question's title; a question with no title is named by its text, cut short.
+const TAB_TITLE_MAX = 24
+
 export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: Lang): RenderElement {
   const { Box, Text } = ui
   const { screen } = view
@@ -69,7 +71,7 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
       {view.lines.map(line => renderStatusLine(ui, actions, line))}
       {view.windows.length > 1 && renderWindows(ui, lang, view, actions)}
       {screen?.kind === 'question' && renderQuestion(ui, lang, view, actions, screen)}
-      {screen?.kind === 'review' && renderReview(ui, lang, actions, screen)}
+      {screen?.kind === 'review' && renderReview(ui, lang, view, actions, screen)}
     </Box>
   )
 }
@@ -113,8 +115,48 @@ function renderWindows(ui: Ui, lang: Lang, view: PaneView, actions: PaneActions)
   )
 }
 
-// One question on screen: progress, origin, risk and age, the question, the JEV line, the numbered options,
-// "Other…", the explanations behind "More", and the Back / Next row.
+// The tab name of a question: its title, else its text cut to TAB_TITLE_MAX characters.
+function tabTitle(question: Question): string {
+  const title = question.title.trim()
+  if (title !== '') return title
+  const text = question.question.trim()
+  return text.length > TAB_TITLE_MAX ? `${text.slice(0, TAB_TITLE_MAX - 1)}…` : text
+}
+
+// The one way into the review step, from the Submit tab and the Review button: it does nothing until every question has
+// a pick (canReview).
+function goToReview(actions: PaneActions, total: number, canReview: boolean): () => void {
+  return () => {
+    if (canReview) actions.jump(total)
+  }
+}
+
+// The tabs row of a window of two or more questions: one tab per question, then Submit. The tab on screen is bold;
+// Submit is dim until every question has a pick. A window of one question has no tabs.
+function renderTabs(ui: Ui, lang: Lang, actions: PaneActions, group: WindowGroup, current: number, canReview: boolean): RenderElement | false {
+  const { Box, Button, Text } = ui
+  const total = group.questions.length
+  if (total < 2) return false
+  const submit = t(lang, 'tab.submit')
+  return (
+    <Box key="tabs" flexDirection="row" gap={2}>
+      {group.questions.map((question, index) => {
+        const label = `${index + 1} ${tabTitle(question)}`
+        return (
+          <Button key={`tab-${question.id}`} label={label} plain onPress={() => actions.jump(index)}>
+            {index === current ? <Text bold>{label}</Text> : label}
+          </Button>
+        )
+      })}
+      <Button key="tab-submit" label={submit} plain dimColor={!canReview} onPress={goToReview(actions, total, canReview)}>
+        {current === total ? <Text bold dimColor={!canReview}>{submit}</Text> : submit}
+      </Button>
+    </Box>
+  )
+}
+
+// One question on screen: the tabs, the origin line, the risk and age line, the question, the JEV line, the numbered
+// options with "Other…", the explanations behind "More", and the Back / Next row.
 function renderQuestion(ui: Ui, lang: Lang, view: PaneView, actions: PaneActions, screen: QuestionScreen): RenderElement {
   const { Box, Text } = ui
   const { question } = screen
@@ -122,21 +164,19 @@ function renderQuestion(ui: Ui, lang: Lang, view: PaneView, actions: PaneActions
   const { isLeaving } = card
   const isExpanded = view.wizard.expanded[question.id] === true
   const jev = jevLine(question.options)
-  const riskLine =
-    question.risk === 'high'
-      ? riskLabel(lang, question.risk)
-      : `${riskLabel(lang, question.risk)} · ${ageLabel(lang, question.ts, view.now)}`
   return (
-    <Box key={`card-${question.id}`} flexDirection="column" borderStyle="round" borderDimColor={isLeaving} paddingX={1}>
-      <Text dimColor={isLeaving}>{t(lang, 'pane.progress', { index: screen.index + 1, total: screen.total })}</Text>
-      <Text bold color={ORIGIN_COLOR} dimColor={isLeaving}>{windowOf(question)}</Text>
-      <Text dimColor={isLeaving}>{riskLine}</Text>
+    <Box key={`card-${question.id}`} flexDirection="column" gap={1} borderStyle="round" borderDimColor={isLeaving} paddingX={1}>
+      {view.active !== undefined && renderTabs(ui, lang, actions, view.active, screen.index, screen.canReview)}
+      <Box flexDirection="column">
+        <Text bold color={ORIGIN_COLOR} dimColor={isLeaving}>{windowOf(question)}</Text>
+        <Text dimColor={isLeaving}>{`${riskLabel(lang, question.risk)} · ${ageLabel(lang, question.ts, view.now)}`}</Text>
+      </Box>
       <Text bold dimColor={isLeaving}>{question.question}</Text>
       {jev !== undefined && <Text dimColor={isLeaving}>{jev}</Text>}
-      {question.options.map((option, position) =>
-        renderOption(ui, lang, actions, card, isExpanded, option, position, screen.pick),
-      )}
-      {renderOther(ui, lang, actions, card)}
+      <Box flexDirection="column" gap={1}>
+        {question.options.map((option, position) => renderOption(ui, lang, actions, card, option, position))}
+        {renderOther(ui, lang, actions, card)}
+      </Box>
       {renderMore(ui, lang, actions, card, isExpanded)}
       {isExpanded && sectionsOf(lang, question).map(section => renderSection(ui, section, isLeaving))}
       {screen.total > 1 && renderNav(ui, lang, actions, card, screen)}
@@ -144,72 +184,71 @@ function renderQuestion(ui: Ui, lang: Lang, view: PaneView, actions: PaneActions
   )
 }
 
-// A full-width numbered option; the picked one is the primary button, the recommended one carries the 🎯 mark, and
-// the tradeoff line shows under it when the card is expanded.
+// A full-width numbered option, its tradeoff under it. The picked one is the primary button; the recommended one, when
+// not picked, is bold and says "(Recommended)" in its text.
 function renderOption(
   ui: Ui,
   lang: Lang,
   actions: PaneActions,
   card: CardContext,
-  isExpanded: boolean,
   option: QuestionOption,
   position: number,
-  pick: Pick | undefined,
 ): RenderElement {
   const { Box, Button, Text } = ui
-  const { question, isLeaving } = card
-  const isPicked = pick?.key === option.key
+  const { question, isLeaving, wizard } = card
+  const isPicked = wizard.picks[question.id]?.key === option.key
+  const isRecommended = option.key === question.recommended
+  const text = `${position + 1}. ${option.label}${isRecommended ? ` (${t(lang, 'option.recommended')})` : ''}`
+  const isBold = isRecommended && !isPicked
   return (
     <Box key={`optrow-${question.id}-${option.key}`} flexDirection="column">
-      <Box flexDirection="row" alignItems="center" gap={1}>
-        <Box flexGrow={1}>
-          <Button
-            key={`opt-${question.id}-${option.key}`}
-            label={`${position + 1}  ${option.label}`}
-            variant={isPicked ? 'primary' : 'secondary'}
-            dimColor={isLeaving}
-            onPress={() => {
-              if (isLeaving) return
-              actions.pick(question.id, option.key)
-            }}
-          />
-        </Box>
-        {option.key === question.recommended && renderRecommendedMark(ui, lang, question.id, isLeaving)}
-      </Box>
-      {isExpanded && option.tradeoff !== undefined && <Text dimColor>{option.tradeoff}</Text>}
+      <Button
+        key={`opt-${question.id}-${option.key}`}
+        label={text}
+        variant={isPicked ? 'primary' : 'secondary'}
+        dimColor={isLeaving}
+        onPress={() => {
+          if (isLeaving) return
+          actions.pick(question.id, option.key)
+        }}
+      >
+        {isBold ? <Text bold dimColor={isLeaving}>{text}</Text> : text}
+      </Button>
+      {option.tradeoff !== undefined && <Text dimColor={isLeaving}>{option.tradeoff}</Text>}
     </Box>
   )
 }
 
-// "Other…": a button under the options that opens a field for a free-text answer. The text goes through the same
-// pick path as an option. A surface with no Input (mobile) draws no field: there is nothing to type into.
+// "Other…": the last option. Pressing it opens a field right under it for a free-text answer; the text goes through
+// the same pick path as an option. A surface with no Input (mobile) draws no field, so it draws no Other option either.
 function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext): RenderElement | false {
   if (!('Input' in ui)) return false
-  const { Box, Button, Input } = ui
+  const { Box, Button, Input, Text } = ui
   const { question, isLeaving, wizard } = card
-  const other = wizard.other?.id === question.id ? wizard.other : undefined
+  const isOpen = wizard.other === question.id
+  // Once Other… is submitted the pick holds its text: the button stays primary and the text shows under it.
+  const pick = wizard.picks[question.id]
+  const chosenText = pick !== undefined && pick.key === OTHER_KEY ? (pick.text ?? '') : undefined
   return (
     <Box key={`other-row-${question.id}`} flexDirection="column">
-      <Box flexDirection="row">
-        <Button
-          key={`other-${question.id}`}
-          label={t(lang, 'option.other')}
-          variant="secondary"
-          dimColor={isLeaving}
-          onPress={() => {
-            if (isLeaving) return
-            actions.toggleOther(question.id)
-          }}
-        />
-      </Box>
-      {other !== undefined && !isLeaving && (
+      <Button
+        key={`other-${question.id}`}
+        label={`${question.options.length + 1}. ${t(lang, 'option.other')}`}
+        variant={chosenText !== undefined ? 'primary' : 'secondary'}
+        dimColor={isLeaving}
+        onPress={() => {
+          if (isLeaving) return
+          actions.toggleOther(question.id)
+        }}
+      />
+      {chosenText !== undefined && <Text dimColor={isLeaving}>{chosenText}</Text>}
+      {isOpen && !isLeaving && (
         <Input
           key={`other-input-${question.id}`}
           label={t(lang, 'input.label')}
           placeholder={t(lang, 'input.placeholder')}
-          value={other.text}
           submitLabel={t(lang, 'input.send')}
-          onInput={text => actions.typeOther(question.id, text)}
+          autoFocus
           onSubmit={text => actions.submitOther(question.id, text)}
         />
       )}
@@ -235,11 +274,16 @@ function renderMore(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext,
   )
 }
 
-// Back and Next. Next moves only once the question on screen has a pick (the register checks it too).
+// Back, and forward: Next on every question but the last, Review on the last one (to the review step, which needs
+// every question picked). A dim button does nothing when pressed.
 function renderNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: QuestionScreen): RenderElement {
   const { Box, Button } = ui
+  const isLast = screen.index === screen.total - 1
+  const forward = isLast
+    ? { label: t(lang, 'nav.review'), canGo: screen.canReview, go: goToReview(actions, screen.total, screen.canReview) }
+    : { label: t(lang, 'nav.next'), canGo: screen.canNext, go: () => actions.next() }
   const isBackOff = !screen.canBack || card.isLeaving
-  const isNextOff = !screen.canNext || card.isLeaving
+  const isForwardOff = !forward.canGo || card.isLeaving
   return (
     <Box key={`nav-${card.question.id}`} flexDirection="row" justifyContent="space-between">
       <Button
@@ -254,28 +298,14 @@ function renderNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, 
       />
       <Button
         key="nav-next"
-        label={t(lang, 'nav.next')}
-        variant={screen.canNext ? 'primary' : 'secondary'}
-        dimColor={isNextOff}
+        label={forward.label}
+        variant={forward.canGo ? 'primary' : 'secondary'}
+        dimColor={isForwardOff}
         onPress={() => {
-          if (isNextOff) return
-          actions.next()
+          if (isForwardOff) return
+          forward.go()
         }}
       />
-    </Box>
-  )
-}
-
-// The 🎯 at rest, with its "Recommended" tooltip: a hidden absolute Box that the hover over the keyed mark reveals.
-// Absolute, so showing it moves nothing in the row.
-function renderRecommendedMark(ui: Ui, lang: Lang, questionId: string, isLeaving: boolean): RenderElement {
-  const { Box, Text } = ui
-  return (
-    <Box key={`rec-${questionId}`} flexDirection="column">
-      <Text dimColor={isLeaving}>🎯</Text>
-      <Box position="absolute" top={-1} right={0} display="none" hover={{ display: 'flex' }}>
-        <Text dimColor={isLeaving}>{t(lang, 'option.recommended')}</Text>
-      </Box>
     </Box>
   )
 }
@@ -290,11 +320,12 @@ function renderSection(ui: Ui, section: Section, isLeaving: boolean): RenderElem
   )
 }
 
-// The review: one row per question (a click jumps to its step), then Back and Submit all.
-function renderReview(ui: Ui, lang: Lang, actions: PaneActions, screen: ReviewScreen): RenderElement {
+// The review: the tabs (Submit on), one row per question (a click jumps to its step), then Back and Submit all.
+function renderReview(ui: Ui, lang: Lang, view: PaneView, actions: PaneActions, screen: ReviewScreen): RenderElement {
   const { Box, Button, Text } = ui
   return (
     <Box key="review" flexDirection="column" gap={1}>
+      {view.active !== undefined && renderTabs(ui, lang, actions, view.active, screen.rows.length, screen.canSubmit)}
       <Text bold>{t(lang, 'review.title')}</Text>
       {screen.rows.map((row, index) => (
         <Button

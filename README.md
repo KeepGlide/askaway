@@ -25,7 +25,7 @@ Askaway does not:
 - **One question at a time**, with numbered options, an "Other…" field and a review step.
 - **Submit all**: every answer for one window (one asking session) is written at once.
 - **Band button and toast**: a button above the prompt (hotkey `1`) appears while questions wait, and a toast announces each new one.
-- **Trade-offs and fit**: each option can show a one-line trade-off and a fit score; the recommended option is marked 🎯.
+- **Trade-offs and fit**: each option can show a one-line trade-off and a fit score; the recommended option is marked "(Recommended)" in bold.
 - **Explanations on demand**: context, analogy, why, how, gains and losses, behind a "More" toggle.
 - **Two languages**: English and Brazilian Portuguese, from your locale or with `/askaway lang`.
 - **Risk-aware**: a risky question pauses its session until you answer; the others let it continue.
@@ -142,7 +142,7 @@ Answering a question:
 3. On the review step, check the answers. Click a row to change it.
 4. Click **Submit all**. The answers go to the session that asked. A window with one question submits when you pick its option.
 
-🎯 marks the recommended option. Press **More** to read the context, the analogy, the reasons and the gains and losses.
+Each option sits on its own line, with its trade-off under it, like Claude Code's own question dialog. The recommended option says "(Recommended)" in its label and is shown in bold. Press **More** to read the context, the analogy, the reasons and the gains and losses.
 
 ## 🎛️ Configuration
 

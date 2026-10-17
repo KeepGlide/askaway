@@ -180,6 +180,10 @@ const mountBand = ($: Engine, surface: 'terminal' | 'desktop' = 'terminal') =>
 const textsOf = async (ui: Awaited<ReturnType<typeof mountPane>>): Promise<string[]> =>
   (await ui.findAll({ type: 'Text' })).map(found => found.text)
 
+// The label a Button is drawn with, by its key; undefined when it is not drawn.
+const labelOf = async (ui: Awaited<ReturnType<typeof mountPane>>, key: string): Promise<unknown> =>
+  (await ui.find({ type: 'Button', key }))?.props.label
+
 // Every node of a drawn tree, depth first. A found element's props leave out `hover`, so the tree is read for it.
 const nodesOf = (node: unknown): Record<string, unknown>[] => {
   if (typeof node !== 'object' || node === null) return []
@@ -346,7 +350,7 @@ test('the pane shows the oldest open question first, with its progress, and hide
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface)
     const texts = await textsOf(ui)
-    expect(texts).toContain('Pergunta 1 de 2')
+    expect(texts).toContain('1 Title q-l1-aaaaaa')
     expect(texts).toContain('Which way for q-l1-aaaaaa?')
     expect(texts.some(text => text.includes('q-l2') || text.includes('q-l3') || text.includes('q-l4'))).toBe(false)
     await ui.unmount()
@@ -408,7 +412,7 @@ test('a click picks and advances; the review then submits every answer of the wi
   const ui = await mountPane($)
   await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
   expect(writes).toEqual([])
-  expect(await textsOf(ui)).toContain('Pergunta 2 de 2')
+  expect(await textsOf(ui)).toContain('2 Title q-l2-bbbbbb')
   await ui.press({ key: 'opt-q-l2-bbbbbb-A' })
   expect(writes).toEqual([])
   expect(await textsOf(ui)).toContain('Revise suas respostas')
@@ -430,7 +434,7 @@ test('review gating: Next does not pass a question with no pick, so the review a
   await $.session.start(SESSION)
   const ui = await mountPane($)
   await ui.press({ key: 'nav-next' })
-  expect(await textsOf(ui)).toContain('Pergunta 1 de 2')
+  expect(await textsOf(ui)).toContain('1 Title q-l1-aaaaaa')
   expect(await ui.find({ type: 'Button', key: 'submit-all' })).toBeUndefined()
   expect(writes).toEqual([])
   await ui.unmount()
@@ -446,7 +450,7 @@ test('Back keeps the picks: the picked option stays the primary button when the 
   const ui = await mountPane($)
   await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
   await ui.press({ key: 'nav-back' })
-  expect(await textsOf(ui)).toContain('Pergunta 1 de 2')
+  expect(await textsOf(ui)).toContain('1 Title q-l1-aaaaaa')
   expect((await ui.find({ type: 'Button', key: 'opt-q-l1-aaaaaa-B' }))?.props.variant).toBe('primary')
   expect(writes).toEqual([])
   await ui.unmount()
@@ -493,20 +497,33 @@ test('a question answered elsewhere leaves the round: its pick is pruned on the 
   await ui.unmount()
 })
 
-test('the 🎯 stays at rest, and its "Recomendada" tooltip is a hidden absolute box that the hover reveals', async ($, on) => {
+test('no 🎯 and no tooltip: the recommended option says "(Recomendada)" in its text, bold while not picked', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: '🎯' })).toBeDefined()
-  expect((await ui.find({ type: 'Box', key: 'rec-q-l1-aaaaaa' }))?.props.display).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: '🎯' })).toBeUndefined()
+  expect(await ui.find({ type: 'Box', key: 'rec-q-l1-aaaaaa' })).toBeUndefined()
   const isAbsoluteBox = (node: Record<string, unknown>): boolean =>
     node.type === 'Box' && (node.props as Record<string, unknown> | undefined)?.position === 'absolute'
-  const tooltips = nodesOf(await ui.drawn()).filter(isAbsoluteBox)
-  expect(tooltips).toHaveLength(1)
-  expect(tooltips[0]?.props).toMatchObject({ display: 'none' })
-  expect(tooltips[0]?.hover).toEqual({ display: 'flex' })
-  expect(await ui.findAll({ type: 'Text', text: 'Recomendada' })).toHaveLength(1)
+  expect(nodesOf(await ui.drawn()).filter(isAbsoluteBox)).toHaveLength(0)
+  expect(await labelOf(ui, 'opt-q-l1-aaaaaa-A')).toBe('1. Keep (Recomendada)')
+  expect(await ui.find({ type: 'Text', text: '1. Keep (Recomendada)' })).toMatchObject({ props: { bold: true } })
+  await ui.unmount()
+})
+
+test('each option is one full-width column with its tradeoff under it, numbered, and Other… is the last one', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(await labelOf(ui, 'opt-q-l1-aaaaaa-B')).toBe('2. Rewrite')
+  expect(await labelOf(ui, 'other-q-l1-aaaaaa')).toBe('3. Outra resposta…')
+  for (const key of ['optrow-q-l1-aaaaaa-A', 'optrow-q-l1-aaaaaa-B']) {
+    expect((await ui.find({ type: 'Box', key }))?.props.flexDirection).toBe('column')
+  }
+  expect(await ui.find({ type: 'Text', text: 'cheap' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'slow' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -566,7 +583,7 @@ test('the header counts a question with no session by its project', async ($, on
   await ui.unmount()
 })
 
-test('the 🎯 marks only the recommended option, and the JEV line lists the fits in order', async ($, on) => {
+test('only the recommended option says "(Recomendada)", and the JEV line lists the fits in order', async ($, on) => {
   const files = new Map([
     [
       path('q', 'q-l1-aaaaaa'),
@@ -583,7 +600,8 @@ test('the 🎯 marks only the recommended option, and the JEV line lists the fit
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await ui.findAll({ type: 'Text', text: '🎯' })).toHaveLength(1)
+  expect(await ui.findAll({ type: 'Text', text: /\(Recomendada\)$/ })).toHaveLength(1)
+  expect(await ui.findAll({ type: 'Text', text: '🎯' })).toHaveLength(0)
   const texts = await textsOf(ui)
   expect(texts.filter(text => text.startsWith('🔷'))).toEqual(['🔷 A 82% · B 55% · C 31%'])
   expect(texts).not.toContain('💡 Por que B')
@@ -785,7 +803,7 @@ test('the risk label reads in pt-BR for low, medium and high, with the age after
   await ui.press({ key: 'window-s2' })
   expect(await ui.find({ type: 'Text', text: /^⚠️ risco médio · / })).toBeDefined()
   await ui.press({ key: 'window-s3' })
-  expect(await ui.find({ type: 'Text', text: '🛑 risco alto' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^🛑 risco alto · / })).toBeDefined()
   await ui.unmount()
 })
 
@@ -886,7 +904,7 @@ test('/askaway lang en switches the pane to English at once, and the choice is k
   expect(answered.text).toBe('Askaway language is now en.')
   const ui = await mountPane($)
   expect(await ui.find({ type: 'Text', text: '1 pending · 1 window' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'Question 1 of 1' })).toBeDefined()
+  expect(await ui.findAll({ type: 'Text', text: /^1 Title / })).toHaveLength(0)
   await ui.unmount()
   expect(await run($, 'lang xx')).toEqual({ text: 'Use /askaway lang pt, en or auto.' })
   await clock.advance(0)
@@ -898,7 +916,7 @@ test('/askaway lang pt then the pane reads in pt-BR, even when the environment s
   await $.session.start(SESSION)
   expect((await run($, 'lang pt')).text).toBe('O idioma do Askaway agora é pt.')
   const ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: 'Pergunta 1 de 1' })).toBeDefined()
+  expect(await ui.findAll({ type: 'Text', text: /^1 Title / })).toHaveLength(0)
   await ui.unmount()
 })
 
@@ -995,6 +1013,13 @@ test('Other… takes a free-text answer through the same answer path, and blank 
   await $.session.start(SESSION)
   const ui = await mountPane($)
   await ui.press({ key: 'other-q-l1-aaaaaa' })
+  // The field has a stable key and takes its text from the person's typing: no value, no onInput.
+  const field = await ui.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa' })
+  expect(field?.props).toMatchObject({ autoFocus: true })
+  expect(field?.props).not.toHaveProperty('value')
+  expect(field?.props).not.toHaveProperty('onInput')
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a', kind: 'change' })
+  expect(await ui.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa' })).toBeDefined()
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: '   ' })
   expect(writes).toEqual([])
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: '  Use a fork  ' })
@@ -1002,6 +1027,127 @@ test('Other… takes a free-text answer through the same answer path, and blank 
   expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ id: 'q-l1-aaaaaa', key: 'other', by: 'panel', text: 'Use a fork' })
   await clock.advance(250)
   expect(await textsOf(ui)).toContain('⏳ Resposta other enviada para app')
+  await ui.unmount()
+})
+
+test('the tabs name each question; Submit reaches the review only once every question has a pick', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  const { writes } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(await labelOf(ui, 'tab-q-l1-aaaaaa')).toBe('1 Title q-l1-aaaaaa')
+  expect(await labelOf(ui, 'tab-q-l2-bbbbbb')).toBe('2 Title q-l2-bbbbbb')
+  expect(await labelOf(ui, 'tab-submit')).toBe('Enviar')
+  expect((await ui.find({ type: 'Button', key: 'tab-submit' }))?.props.dimColor).toBe(true)
+  await ui.press({ key: 'tab-submit' })
+  expect(await textsOf(ui)).toContain('Which way for q-l1-aaaaaa?')
+  await ui.press({ key: 'opt-q-l1-aaaaaa-A' })
+  await ui.press({ key: 'tab-q-l2-bbbbbb' })
+  await ui.press({ key: 'tab-submit' })
+  expect(await textsOf(ui)).toContain('Which way for q-l2-bbbbbb?')
+  await ui.press({ key: 'opt-q-l2-bbbbbb-B' })
+  expect(await textsOf(ui)).toContain('Revise suas respostas')
+  await ui.press({ key: 'tab-q-l1-aaaaaa' })
+  expect((await ui.find({ type: 'Button', key: 'tab-submit' }))?.props.dimColor).toBe(false)
+  await ui.press({ key: 'tab-submit' })
+  expect(await textsOf(ui)).toContain('Revise suas respostas')
+  expect(writes).toEqual([])
+  await ui.unmount()
+})
+
+test('the forward button on the last question reads Review, and goes to the review only once every question is picked', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-A' })
+  await ui.press({ key: 'tab-q-l2-bbbbbb' })
+  expect(await labelOf(ui, 'nav-next')).toBe('Revisar')
+  expect((await ui.find({ type: 'Button', key: 'nav-next' }))?.props.dimColor).toBe(true)
+  await ui.press({ key: 'nav-next' })
+  expect(await textsOf(ui)).toContain('Which way for q-l2-bbbbbb?')
+  await ui.press({ key: 'opt-q-l2-bbbbbb-B' })
+  await ui.press({ key: 'tab-q-l2-bbbbbb' })
+  expect((await ui.find({ type: 'Button', key: 'nav-next' }))?.props.dimColor).toBe(false)
+  await ui.press({ key: 'nav-next' })
+  expect(await textsOf(ui)).toContain('Revise suas respostas')
+  await ui.unmount()
+})
+
+test('a question with no title is named on its tab by its text, cut short', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { title: '', question: 'Which way should the cache be stored in the app?' })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(await labelOf(ui, 'tab-q-l1-aaaaaa')).toBe('1 Which way should the ca…')
+  await ui.unmount()
+})
+
+test('three polls with nothing new write no atom the pane draws from, so the pane is not redrawn', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { clock } = stubHost(on, files)
+  // Every state write the plugin makes goes through the state.set event; the test hook counts them and passes them on.
+  const stateWrites: string[] = []
+  on('state.set', { plugin: 'askaway' }, (_$, e, next) => {
+    stateWrites.push(e.key)
+    return next(e)
+  })
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await clock.advance(5000)
+  // The first poll settles the clock and the board; from here on three polls find nothing new.
+  const settledWrites = stateWrites.length
+  await clock.advance(5000)
+  await clock.advance(5000)
+  await clock.advance(5000)
+  expect(stateWrites.slice(settledWrites)).toEqual([])
+  expect(await ui.find({ type: 'Text', text: 'Which way for q-l1-aaaaaa?' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('an Other… answer stays on its button: primary, with its text drawn under it, also after going back', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'other-q-l1-aaaaaa' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  expect(await textsOf(ui)).toContain('Which way for q-l2-bbbbbb?')
+  await ui.press({ key: 'tab-q-l1-aaaaaa' })
+  expect((await ui.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))?.props.variant).toBe('primary')
+  expect(await textsOf(ui)).toContain('Use a fork')
+  await ui.unmount()
+})
+
+test('a pane that stays mounted reads the age on as the clock moves: 60 s, then 90 s reads 2 min, and the tick is written once', async ($, on) => {
+  // ts 0 is the mocked clock's start, so the age is the clock's own time.
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 0)]])
+  const { clock } = stubHost(on, files)
+  const stateWrites: string[] = []
+  on('state.set', { plugin: 'askaway' }, (_$, e, next) => {
+    stateWrites.push(e.key)
+    return next(e)
+  })
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await clock.advance(60_000)
+  expect(await ui.find({ type: 'Text', text: /· há 1 min$/ })).toBeDefined()
+  const ticksBefore = stateWrites.filter(key => key === 'tick').length
+  await clock.advance(30_000)
+  expect(await ui.find({ type: 'Text', text: /· há 2 min$/ })).toBeDefined()
+  expect(stateWrites.filter(key => key === 'tick').length - ticksBefore).toBe(1)
   await ui.unmount()
 })
 

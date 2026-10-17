@@ -11,6 +11,7 @@ import { renderPane, type PaneActions, type PaneView } from './pane'
 import {
   EMPTY_BOARD,
   OTHER_KEY,
+  ageLabel,
   groupBySession,
   isOpenIn,
   listText,
@@ -162,13 +163,38 @@ async function announceNew($: EngineInterface, next: Board): Promise<void> {
 
 // The time the pane first saw each delivery. Deliveries already there at the first poll read as seen at time 0,
 // long ago, so only the ones that arrive during the session show their status line for a while.
-async function recordDeliveries($: EngineInterface, next: Board, now: number): Promise<void> {
+// Written only when the map changed: an equal write still redraws the pane on every poll. Returns the map as it stands.
+async function recordDeliveries($: EngineInterface, next: Board, now: number): Promise<Record<string, number>> {
   const primed = (await read($, seen)).isPrimed
   const known: Partial<Record<string, number>> = await read($, deliveredAt)
   const shown = Object.fromEntries(
     next.delivered.map(delivery => [delivery.id, known[delivery.id] ?? (primed ? now : 0)]),
   )
-  await update($, deliveredAt, () => shown)
+  if (JSON.stringify(shown) !== JSON.stringify(known)) await update($, deliveredAt, () => shown)
+  return shown
+}
+
+// Merges the folder into the board. The board is written only when the merge changes it.
+async function mergeBoard($: EngineInterface, next: Board): Promise<void> {
+  const prev = await read($, board)
+  const merged = withLocalAnswers(next, prev)
+  if (sameBoard(prev, merged)) return
+  await update($, board, () => merged)
+}
+
+// The pane draws from the clock in two ways: the age labels (to the minute) and the delivery lines (their marks are
+// seconds apart). The tick is written only when one of them would read differently at `now`; a tick that changes no
+// drawn text would redraw the pane on every poll.
+async function tickClock($: EngineInterface, now: number, shownAt: Record<string, number>): Promise<void> {
+  const last = await read($, clockTick)
+  const lang = await read($, langAtom)
+  const current = await read($, board)
+  const drawnAt = (at: number): string =>
+    JSON.stringify([
+      current.questions.map(question => ageLabel(lang, question.ts, at)),
+      statusLines(lang, current, { cleared: [], shownAt, now: at, leaving: {} }).map(line => line.text),
+    ])
+  if (drawnAt(last) !== drawnAt(now)) await update($, clockTick, () => now)
 }
 
 // The wizard as the open questions leave it: the picks, Other… and explanations of answered questions dropped, the
@@ -177,7 +203,9 @@ function prunedWizard(prev: Wizard, open: readonly Question[]): Wizard {
   const groups = flow.windowsOf([...open])
   const active = flow.activeWindow(groups, prev)
   const pruned = flow.pruneWizard(prev, open.map(question => question.id), active?.questions.length ?? 0)
-  return { ...pruned, windowKey: active?.key ?? null }
+  const kept: Wizard = { ...pruned, windowKey: active?.key ?? null }
+  // A dropped question can leave the step on the review with a gap: the step moves to the first unpicked question.
+  return active === undefined ? kept : flow.settle(kept, active)
 }
 
 // One poll: read the folder, merge it into the board, redraw only when something changed, then announce new questions.
@@ -186,13 +214,10 @@ async function pollInbox($: EngineInterface, home: string, ownSession?: string):
   const next = await readBoard($, home)
   const away = parseAway(await readJson($, `${home}/away.json`))
   const now = await $.clock.now()
-  await update($, board, prev => {
-    const merged = withLocalAnswers(next, prev)
-    return sameBoard(prev, merged) ? prev : merged
-  })
-  await update($, isAway, () => away)
-  await update($, clockTick, () => now)
-  await recordDeliveries($, next, now)
+  await mergeBoard($, next)
+  if ((await read($, isAway)) !== away) await update($, isAway, () => away)
+  const shownAt = await recordDeliveries($, next, now)
+  await tickClock($, now, shownAt)
   await announceNew($, next)
   await pruneWizardState($)
   if (ownSession !== undefined) await handDue($, home, ownSession, now)
@@ -202,10 +227,9 @@ async function pollInbox($: EngineInterface, home: string, ownSession?: string):
 // pane draws the same pruned value without writing it.
 async function pruneWizardState($: EngineInterface): Promise<void> {
   const open = openQuestions(await read($, board), await read($, leaving))
-  await update($, wizardAtom, prev => {
-    const pruned = prunedWizard(prev, open)
-    return JSON.stringify(pruned) === JSON.stringify(prev) ? prev : pruned
-  })
+  const prev = await read($, wizardAtom)
+  if (JSON.stringify(prunedWizard(prev, open)) === JSON.stringify(prev)) return
+  await update($, wizardAtom, current => prunedWizard(current, open))
 }
 
 // Hands this session's answers to its prompt: one submit for all of them. Only an idle session takes one: a busy
@@ -341,7 +365,7 @@ function clearPicks(prev: Wizard, ids: readonly string[]): Wizard {
     ...prev,
     step: 0,
     picks: Object.fromEntries(Object.entries(prev.picks).filter(([id]) => !drop.has(id))),
-    other: prev.other !== null && drop.has(prev.other.id) ? null : prev.other,
+    other: prev.other !== null && drop.has(prev.other) ? null : prev.other,
   }
 }
 
@@ -372,7 +396,7 @@ async function pickOption($: EngineInterface, id: string, choice: Pick): Promise
   const { wizard, group, leaving: fading } = await snapshot($)
   if (group === undefined || fading[id] !== undefined || !group.questions.some(question => question.id === id)) return
   const chosen = flow.choose(wizard, group, id, choice)
-  const picked: Wizard = { ...chosen.wizard, other: chosen.wizard.other?.id === id ? null : chosen.wizard.other }
+  const picked: Wizard = { ...chosen.wizard, other: chosen.wizard.other === id ? null : chosen.wizard.other }
   if (chosen.submit) return submitWindow($, group, picked)
   await update($, wizardAtom, () => picked)
 }
@@ -384,12 +408,9 @@ async function moveWizard($: EngineInterface, move: (current: Wizard, group: Win
   await update($, wizardAtom, prev => move(prev, group))
 }
 
+// Opens or closes the "Other…" field of a question. The draft is typed into the field itself, never written here.
 async function toggleOther($: EngineInterface, id: string): Promise<void> {
-  await update($, wizardAtom, prev => ({ ...prev, other: prev.other?.id === id ? null : { id, text: '' } }))
-}
-
-async function typeOther($: EngineInterface, id: string, text: string): Promise<void> {
-  await update($, wizardAtom, prev => (prev.other?.id === id ? { ...prev, other: { id, text } } : prev))
+  await update($, wizardAtom, prev => ({ ...prev, other: prev.other === id ? null : id }))
 }
 
 // The free text of "Other…" is a pick like an option; blank text is no answer.
@@ -423,7 +444,6 @@ const actionsFor = ($: EngineInterface): PaneActions => ({
   dismiss: id => report($, dismissStatus($, id)),
   pick: (id, key) => report($, pickOption($, id, { key })),
   toggleOther: id => report($, toggleOther($, id)),
-  typeOther: (id, text) => report($, typeOther($, id, text)),
   submitOther: (id, text) => report($, submitOther($, id, text)),
   toggleExpanded: id => report($, moveWizard($, current => flow.toggleExpanded(current, id))),
   back: () => report($, moveWizard($, current => flow.back(current))),

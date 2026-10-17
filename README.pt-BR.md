@@ -22,10 +22,10 @@ O Askaway não:
 
 ## ✨ Recursos
 
-- **Uma pergunta por vez**, com opções numeradas, um campo "Outra…" e uma etapa de revisão.
+- **Uma pergunta por vez**, com opções numeradas, um campo "Outra resposta…" e uma etapa de revisão.
 - **Enviar tudo**: todas as respostas de uma janela (uma sessão que perguntou) são gravadas de uma vez.
 - **Botão na faixa e aviso**: um botão acima do prompt (atalho `1`) aparece enquanto há perguntas esperando, e um aviso anuncia cada nova pergunta.
-- **Trade-offs e encaixe**: cada opção pode mostrar um trade-off de uma linha e uma pontuação de encaixe; a opção recomendada leva 🎯.
+- **Trade-offs e encaixe**: cada opção pode mostrar um trade-off de uma linha e uma pontuação de encaixe; a opção recomendada leva "(Recomendada)" em negrito.
 - **Explicações sob demanda**: contexto, analogia, porquê, como, ganhos e perdas, atrás de um botão "Ver mais".
 - **Dois idiomas**: inglês e português do Brasil, pelo locale ou com `/askaway lang`.
 - **Atento ao risco**: uma pergunta arriscada pausa a sua sessão até você responder; as demais deixam a sessão continuar.
@@ -142,7 +142,7 @@ Como responder uma pergunta:
 3. Na etapa de revisão, confira as respostas. Clique numa linha para mudá-la.
 4. Clique em **Enviar tudo**. As respostas vão para a sessão que perguntou. Uma janela com uma pergunta é enviada quando você escolhe a opção.
 
-🎯 marca a opção recomendada. Clique em **Ver mais** para ler o contexto, a analogia, os motivos e os ganhos e perdas.
+Cada opção fica numa linha, com o trade-off embaixo, como o diálogo de perguntas do próprio Claude Code. A opção recomendada diz "(Recomendada)" no rótulo e aparece em negrito. Clique em **Ver mais** para ler o contexto, a analogia, os motivos e os ganhos e perdas.
 
 ## 🎛️ Configuração
 
