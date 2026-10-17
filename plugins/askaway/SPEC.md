@@ -28,15 +28,15 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   {"v":1,"id":"q-lq3x9a1-a3f9c2","ts":1791993000000,
    "project":"<absolute project path>","session":"<CLAUDE_CODE_SESSION_ID or null>",
    "run_kind":"main|subagent|goal|loop|bash|codex","session_title":"<<= 80 chars> | null>",
-   "title":"<= 60 chars","question":"<= 400 chars","context":"<optional, <= 600 chars>",
+   "title":"<= 60 chars","question":"<= 400 chars","context":"<<= 600 chars>",
    "options":[{"key":"A","label":"...","tradeoff":"<one line>","fit":88}],
-   "recommended":"A","how":"<optional, <= 400 chars>","gains":"<optional, <= 300 chars>",
-   "losses":"<optional, <= 300 chars>","why":"<1-2 sentences>","analogy":"<optional>",
-   "urgency":"<optional free text, e.g. 'Blocks in ~8 min' | 'Can wait'>",
-   "undo":"<optional free text, e.g. 'changing later ≈ 10 min'>",
-   "risk":"low|medium|high","pause":false,"source":"cli|askuserquestion"}
+   "recommended":"A","how":"<<= 400 chars>","gains":"<<= 300 chars>",
+   "losses":"<<= 300 chars>","why":"<1-2 sentences>","analogy":"<free text>",
+   "urgency":"<free text, e.g. 'Blocks in ~8 min' | 'Can wait'>",
+   "undo":"<free text, e.g. 'changing later ≈ 10 min'>",
+   "risk":"low|medium|high","pause":false,"source":"cli"}
   ```
-  `fit` is an int 0-100 or null (the panel hides the chart when every fit is null).
+  `fit` is an int 0-100 (older questions may hold null; the panel hides the chart when every fit is null).
   `session_title` is filled by `ask`, not by the caller: it is the window title of the asking
   session, read from its transcript `~/.claude/projects/<dir>/<session>.jsonl`. The folder is
   derived from `project`: every char outside `[A-Za-z0-9]` becomes `-`; all folders are globbed
@@ -45,9 +45,9 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   80 chars. It is null when there is no session, no transcript or the lookup fails; the lookup
   never fails the ask. Questions filed by the AskUserQuestion hook get it the same way. Session
   ids that are not plain tokens (`[A-Za-z0-9_-]`) are never looked up.
-  `how` (how the option works), `gains`, `losses`, `urgency` and `undo` are optional explanation fields for the
-  panel, each validated like `why`; questions filed before they existed load unchanged (missing
-  keys read as null).
+  `context`, `why`, `how` (how the option works), `gains`, `losses`, `analogy`, `urgency` and `undo` are
+  required explanation fields for the panel: `ask` refuses an entry with any of them blank (see `ask`).
+  Questions filed before they were required load unchanged (missing keys read as null).
   `pause` is true when the caller says so or `risk` is `high`.
   id = `q-` + base36(ms) + `-` + 6 hex chars from os.urandom.
 - `a/<id>.json` — the answer: `{"id":"...","key":"B","by":"panel|accept_recommended|accept_all|cli","ts":<ms>}`.
@@ -82,9 +82,14 @@ The user counts as away when ANY of: hook input `permission_mode == "bypassPermi
   `title` defaults to the question clipped to 60 chars. Fills `session` from env
   `CLAUDE_CODE_SESSION_ID`, `project` from the working directory, and `run_kind` defaults to `main`
   (`codex` when env `CODEX_*` vars exist and there is no session id). Validates: at least 2
-  options, unique keys, `recommended` among the keys; truncates long strings. Prints
-  `{"id","recommended","action":"continue|pause"}`. On any error prints
-  `{"action":"continue","recommended":<given or null>,"error":"..."}`.
+  options, unique keys, `recommended` among the keys; `context`, `why`, `how`, `gains`, `losses`,
+  `analogy`, `urgency` and `undo` are required (non-blank strings); each option requires `tradeoff`
+  (non-blank) and `fit` (integer 0-100). Every missing or invalid field is named in one error, e.g.
+  `missing fields: analogy, undo; option B: fit`. Truncates long strings. Prints
+  `{"id","recommended","action":"continue|pause"}`. An incomplete or invalid entry files nothing and
+  prints `{"action":"refile","recommended":<given or null>,"error":"..."}`: the caller completes the
+  fields named in `error` and files again. An internal error prints
+  `{"action":"continue","recommended":<given or null>,"error":"internal error"}`.
 - `answer <id> <key> [--by cli]` — writes a/ if absent; prints `{"id","key","written":bool}`.
 - `status <id>` — prints `{"id","status","key"|null}`.
 - `list [--open]` — prints `{"items":[{"id","title","status","recommended","key"}...]}`, newest first.
@@ -98,16 +103,16 @@ It fails open: any error exits 0 with no output. The command hooks are declared 
 `hooks/command-hooks.json`.
 
 - `ask-guard` — PreToolUse, matcher `AskUserQuestion`. Away → for each `tool_input.questions[i]`
-  it files an entry (`source:"askuserquestion"`; options keyed A, B, C… from `options[].label`;
-  `tradeoff` = `options[].description`; `context` = those descriptions as "<key>: <description>"
-  lines when the question has none; fit null; recommended = the option whose label contains
-  "(Recommended)", else the first; `title` = `header`; risk low). It then prints
+  it builds a skeleton question and stores nothing: `title` = `header`; `question`; options keyed A, B,
+  C… from `options[].label` with a trailing "(Recommended)" or "(Recomendado)" removed (case-insensitive);
+  `tradeoff` = `options[].description`; `fit` null; `context` = the question's own context, else the
+  descriptions as "<key>: <description>" lines; recommended = the option whose label had the marker, else
+  the first; `why`, `how`, `gains`, `losses`, `analogy`, `urgency`, `undo` = ""; risk low. It then prints
   `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":<reason>}}`,
-  where the reason is: "The user is away, so this question went to the Askaway inbox as <ids>.
-  Continue with the recommended option (<header>: <label>; …). Next time file questions with
-  `python3 "<this script>" ask` so they carry why/how/gains/losses/fit/analogy; set `"pause": true`
-  for risky ones (real files, credentials, irreversible)." The script path comes from `Path(__file__)`.
-  Not away → no output (the real question shows).
+  where the reason says the questions are NOT in the inbox yet, and that the agent must fill every empty
+  field of each skeleton and file it with `python3 "<this script>" ask --json '<skeleton>'` (one command
+  per question) before continuing on the recommended option unless the reply says pause. The script
+  path comes from `Path(__file__)`. Not away, or any error → no output (the real question shows).
 - `pause-guard` — PreToolUse, matcher `Edit|Write|NotebookEdit|Bash`. If an `open` entry with
   `pause:true` has `session == input.session_id`, it denies with the reason "Paused: Askaway question
   <id> (<title>) needs the user's answer. Do read-only work or end the turn; check with
@@ -305,8 +310,8 @@ joined by "\n". The d/ markers (`via:"prompt"`) are written first, only where ab
 - Free text (key `other`): `The user answered Askaway question <id> (<title>): their own answer (Other): "<text>".`
 - Ask-guard and pause-guard reasons: see "Hook modes".
 
-The agent instruction lives in `skills/file-question/SKILL.md`: file a question with options, a
-recommended option, and the explanation fields when they help; continue on `recommended` unless
+The agent instruction lives in `skills/file-question/SKILL.md`: file a question with every required
+field, a recommended option, and on `refile` complete and file again; continue on `recommended` unless
 `action` is `pause`.
 
 ## Packaging

@@ -67,6 +67,9 @@ QUESTION_MAX: Final = 400
 CONTEXT_MAX: Final = 600
 HOW_MAX: Final = 400
 TEXT_MAX: Final = 300
+TEXT_CAPS: Final = {"context": CONTEXT_MAX, "how": HOW_MAX}
+REQUIRED_TEXT: Final = ("context", "why", "how", "gains", "losses", "analogy", "urgency", "undo")
+RECOMMENDED_MARKER: Final = re.compile(r"\s*\((?:recommended|recomendado)\)\s*$", re.IGNORECASE)
 SESSION_TITLE_MAX: Final = 80
 SESSION_PATTERN: Final = re.compile(r"[A-Za-z0-9_-]{1,128}")
 # Title entry types in precedence order: the last custom title wins, then agent name, then AI title.
@@ -241,11 +244,14 @@ def _text(value: object, limit: int) -> str | None:
     return _clip(text, limit) if text else None
 
 
-def _fit(value: object) -> int | None:
-    if value is None:
-        return None
+def _strict_text(value: object, limit: int) -> str | None:
+    """A required text field: None when it is missing, blank or not a string."""
+    return _text(value, limit) if isinstance(value, str) else None
+
+
+def _strict_fit(value: object) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
-        raise ValueError("fit must be an integer from 0 to 100, or null")
+        return None
     return value
 
 
@@ -273,7 +279,8 @@ def _option(raw: object) -> dict[str, Any]:
     if label is None:
         raise ValueError("option label is required")
     return {"key": key.strip(), "label": label,
-            "tradeoff": _text(raw.get("tradeoff"), TEXT_MAX), "fit": _fit(raw.get("fit"))}
+            "tradeoff": _strict_text(raw.get("tradeoff"), TEXT_MAX),
+            "fit": _strict_fit(raw.get("fit"))}
 
 
 def _options(raw_options: object) -> list[dict[str, Any]]:
@@ -284,6 +291,17 @@ def _options(raw_options: object) -> list[dict[str, Any]]:
     if len(set(keys)) != len(keys):
         raise ValueError("option keys must be unique")
     return options
+
+
+def _option_gaps(options: Sequence[Mapping[str, Any]]) -> list[str]:
+    return [f"option {option['key']}: {name}" for option in options
+            for name in ("tradeoff", "fit") if option[name] is None]
+
+
+def _entry_gaps(texts: Mapping[str, str | None], options: Sequence[Mapping[str, Any]]) -> list[str]:
+    missing = [name for name in REQUIRED_TEXT if texts[name] is None]
+    gaps = [f"missing fields: {', '.join(missing)}"] if missing else []
+    return gaps + _option_gaps(options)
 
 
 def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
@@ -297,21 +315,19 @@ def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
         raise ValueError("recommended must be one of the option keys")
     risk = _choice(raw.get("risk") or "low", RISKS, "risk")
     run_kind = _choice(raw.get("run_kind") or origin.run_kind, RUN_KINDS, "run_kind")
+    texts = {name: _strict_text(raw.get(name), TEXT_CAPS.get(name, TEXT_MAX))
+             for name in REQUIRED_TEXT}
+    gaps = _entry_gaps(texts, options)
+    if gaps:
+        raise ValueError("; ".join(gaps))
     now = now_ms()
     return {
         "v": 1, "id": new_id(now), "ts": now,
         "project": origin.project, "session": origin.session, "run_kind": run_kind,
         "session_title": session_title(origin.session, origin.project),
         "title": title, "question": question,
-        "context": _text(raw.get("context"), CONTEXT_MAX),
         "options": options, "recommended": recommended,
-        "how": _text(raw.get("how"), HOW_MAX),
-        "gains": _text(raw.get("gains"), TEXT_MAX),
-        "losses": _text(raw.get("losses"), TEXT_MAX),
-        "why": _text(raw.get("why"), TEXT_MAX),
-        "analogy": _text(raw.get("analogy"), TEXT_MAX),
-        "urgency": _text(raw.get("urgency"), TEXT_MAX),
-        "undo": _text(raw.get("undo"), TEXT_MAX),
+        **texts,
         "risk": risk, "pause": _flag(raw.get("pause")) or risk == "high",
         "source": origin.source,
     }
@@ -406,6 +422,11 @@ def session_ended(session: str | None, project: str | None = None) -> bool:
         return False
 
 
+def _given_recommended(raw: object) -> str | None:
+    given = raw.get("recommended") if isinstance(raw, dict) else None
+    return given if isinstance(given, str) else None
+
+
 def cmd_ask(json_text: str | None) -> dict[str, Any]:
     raw: object = None
     try:
@@ -415,10 +436,11 @@ def cmd_ask(json_text: str | None) -> dict[str, Any]:
         origin = cli_origin()
         entry = build_entry(raw, origin)
         store_entry(entry)
-    except Exception as exc:  # noqa: BLE001 - the agent always gets an answer and continues
-        given = raw.get("recommended") if isinstance(raw, dict) else None
-        return {"action": "continue", "recommended": given if isinstance(given, str) else None,
-                "error": str(exc) if isinstance(exc, ValueError) else "internal error"}
+    except ValueError as exc:  # the entry is incomplete or invalid: the agent files it again
+        return {"action": "refile", "recommended": _given_recommended(raw), "error": str(exc)}
+    except Exception:  # noqa: BLE001 - the agent always gets an answer and continues
+        return {"action": "continue", "recommended": _given_recommended(raw),
+                "error": "internal error"}
     return {"id": entry["id"], "recommended": entry["recommended"],
             "action": "pause" if entry["pause"] else "continue"}
 
@@ -552,43 +574,53 @@ def _option_context(keyed: Sequence[Mapping[str, Any]]) -> str | None:
     return "\n".join(f"{key}: {text}" for key, text in texts if text) or None
 
 
-def askuser_entry(question: Mapping[str, Any]) -> dict[str, Any]:
+def _askuser_options(question: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     options = question.get("options")
-    if not isinstance(options, list) or len(options) > len(string.ascii_uppercase):
+    if not isinstance(options, list) or not MIN_OPTIONS <= len(options) <= len(string.ascii_uppercase):
         raise ValueError("AskUserQuestion options are missing or out of range")
-    keyed = [{"key": letter, "label": option.get("label"), "tradeoff": option.get("description")}
-             for letter, option in zip(string.ascii_uppercase, options, strict=False)]
-    marked = [option["key"] for option in keyed if "(Recommended)" in str(option["label"])]
-    first = keyed[0]["key"] if keyed else None
+    return options
+
+
+def _recommended_key(keyed: Sequence[Mapping[str, Any]], labels: Sequence[str]) -> str:
+    """The option whose label carried the recommended marker, else the first."""
+    marked = [option["key"] for option, label in zip(keyed, labels, strict=True)
+              if RECOMMENDED_MARKER.search(label)]
+    return marked[0] if marked else keyed[0]["key"]
+
+
+def askuser_skeleton(question: Mapping[str, Any]) -> dict[str, Any]:
+    """The AskUserQuestion as a question to file: the explanation fields are left for the agent."""
+    options = _askuser_options(question)
+    labels = [str(option.get("label") or "") for option in options]
+    keyed = [{"key": letter, "label": RECOMMENDED_MARKER.sub("", label).strip() or None,
+              "tradeoff": option.get("description"), "fit": None}
+             for letter, label, option in zip(string.ascii_uppercase, labels, options, strict=False)]
     return {"title": question.get("header"), "question": question.get("question"),
             "context": question.get("context") or _option_context(keyed),
-            "options": keyed, "recommended": marked[0] if marked else first, "risk": "low"}
+            "options": keyed, "recommended": _recommended_key(keyed, labels),
+            "why": "", "how": "", "gains": "", "losses": "", "analogy": "", "urgency": "",
+            "undo": "", "risk": "low"}
 
 
-def askuser_reason(entries: Sequence[Mapping[str, Any]]) -> str:
-    ids = ", ".join(entry["id"] for entry in entries)
-    recommended = "; ".join(f"{entry['title']}: {option_label(entry, entry['recommended'])}"
-                            for entry in entries)
-    return (f"The user is away, so this question went to the Askaway inbox as {ids}. "
-            f"Continue with the recommended option ({recommended}). "
-            f'Next time file questions with `python3 "{SCRIPT_PATH}" ask` so they '
-            "carry why/how/gains/losses/fit/analogy; set \"pause\": true for risky ones "
-            "(real files, credentials, irreversible).")
+def askuser_reason(skeletons: Sequence[Mapping[str, Any]]) -> str:
+    commands = [f"{number}. python3 \"{SCRIPT_PATH}\" ask --json "
+                f"'{json.dumps(skeleton, ensure_ascii=False, separators=(',', ':'))}'"
+                for number, skeleton in enumerate(skeletons, start=1)]
+    return ("The user is away, so these AskUserQuestion calls are NOT in the Askaway inbox yet. "
+            "Before you continue, fill every empty field (\"\" or null) of each skeleton, then file "
+            "it with its command: one command per question, keeping the single quotes (write a ' "
+            "inside a value as '\\''). Continue on the recommended option unless the reply says "
+            "pause.\n" + "\n".join(commands))
 
 
 def hook_ask_guard(event: Mapping[str, Any]) -> HookOutput:
     if not is_away(event.get("permission_mode")):
         return None
     questions = (event.get("tool_input") or {}).get("questions") or []
-    origin = Origin(session=event.get("session_id") or None,
-                    project=str(event.get("cwd") or os.getcwd()),
-                    run_kind="main", source="askuserquestion")
-    entries = [build_entry(askuser_entry(question), origin) for question in questions]
-    if not entries:
+    skeletons = [askuser_skeleton(question) for question in questions]
+    if not skeletons:
         return None
-    for entry in entries:
-        store_entry(entry)
-    return deny(askuser_reason(entries))
+    return deny(askuser_reason(skeletons))
 
 
 def hook_pause_guard(event: Mapping[str, Any]) -> HookOutput:

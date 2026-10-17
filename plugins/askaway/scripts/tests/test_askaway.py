@@ -48,11 +48,21 @@ def base_entry(**over) -> dict:
             {"key": "B", "label": "In-process", "tradeoff": "lost on restart", "fit": 40},
         ],
         "recommended": "A",
+        "context": "Sizing the API for three workers.",
         "why": "Shared across workers.",
+        "how": "Redis runs as a service next to the API.",
+        "gains": "Hits are shared across workers.",
+        "losses": "One more service to run.",
+        "analogy": "A shared locker instead of one per worker.",
+        "urgency": "Can wait",
+        "undo": "changing later ~10 min",
         "risk": "low",
     }
     entry.update(over)
     return entry
+
+
+REQUIRED_TEXT = ("context", "why", "how", "gains", "losses", "analogy", "urgency", "undo")
 
 
 def cli(capsys, *args: str) -> dict:
@@ -166,23 +176,69 @@ def test_ask_ignores_session_and_project_sent_in_payload(home, capsys, monkeypat
     lambda e: e.pop("question"),
     lambda e: e.update(pause="yes"),
     lambda e: e.update(run_kind="robot"),
+    lambda e: e["options"][0].update(tradeoff="  "),
+    lambda e: e["options"][0].pop("fit"),
+    lambda e: e.pop("undo"),
 ])
-def test_ask_invalid_entry_continues_with_error_and_files_nothing(change, home, capsys):
+def test_ask_invalid_entry_refiles_with_error_and_files_nothing(change, home, capsys):
     entry = base_entry()
     change(entry)
     out = cli(capsys, "ask", "--json", json.dumps(entry))
-    assert out["action"] == "continue" and out["error"]
+    assert out["action"] == "refile" and out["error"]
     assert not (home / "q").exists() or list((home / "q").glob("*.json")) == []
+
+
+@pytest.mark.parametrize("field", REQUIRED_TEXT)
+def test_ask_requires_every_text_field(field, home, capsys):
+    entry = base_entry()
+    del entry[field]
+    out = cli(capsys, "ask", "--json", json.dumps(entry))
+    assert out == {"action": "refile", "recommended": "A", "error": f"missing fields: {field}"}
+    assert not (home / "q").exists() or list((home / "q").glob("*.json")) == []
+
+
+@pytest.mark.parametrize("field", REQUIRED_TEXT)
+def test_ask_rejects_a_blank_or_non_string_text_field(field, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(**{field: "   "})))
+    assert out["action"] == "refile" and out["error"] == f"missing fields: {field}"
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(**{field: 5})))
+    assert out["error"] == f"missing fields: {field}"
+
+
+def test_ask_error_names_every_missing_field_and_option_gap_in_one_line(home, capsys):
+    entry = base_entry()
+    del entry["analogy"]
+    del entry["undo"]
+    entry["options"][1]["fit"] = 101
+    out = cli(capsys, "ask", "--json", json.dumps(entry))
+    assert out == {"action": "refile", "recommended": "A",
+                   "error": "missing fields: analogy, undo; option B: fit"}
+    assert not (home / "q").exists() or list((home / "q").glob("*.json")) == []
+
+
+def test_ask_error_names_an_option_missing_its_tradeoff(capsys):
+    entry = base_entry()
+    entry["options"][0].pop("tradeoff")
+    out = cli(capsys, "ask", "--json", json.dumps(entry))
+    assert out["error"] == "option A: tradeoff"
 
 
 def test_ask_error_echoes_the_recommended_value_given(capsys):
     out = cli(capsys, "ask", "--json", json.dumps(base_entry(recommended="Z")))
-    assert out["recommended"] == "Z" and out["action"] == "continue"
+    assert out["recommended"] == "Z" and out["action"] == "refile"
 
 
-def test_ask_unreadable_json_fails_open(capsys):
+def test_ask_unreadable_json_asks_for_a_refile(capsys):
     out = cli(capsys, "ask", "--json", "{nope")
-    assert out["action"] == "continue" and out["recommended"] is None and out["error"]
+    assert out["action"] == "refile" and out["recommended"] is None and out["error"]
+
+
+def test_ask_internal_error_continues_with_a_generic_error(capsys, monkeypatch):
+    def broken_store(entry):
+        raise OSError("disk gone")
+    monkeypatch.setattr(askaway, "store_entry", broken_store)
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry()))
+    assert out == {"action": "continue", "recommended": "A", "error": "internal error"}
 
 
 def test_ask_reads_entry_from_stdin(capsys, monkeypatch):
@@ -295,42 +351,74 @@ def test_ask_guard_when_not_away_is_silent(home, capsys, monkeypatch):
     assert not (home / "q").exists()
 
 
-def test_ask_guard_when_away_files_each_question(home, capsys, monkeypatch):
+def test_ask_guard_when_away_stores_nothing(home, capsys, monkeypatch):
     cli(capsys, "away", "on")
     hook_json(capsys, monkeypatch, "ask-guard", askuser_payload())
-    files = sorted((home / "q").glob("*.json"))
-    entries = [json.loads(p.read_text(encoding="utf-8")) for p in files]
-    assert len(entries) == 2
-    by_title = {e["title"]: e for e in entries}
-    cache = by_title["Cache"]
-    assert cache["source"] == "askuserquestion" and cache["risk"] == "low"
-    assert cache["recommended"] == "B"
-    assert [(o["key"], o["label"], o["fit"]) for o in cache["options"]] == [
-        ("A", "In-process", None), ("B", "Redis (Recommended)", None)]
-    assert cache["options"][0]["tradeoff"] == "lost on restart"
-    assert by_title["Logs"]["recommended"] == "A"
+    assert not (home / "q").exists() or list((home / "q").iterdir()) == []
 
 
-def test_ask_guard_denial_names_ids_and_recommended_options(home, capsys, monkeypatch):
+def skeletons(reason: str) -> dict[str, dict]:
+    """The skeletons in a deny reason, keyed by title: each command line ends in one quoted JSON."""
+    found = {}
+    for line in reason.splitlines():
+        if " --json '" in line:
+            entry = json.loads(line.split(" --json '", 1)[1].rsplit("'", 1)[0])
+            found[entry["title"]] = entry
+    return found
+
+
+def guard_skeletons(capsys, monkeypatch, payload: dict | None = None) -> dict[str, dict]:
+    cli(capsys, "away", "on")
+    out = hook_json(capsys, monkeypatch, "ask-guard", payload or askuser_payload())
+    return skeletons(out["hookSpecificOutput"]["permissionDecisionReason"])
+
+
+def test_ask_guard_skeleton_carries_the_question_with_empty_explanations(capsys, monkeypatch):
+    assert guard_skeletons(capsys, monkeypatch)["Cache"] == {
+        "title": "Cache", "question": "Which cache?",
+        "context": "A: lost on restart\nB: one more service",
+        "options": [{"key": "A", "label": "In-process", "tradeoff": "lost on restart", "fit": None},
+                    {"key": "B", "label": "Redis", "tradeoff": "one more service", "fit": None}],
+        "recommended": "B", "why": "", "how": "", "gains": "", "losses": "",
+        "analogy": "", "urgency": "", "undo": "", "risk": "low",
+    }
+
+
+def test_ask_guard_recommended_comes_from_either_marker_case_insensitively(capsys, monkeypatch):
+    payload = askuser_payload()
+    payload["tool_input"]["questions"][0]["options"][1]["label"] = "Redis (Recomendado)"
+    payload["tool_input"]["questions"][1]["options"][1]["label"] = "debug (RECOMMENDED) "
+    found = guard_skeletons(capsys, monkeypatch, payload)
+    assert found["Cache"]["recommended"] == "B" and found["Cache"]["options"][1]["label"] == "Redis"
+    assert found["Logs"]["recommended"] == "B" and found["Logs"]["options"][1]["label"] == "debug"
+
+
+def test_ask_guard_recommends_the_first_option_without_a_marker(capsys, monkeypatch):
+    assert guard_skeletons(capsys, monkeypatch)["Logs"]["recommended"] == "A"
+
+
+def test_ask_guard_denial_carries_one_fillable_command_per_question(home, capsys, monkeypatch):
     cli(capsys, "away", "on")
     out = hook_json(capsys, monkeypatch, "ask-guard", askuser_payload())
     decision = out["hookSpecificOutput"]
     assert decision["hookEventName"] == "PreToolUse"
     assert decision["permissionDecision"] == "deny"
     reason = decision["permissionDecisionReason"]
-    for path in (home / "q").glob("*.json"):
-        assert path.stem in reason
-    assert "Cache: Redis (Recommended)" in reason and "Logs: info" in reason
-    assert '"pause": true' in reason
+    assert "NOT in the Askaway inbox yet" in reason
+    assert "fill every empty field" in reason and "Before you continue" in reason
+    assert "unless the reply says pause" in reason
+    assert set(skeletons(reason)) == {"Cache", "Logs"}
+    assert reason.count(" ask --json '") == 2
+    assert not (home / "q").exists() or list((home / "q").iterdir()) == []
 
 
-def test_ask_guard_reason_speaks_of_the_user_and_names_this_script(home, capsys, monkeypatch):
+def test_ask_guard_reason_speaks_of_the_user_and_names_this_script(capsys, monkeypatch):
     cli(capsys, "away", "on")
     out = hook_json(capsys, monkeypatch, "ask-guard", askuser_payload())
     reason = out["hookSpecificOutput"]["permissionDecisionReason"]
-    assert reason.startswith("The user is away, so this question went to the Askaway inbox as ")
+    assert reason.startswith("The user is away, so these AskUserQuestion calls are NOT")
     assert askaway.SCRIPT_PATH == SCRIPT.resolve()
-    assert f'python3 "{askaway.SCRIPT_PATH}" ask' in reason
+    assert f'python3 "{askaway.SCRIPT_PATH}" ask --json \'' in reason
     assert not set(reason.split()) & {"her", "she"}
 
 
@@ -347,39 +435,22 @@ def test_ask_guard_invalid_question_files_nothing_and_stays_silent(home, capsys,
     assert not list((home / "q").glob("*.json"))
 
 
-def guard_entries_by_title(home: Path, capsys, monkeypatch, payload: dict | None = None) -> dict:
-    cli(capsys, "away", "on")
-    hook_json(capsys, monkeypatch, "ask-guard", payload or askuser_payload())
-    files = (home / "q").glob("*.json")
-    return {e["title"]: e for e in (json.loads(p.read_text(encoding="utf-8")) for p in files)}
+def test_ask_guard_skeleton_context_is_the_option_descriptions(capsys, monkeypatch):
+    found = guard_skeletons(capsys, monkeypatch)
+    assert found["Cache"]["context"] == "A: lost on restart\nB: one more service"
+    assert found["Logs"]["context"] == "A: default\nB: noisy"
 
 
-def test_ask_guard_entries_carry_the_option_descriptions_as_context(home, capsys, monkeypatch):
-    entries = guard_entries_by_title(home, capsys, monkeypatch)
-    assert entries["Cache"]["context"] == "A: lost on restart\nB: one more service"
-    assert entries["Logs"]["context"] == "A: default\nB: noisy"
-    assert entries["Cache"]["options"][0]["tradeoff"] == "lost on restart"
-
-
-def test_ask_guard_context_skips_empty_descriptions(home, capsys, monkeypatch):
+def test_ask_guard_context_skips_empty_descriptions(capsys, monkeypatch):
     payload = askuser_payload()
     payload["tool_input"]["questions"][1]["options"][0]["description"] = "   "
-    entries = guard_entries_by_title(home, capsys, monkeypatch, payload)
-    assert entries["Logs"]["context"] == "B: noisy"
+    assert guard_skeletons(capsys, monkeypatch, payload)["Logs"]["context"] == "B: noisy"
 
 
-def test_ask_guard_context_is_clipped_to_the_context_cap(home, capsys, monkeypatch):
-    payload = askuser_payload()
-    payload["tool_input"]["questions"][0]["options"][0]["description"] = "x" * 700
-    entries = guard_entries_by_title(home, capsys, monkeypatch, payload)
-    assert len(entries["Cache"]["context"]) == 600
-
-
-def test_ask_guard_keeps_a_context_the_question_already_carries(home, capsys, monkeypatch):
+def test_ask_guard_keeps_a_context_the_question_already_carries(capsys, monkeypatch):
     payload = askuser_payload()
     payload["tool_input"]["questions"][0]["context"] = "Own context"
-    entries = guard_entries_by_title(home, capsys, monkeypatch, payload)
-    assert entries["Cache"]["context"] == "Own context"
+    assert guard_skeletons(capsys, monkeypatch, payload)["Cache"]["context"] == "Own context"
 
 
 # ---- pause-guard -------------------------------------------------------
@@ -898,13 +969,19 @@ def test_ask_files_how_gains_and_losses(home, capsys):
     assert entry["gains"] == "Shared state" and entry["losses"] == "One more service"
 
 
-def test_ask_explanation_fields_are_optional(home, capsys):
+def test_ask_files_analogy_urgency_and_undo(home, capsys):
     out = cli(capsys, "ask", "--json", json.dumps(base_entry()))
     entry = stored(home, "q", out["id"])
-    assert entry["how"] is None and entry["gains"] is None and entry["losses"] is None
+    assert entry["analogy"] == "A shared locker instead of one per worker."
+    assert entry["urgency"] == "Can wait" and entry["undo"] == "changing later ~10 min"
     assert entry["session_title"] is None
+
+
+def test_legacy_entries_without_the_newer_keys_still_list(home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry()))
+    entry = stored(home, "q", out["id"])
     legacy = {k: v for k, v in entry.items()
-              if k not in {"how", "gains", "losses", "session_title"}}
+              if k not in {"how", "gains", "losses", "analogy", "urgency", "undo", "session_title"}}
     (home / "q" / f"{out['id']}.json").write_text(json.dumps(legacy), encoding="utf-8")
     assert [item["id"] for item in askaway.cmd_list(False)["items"]] == [out["id"]]
 
@@ -916,12 +993,6 @@ def test_ask_caps_explanation_fields(field, limit, home, capsys):
     value = stored(home, "q", out["id"])[field]
     assert len(value) == limit and value.endswith("…")
 
-
-@pytest.mark.parametrize("field", ["how", "gains", "losses"])
-def test_ask_rejects_a_non_string_explanation_field(field, home, capsys):
-    out = cli(capsys, "ask", "--json", json.dumps(base_entry(**{field: 5})))
-    assert out["action"] == "continue" and out["error"]
-    assert not (home / "q").exists() or list((home / "q").glob("*.json")) == []
 
 
 PROJECT_CWD = "/workspace/demo"  # Claude Code encodes it to PROJECT_DIR
@@ -1028,14 +1099,6 @@ def test_normal_delivery_carries_no_reason(home, capsys, monkeypatch):
     hook_json(capsys, monkeypatch, "deliver", deliver_event())
     marker = stored(home, "d", item)
     assert "reason" not in marker and "expired" not in marker
-
-
-def test_ask_guard_entries_carry_the_session_title(home, capsys, monkeypatch):
-    write_transcript(home, [custom("Spec-49 close-out")])
-    cli(capsys, "away", "on")
-    hook_json(capsys, monkeypatch, "ask-guard", askuser_payload())
-    entries = [json.loads(p.read_text(encoding="utf-8")) for p in (home / "q").glob("*.json")]
-    assert {e["session_title"] for e in entries} == {"Spec-49 close-out"}
 
 
 @pytest.mark.parametrize(

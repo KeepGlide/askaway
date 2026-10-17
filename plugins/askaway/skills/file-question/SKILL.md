@@ -30,27 +30,31 @@ later in the Askaway panel, and the answer comes back into your session.
 ## How to file
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache backend","question":"Which cache should the service use?","context":"Sizing the API for three workers; the cache sits in front of the reads.","options":[{"key":"A","label":"Redis","tradeoff":"Safe to accept and easy to change later; one more service to run and monitor","fit":88},{"key":"B","label":"In-process","tradeoff":"Give up sharing hits across workers; the cache is lost on restart","fit":40}],"recommended":"A","why":"Workers share one cache, so a hit on one serves all three.","how":"Redis runs as a service in `docker-compose.yml` next to the API; the cache client points at it.","gains":"Hits are shared across workers and survive a restart.","losses":"One more service to run and monitor.","risk":"low"}'
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache backend","question":"Which cache should the service use?","context":"Sizing the API for three workers; the cache sits in front of the reads.","options":[{"key":"A","label":"Redis","tradeoff":"Safe to accept and easy to change later; one more service to run and monitor","fit":88},{"key":"B","label":"In-process","tradeoff":"Give up sharing hits across workers; the cache is lost on restart","fit":40}],"recommended":"A","why":"Workers share one cache, so a hit on one serves all three.","how":"Redis runs as a service in `docker-compose.yml` next to the API; the cache client points at it.","gains":"Hits are shared across workers and survive a restart.","losses":"One more service to run and monitor.","analogy":"A shared locker instead of one per worker.","urgency":"Can wait","undo":"changing later ≈ 10 min","risk":"low"}'
 ```
 
 The CLI prints one JSON line: `{"id":"q-...","recommended":"A","action":"continue"}`.
-On an invalid entry it prints `{"action":"continue","recommended":...,"error":"..."}`:
-fix the entry and file it again, or continue on the recommended option.
+On an incomplete or invalid entry it files nothing and prints
+`{"action":"refile","recommended":...,"error":"missing fields: analogy, undo; option B: fit"}`:
+complete the fields named in `error` and file the question again. Never continue without filing it.
+An `"error":"internal error"` answer with `"action":"continue"` means it was not filed either: continue on the recommended option.
 
 Fields (SPEC.md, "State folder"):
 
 | Field | Required | Notes |
 |---|---|---|
 | `question` | yes | Up to 400 characters. |
-| `options` | yes | At least 2 objects: `key` (unique, such as `A`), `label`, optional `tradeoff` (one line; the rules below say what it holds), optional `fit` (integer 0-100 or null). |
+| `options` | yes | At least 2 objects: `key` (unique, such as `A`), `label`, `tradeoff` (one line; the rules below say what it holds), `fit` (integer 0-100). |
 | `recommended` | yes | One of the option keys. |
 | `title` | no | Up to 60 characters; defaults to the question, clipped. |
-| `context` | no, always fill | Where the question comes from: the task and the step that stopped. Up to 600 characters. |
-| `why` | no, always fill | One or two sentences on why the recommended option. |
-| `how` | no, always fill | One or two sentences on how the recommended option works. Up to 400 characters. |
-| `gains` | no, always fill | One or two sentences on what the user gains with it. Up to 300 characters. |
-| `losses` | no, always fill | One or two sentences on what the user gives up or risks with it. Up to 300 characters. |
-| `analogy`, `urgency`, `undo` | no | Add `analogy` when a comparison makes the trade-off clear, `urgency` when there is a deadline (e.g. `Blocks in ~8 min`), `undo` when reversing the choice is costly (e.g. `changing later ≈ 10 min`). |
+| `context` | yes | Where the question comes from: the task and the step that stopped. Up to 600 characters. |
+| `why` | yes | One or two sentences on why the recommended option. |
+| `how` | yes | One or two sentences on how the recommended option works. Up to 400 characters. |
+| `gains` | yes | One or two sentences on what the user gains with it. Up to 300 characters. |
+| `losses` | yes | One or two sentences on what the user gives up or risks with it. Up to 300 characters. |
+| `analogy` | yes | A comparison that makes the trade-off concrete. |
+| `urgency` | yes | When the answer is due (e.g. `Blocks in ~8 min`), or `Can wait`. |
+| `undo` | yes | What reversing the choice costs (e.g. `changing later ≈ 10 min`). |
 | `risk` | no | The risk of accepting the recommended option: `low` (default) is safe to accept and easy to change later; `medium` is reversible but costs rework; `high` is irreversible, or touches real files, credentials or money, and pauses the session. |
 | `pause` | no | `true` pauses this session until the user answers. |
 | `run_kind` | no | `main`, `subagent`, `goal`, `loop`, `bash` or `codex`. |
@@ -59,6 +63,8 @@ Do not pass `session` or `project`: the CLI fills them from the environment and 
 
 ## After filing
 
+- On `"action": "refile"`, complete the fields named in `error` and file the same question
+  again. Never continue without filing it.
 - Continue on `recommended` unless `action` is `pause`.
 - `"action": "pause"` (from `risk: high` or `pause: true`) means: do read-only work
   or end the turn until the answer arrives. Check with
@@ -80,7 +86,7 @@ Do not pass `session` or `project`: the CLI fills them from the environment and 
   the conversation.
 - When the option has no material gain or loss, say so in that field and name the
   smallest real one. Never leave a field empty or write a placeholder.
-- Add `analogy`, `urgency` or `undo` when the table says they help.
+- Always fill `analogy`, `urgency` and `undo` too.
 - Keep `question` and `options` short and concrete.
 - The recommended option's `tradeoff` says how safe it is to accept it, whether it can be changed later, and what else
   weighs on it (cost, time, what is lost). Each other option's `tradeoff` says what you give up by picking it.
