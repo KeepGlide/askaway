@@ -83,7 +83,8 @@ The user counts as away when ANY of: hook input `permission_mode == "bypassPermi
 
 ## CLI
 
-`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" <cmd>`. Output is one JSON line on stdout; exit 0 always.
+`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" <cmd>`. Output is one JSON line on stdout (`export`
+writes its document instead); exit 0 always, unless `--strict` is given (below).
 
 - `ask` — reads the entry JSON (the fields above minus v/id/ts/source) from stdin or `--json '<...>'`.
   `title` defaults to the question clipped to 60 chars. Fills `session` from env
@@ -104,7 +105,25 @@ The user counts as away when ANY of: hook input `permission_mode == "bypassPermi
   prints `{"error":"answer refused: ..."}`, exit 0, and writes nothing, so the slot stays free. Panel
   answers (`--by panel|accept_recommended|accept_all`) are not bound to a shell session.
 - `status <id>` — prints `{"id","status","key"|null}`.
-- `list [--open]` — prints `{"items":[{"id","title","status","recommended","key"}...]}`, newest first.
+- `--strict` (opt-in, on `ask`, `answer` and `status`) — a refile, an error, or a usage error that
+  names `--strict` exits 1 instead of 0. The JSON line is printed as usual. Without the flag the exit
+  code stays 0. A repeated `answer` that loses the first-writer race (`written:false`) is not an error.
+- `wait <id> [--timeout 300]` — polls a/ every 0.5 s until the answer exists or the timeout (seconds,
+  finite, zero or more; `0` checks once) passes. Prints `{"id","status":"answered","key","text"?}` (the
+  `text` of an `other` answer, as in `status`), `{"id","status":"timeout"}`, or
+  `{"id","status":"unknown id"}`. Exit 0. The pause guard does not exempt `wait` or `export`
+  (only `ask|status|list`), so a paused turn cannot run them.
+- `list [--open | --answered] [--since <when>]` — prints `{"items":[{"id","title","status","recommended","key"}...]}`,
+  newest first. `--answered` keeps the answered items (`answered`, `delivered`, `expired`). With
+  `--since`, only the items whose answer `ts` is at or after `<when>`; `--since` needs `--answered`.
+  `<when>` is a duration counted back from now (`30m`, `2h`, `7d`) or an ISO 8601 timestamp; a
+  timestamp without a zone is read as UTC. Any other value is an error.
+- `export [--since <when>] [--format json|jsonl|csv]` — writes every question, newest first, with its
+  answer record. Rows are `{"id","status","question":<stored question>,"answer":<stored answer>|null}`:
+  `json` (the default) is one array, `jsonl` one row per line, `csv` one row per question with the
+  header `id,status,question,answer`, the last two cells as JSON. `--since` keeps the questions
+  asked at or after `<when>` (the question's `ts`; unlike `list --since`, which filters by the answer's).
+  Writes the document to stdout, not a JSON result line; exit 0.
 - `away on|off|status` — writes or reads away.json; prints `{"away":bool}`.
 - `prune [--days 30]` — deletes q/a/d files of closed items (`delivered` or `expired`) whose closing
   time is older than N days: the delivery marker's `ts` for `delivered`, the answer's `ts` for

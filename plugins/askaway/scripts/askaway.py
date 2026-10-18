@@ -47,7 +47,10 @@ if __name__ == "__main__":
 
 import argparse
 import contextlib
+import csv
+import io
 import json
+import math
 import re
 import shlex
 import stat
@@ -55,6 +58,7 @@ import string
 import time
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final, NamedTuple, NoReturn
 
@@ -90,6 +94,10 @@ PRUNE_INTERVAL_S: Final = 86_400
 RELEASED_SUFFIX: Final = ".desktop-released.json"
 TEMP_STALE_S: Final = 86_400
 CLOSED_STATUSES: Final = frozenset({"delivered", "expired"})
+WAIT_DEFAULT_S: Final = 300.0
+WAIT_POLL_S: Final = 0.5
+DURATION: Final = re.compile(r"([0-9]+)([mhd])")
+DURATION_MS: Final = {"m": 60_000, "h": 3_600_000, "d": DAY_MS}
 # Read-only MCP tools (mcp__<server>__<tool>): one read verb in the tool name and no write verb.
 READ_ONLY_WORDS: Final = frozenset({"get", "list", "read", "search", "query", "find", "describe", "show"})
 WRITE_WORDS: Final = frozenset({
@@ -538,18 +546,48 @@ def cmd_status(item_id: str) -> dict[str, Any]:
     return result
 
 
+def _list_row(entry: Mapping[str, Any]) -> dict[str, Any]:
+    status, key = item_status(entry["id"])
+    row = {"id": entry["id"], "title": entry.get("title"), "status": status,
+           "recommended": entry.get("recommended"), "key": key}
+    text = other_text(read_json(item_path("a", entry["id"]))) if key == "other" else None
+    if text:
+        row["text"] = text
+    return row
+
+
 def cmd_list(only_open: bool) -> dict[str, Any]:
+    items = [_list_row(entry) for entry in load_questions()]
+    return {"items": [item for item in items if not only_open or item["status"] == "open"]}
+
+
+def since_cutoff(text: str) -> int:
+    """The earliest timestamp (ms) that passes --since: a duration ago, or an ISO time (no zone means UTC)."""
+    match = DURATION.fullmatch(text)
+    if match:
+        return now_ms() - int(match[1]) * DURATION_MS[match[2]]
+    try:
+        when = datetime.fromisoformat(text)
+    except ValueError:
+        raise ValueError("--since must be a duration (30m, 2h, 7d) or an ISO timestamp") from None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return int(when.timestamp() * 1000)
+
+
+def answered_at(item_id: str) -> int | None:
+    ts = (read_json(item_path("a", item_id)) or {}).get("ts")
+    return ts if isinstance(ts, int) else None
+
+
+def cmd_answered(since: str | None) -> dict[str, Any]:
+    """Answered items whose answer is at or after --since, newest question first."""
+    cutoff = since_cutoff(since) if since is not None else 0
     items = []
     for entry in load_questions():
-        status, key = item_status(entry["id"])
-        if only_open and status != "open":
-            continue
-        item = {"id": entry["id"], "title": entry.get("title"), "status": status,
-                "recommended": entry.get("recommended"), "key": key}
-        text = other_text(read_json(item_path("a", entry["id"]))) if key == "other" else None
-        if text:
-            item["text"] = text
-        items.append(item)
+        answered = answered_at(entry["id"])
+        if answered is not None and answered >= cutoff:
+            items.append(_list_row(entry))
     return {"items": items}
 
 
@@ -600,6 +638,57 @@ def cmd_prune(days: int) -> dict[str, Any]:
     return {"removed": removed}
 
 
+def cmd_wait(item_id: str, timeout: float) -> dict[str, Any]:
+    if not 0 <= timeout < math.inf:
+        raise ValueError("--timeout must be a finite number of seconds, zero or more")
+    if read_json(item_path("q", item_id)) is None:
+        return {"id": item_id, "status": "unknown id"}
+    deadline = time.monotonic() + timeout
+    while (answer := read_json(item_path("a", item_id))) is None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return {"id": item_id, "status": "timeout"}
+        time.sleep(min(WAIT_POLL_S, remaining))
+    result = {"id": item_id, "status": "answered", "key": answer.get("key")}
+    text = other_text(answer)
+    if text:
+        result["text"] = text
+    return result
+
+
+def cmd_export(since: str | None, fmt: str) -> str:
+    """Every question with its answer record, newest first; questions asked before --since are left out."""
+    cutoff = since_cutoff(since) if since is not None else 0
+    rows = [{"id": entry["id"], "status": item_status(entry["id"])[0], "question": entry,
+             "answer": read_json(item_path("a", entry["id"]))}
+            for entry in load_questions() if entry["ts"] >= cutoff]
+    return render_export(rows, fmt)
+
+
+EXPORT_COLUMNS: Final = ("id", "status", "question", "answer")
+
+
+def render_export(rows: list[dict[str, Any]], fmt: str) -> str:
+    if fmt == "jsonl":
+        return "".join(json.dumps(row) + "\n" for row in rows)
+    if fmt == "csv":
+        buffer = io.StringIO()
+        writer = csv.writer(buffer, lineterminator="\n")
+        writer.writerow(EXPORT_COLUMNS)
+        writer.writerows([row["id"], row["status"], json.dumps(row["question"]), json.dumps(row["answer"])]
+                         for row in rows)
+        return buffer.getvalue()
+    return json.dumps(rows) + "\n"
+
+
+def _list_command(args: argparse.Namespace) -> dict[str, Any]:
+    if args.answered:
+        return cmd_answered(args.since)
+    if args.since is not None:
+        raise ValueError("--since needs --answered")
+    return cmd_list(args.only_open)
+
+
 class _Parser(argparse.ArgumentParser):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(add_help=False, **kwargs)
@@ -614,21 +703,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     ask = commands.add_parser("ask")
     ask.add_argument("--json", dest="json_text")
+    ask.add_argument("--strict", action="store_true")
     ask.set_defaults(run=lambda a: cmd_ask(a.json_text))
 
     answer = commands.add_parser("answer")
     answer.add_argument("id")
     answer.add_argument("key")
     answer.add_argument("--by", default="cli")
+    answer.add_argument("--strict", action="store_true")
     answer.set_defaults(run=lambda a: cmd_answer(a.id, a.key, a.by))
 
     status = commands.add_parser("status")
     status.add_argument("id")
+    status.add_argument("--strict", action="store_true")
     status.set_defaults(run=lambda a: cmd_status(a.id))
 
     listing = commands.add_parser("list")
-    listing.add_argument("--open", dest="only_open", action="store_true")
-    listing.set_defaults(run=lambda a: cmd_list(a.only_open))
+    states = listing.add_mutually_exclusive_group()
+    states.add_argument("--open", dest="only_open", action="store_true")
+    states.add_argument("--answered", action="store_true")
+    listing.add_argument("--since")
+    listing.set_defaults(run=_list_command)
 
     away = commands.add_parser("away")
     away.add_argument("state", choices=("on", "off", "status"))
@@ -637,6 +732,16 @@ def build_parser() -> argparse.ArgumentParser:
     prune = commands.add_parser("prune")
     prune.add_argument("--days", type=int, default=DEFAULT_PRUNE_DAYS)
     prune.set_defaults(run=lambda a: cmd_prune(a.days))
+
+    wait = commands.add_parser("wait")
+    wait.add_argument("id")
+    wait.add_argument("--timeout", type=float, default=WAIT_DEFAULT_S)
+    wait.set_defaults(run=lambda a: cmd_wait(a.id, a.timeout))
+
+    export = commands.add_parser("export")
+    export.add_argument("--since")
+    export.add_argument("--format", dest="fmt", choices=("json", "jsonl", "csv"), default="json")
+    export.set_defaults(run=lambda a: cmd_export(a.since, a.fmt))
     return parser
 
 
@@ -867,9 +972,14 @@ def run_hook(mode: str) -> None:
 
 # ---- entry point -------------------------------------------------------
 
-def dispatch(argv: Sequence[str]) -> dict[str, Any]:
+def dispatch(argv: Sequence[str]) -> dict[str, Any] | str:
     args = build_parser().parse_args(list(argv))
     return args.run(args)
+
+
+def _failed(result: dict[str, Any] | str) -> bool:
+    """A refile or an error: the outcomes that --strict turns into exit 1."""
+    return isinstance(result, dict) and ("error" in result or result.get("action") == "refile")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -878,13 +988,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_hook(args[1] if len(args) > 1 else "")
         return 0
     try:
-        result = dispatch(args)
+        result: dict[str, Any] | str = dispatch(args)
     except ValueError as exc:
         result = {"error": str(exc)}
-    except Exception:  # noqa: BLE001 - the CLI always prints one JSON line and exits 0
+    except Exception:  # noqa: BLE001 - the CLI always answers; exit 0 unless --strict
         result = {"error": "internal error"}
-    print(json.dumps(result))
-    return 0
+    if isinstance(result, str):
+        sys.stdout.write(result)  # export writes its document as it is, not as a JSON line
+    else:
+        print(json.dumps(result))
+    # --strict is parsed by ask, answer and status; a usage error that names it exits 1 too.
+    return 1 if "--strict" in args and _failed(result) else 0
 
 
 if __name__ == "__main__":

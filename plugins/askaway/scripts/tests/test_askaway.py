@@ -1,5 +1,6 @@
 """Tests for scripts/askaway.py: CLI commands, hook modes and the state folder (SPEC.md)."""
 import ast
+import csv
 import io
 import json
 import os
@@ -8,6 +9,7 @@ import stat
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -1360,3 +1362,187 @@ def test_deliver_scans_the_projects_folders_once_for_fifty_answers_of_other_sess
     assert run_hook(capsys, monkeypatch, "deliver", deliver_event()) == ""
     assert scans == ["*/*.desktop-released.json"]
     assert not (home / "d").exists()
+
+
+# ---- wait ----------------------------------------------------------------
+
+HOUR_MS = 3_600_000
+
+
+def run_text(capsys, *args: str) -> str:
+    assert askaway.main(list(args)) == 0
+    return capsys.readouterr().out
+
+
+def run_code(capsys, *args: str) -> tuple[int, dict]:
+    code = askaway.main(list(args))
+    return code, json.loads(capsys.readouterr().out.splitlines()[0])
+
+
+def iso_utc(ms: int) -> str:
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
+
+
+def test_wait_returns_at_once_when_the_answer_exists(home, capsys):
+    item = ask_item(capsys)
+    cli(capsys, "answer", item, "B", "--by", "panel")
+    assert cli(capsys, "wait", item) == {"id": item, "status": "answered", "key": "B"}
+
+
+def test_wait_reports_the_text_of_an_other_answer(home, capsys):
+    item = ask_item(capsys)
+    (home / "a").mkdir(exist_ok=True)
+    answer = {"id": item, "key": "other", "text": "Use SQLite", "by": "panel", "ts": askaway.now_ms()}
+    (home / "a" / f"{item}.json").write_text(json.dumps(answer), encoding="utf-8")
+    assert cli(capsys, "wait", item)["text"] == "Use SQLite"
+
+
+def test_wait_times_out_when_no_answer_arrives(home, capsys, monkeypatch):
+    item = ask_item(capsys)
+    sleeps: list[float] = []
+    monkeypatch.setattr(askaway.time, "sleep", sleeps.append)
+    assert cli(capsys, "wait", item, "--timeout", "0.2") == {"id": item, "status": "timeout"}
+    assert sleeps and all(0 < seconds <= askaway.WAIT_POLL_S for seconds in sleeps)
+
+
+def test_wait_with_zero_timeout_checks_once_and_does_not_sleep(home, capsys, monkeypatch):
+    item = ask_item(capsys)
+    monkeypatch.setattr(askaway.time, "sleep", lambda _s: pytest.fail("must not sleep"))
+    assert cli(capsys, "wait", item, "--timeout", "0") == {"id": item, "status": "timeout"}
+
+
+def test_wait_picks_up_an_answer_written_while_it_polls(home, capsys, monkeypatch):
+    item = ask_item(capsys)
+
+    def answer_during_the_first_poll(_seconds: float) -> None:
+        askaway.cmd_answer(item, "A", "panel")
+
+    monkeypatch.setattr(askaway.time, "sleep", answer_during_the_first_poll)
+    assert cli(capsys, "wait", item, "--timeout", "5") == {"id": item, "status": "answered", "key": "A"}
+
+
+def test_wait_on_an_unknown_id_reports_unknown_id(capsys):
+    assert cli(capsys, "wait", "q-missing-000000") == {"id": "q-missing-000000", "status": "unknown id"}
+
+
+@pytest.mark.parametrize("timeout", ["-1", "inf", "nan"])
+def test_wait_rejects_a_timeout_that_is_not_finite_and_not_negative(home, capsys, timeout):
+    item = ask_item(capsys)
+    assert "error" in cli(capsys, "wait", item, "--timeout", timeout)
+
+
+# ---- --strict ------------------------------------------------------------
+
+def test_strict_ask_refile_exits_1_and_still_prints_the_refile(home, capsys):
+    code, out = run_code(capsys, "ask", "--strict", "--json", json.dumps(base_entry(recommended="Z")))
+    assert code == 1 and out["action"] == "refile"
+
+
+def test_ask_refile_without_strict_exits_0(home, capsys):
+    code, out = run_code(capsys, "ask", "--json", json.dumps(base_entry(recommended="Z")))
+    assert code == 0 and out["action"] == "refile"
+
+
+def test_strict_ask_of_a_valid_entry_exits_0(home, capsys):
+    code, out = run_code(capsys, "ask", "--strict", "--json", json.dumps(base_entry()))
+    assert code == 0 and out["action"] == "continue" and out["recommended"] == "A"
+
+
+def test_strict_status_of_an_unknown_id_exits_1_and_default_exits_0(home, capsys):
+    assert run_code(capsys, "status", "--strict", "q-missing-000000")[0] == 1
+    assert run_code(capsys, "status", "q-missing-000000")[0] == 0
+
+
+def test_strict_answer_errors_exit_1_and_first_writer_wins_still_exits_0(home, capsys):
+    item = ask_item(capsys)
+    assert run_code(capsys, "answer", "--strict", item, "Z")[0] == 1
+    assert run_code(capsys, "answer", item, "Z")[0] == 0
+    assert run_code(capsys, "answer", "--strict", item, "A") == (0, {"id": item, "key": "A", "written": True})
+    assert run_code(capsys, "answer", "--strict", item, "B") == (0, {"id": item, "key": "A", "written": False})
+
+
+def test_strict_on_a_command_that_has_no_such_flag_is_a_usage_error_exit_1(capsys):
+    assert run_code(capsys, "list", "--strict")[0] == 1
+
+
+# ---- list --answered and --since -----------------------------------------
+
+def test_list_answered_orders_newest_question_first_and_filters_by_answer_time(home, clock, capsys):
+    start = clock["ms"]
+    first = ask_item(capsys, title="first")
+    cli(capsys, "answer", first, "A")
+    clock["ms"] = start + HOUR_MS
+    second = ask_item(capsys, title="second")
+    clock["ms"] = start + 3 * HOUR_MS
+    cli(capsys, "answer", second, "B", "--by", "panel")
+    ask_item(capsys, title="still open")
+    clock["ms"] = start + 4 * HOUR_MS
+    assert [item["id"] for item in cli(capsys, "list", "--answered")["items"]] == [second, first]
+    assert [item["id"] for item in cli(capsys, "list", "--answered", "--since", "2h")["items"]] == [second]
+    since_iso = cli(capsys, "list", "--answered", "--since", iso_utc(start + 2 * HOUR_MS))
+    assert [item["id"] for item in since_iso["items"]] == [second]
+
+
+def test_list_since_needs_answered_and_open_excludes_answered(home, capsys):
+    assert "error" in cli(capsys, "list", "--since", "2h")
+    assert "error" in cli(capsys, "list", "--open", "--answered")
+
+
+@pytest.mark.parametrize("bad", ["3w", "soon", "2026-13-40"])
+def test_list_since_rejects_a_value_that_is_neither_a_duration_nor_an_iso_time(home, capsys, bad):
+    assert "error" in cli(capsys, "list", "--answered", "--since", bad)
+
+
+@pytest.mark.parametrize(("text", "back_ms"), [("30m", 30 * 60_000), ("2h", 2 * HOUR_MS), ("7d", 7 * DAY_MS)])
+def test_since_duration_counts_back_from_now(clock, text, back_ms):
+    assert askaway.since_cutoff(text) == clock["ms"] - back_ms
+
+
+def test_since_iso_without_a_zone_is_read_as_utc(clock):
+    assert askaway.since_cutoff("2026-10-18T10:00:00") == askaway.since_cutoff("2026-10-18T10:00:00+00:00")
+
+
+# ---- export --------------------------------------------------------------
+
+def test_export_is_an_empty_json_array_without_questions(home, capsys):
+    assert json.loads(run_text(capsys, "export")) == []
+
+
+def test_export_json_writes_each_question_with_its_answer_record(home, capsys):
+    item = ask_item(capsys, title="cache")
+    open_item = ask_item(capsys, title="open")
+    cli(capsys, "answer", item, "B", "--by", "panel")
+    rows = {row["id"]: row for row in json.loads(run_text(capsys, "export"))}
+    assert rows[item]["status"] == "answered"
+    assert rows[item]["question"]["title"] == "cache"
+    assert rows[item]["answer"] == stored(home, "a", item)
+    assert rows[open_item]["status"] == "open" and rows[open_item]["answer"] is None
+
+
+def test_export_jsonl_writes_one_row_per_line(home, capsys):
+    ask_item(capsys)
+    ask_item(capsys, title="second")
+    rows = [json.loads(line) for line in run_text(capsys, "export", "--format", "jsonl").splitlines()]
+    assert [row["status"] for row in rows] == ["open", "open"]
+
+
+def test_export_csv_has_a_header_and_json_cells(home, capsys):
+    item = ask_item(capsys, title="cache")
+    cli(capsys, "answer", item, "B")
+    rows = list(csv.DictReader(io.StringIO(run_text(capsys, "export", "--format", "csv"))))
+    assert rows[0]["id"] == item and rows[0]["status"] == "answered"
+    assert json.loads(rows[0]["question"])["title"] == "cache"
+    assert json.loads(rows[0]["answer"])["key"] == "B"
+
+
+def test_export_since_keeps_questions_asked_in_the_window(home, clock, capsys):
+    start = clock["ms"]
+    ask_item(capsys, title="old")
+    clock["ms"] = start + 2 * HOUR_MS
+    new = ask_item(capsys, title="new")
+    clock["ms"] = start + 3 * HOUR_MS
+    assert [row["id"] for row in json.loads(run_text(capsys, "export", "--since", "2h"))] == [new]
+
+
+def test_export_rejects_an_unknown_format(home, capsys):
+    assert "error" in cli(capsys, "export", "--format", "xml")
