@@ -2,8 +2,14 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.23, set by the beta.23 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.24, set by the beta.24 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.24] - 2026-10-18
+
+### Fixed
+
+- The wizard's picks are shared by every session of the state folder through `draft.json`: a pick made in one session shows in the others at their next poll (5 s), and a session opened later shows the picks already made. Each change writes the picks with a `ts`, and the newest one wins (`changeWizard`, `saveDraft` and `applyDraft` in `hooks/register.tsx`; `parseDraft` in `hooks/model.ts`).
 
 ## [0.4.0-beta.23] - 2026-10-18
 
