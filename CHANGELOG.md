@@ -2,8 +2,25 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.9, set by the beta.9 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.10, set by the beta.10 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.10] - 2026-10-18
+
+### Added
+
+- A `cli` answer from the question's own session is stamped `by: "agent"`, not `cli`. `status`, `wait` and `export` show the stamp. The stamp is never typed: `answer --by agent` is a usage error (`plugins/askaway/scripts/askaway.py`).
+- The delivery line names who answered, in five wordings: "Answered via panel by <who>", "Answered by <who> (cli)", "Answered by the agent itself", "Accepted all" and "Accepted the recommended option" (`askaway.py` and `hooks/model.ts`).
+- `wait` returns `line`, the delivery line, when its call writes the delivery marker; `status` and `wait` carry `by` when the answer has one.
+
+### Changed
+
+- The card keeps What it is, The problem, Analogy, the question, Urgency, and each option's What happens, Pros and Cons drawn at once. `e` (`e · details`) folds only Why, Undo, How, What we gain, What we lose and Context and origin (pane changes).
+- The lead line says what the agent does while it waits: "Working on <key> since <time> while it waits for you. Your answer still counts: pick another option and it switches; with no answer it stays on <key>.", or "Paused since <time>: it waits for your answer before going on." for a `high` risk question.
+
+### Migration needed
+
+- none; answers may now carry by "agent".
 
 ## [0.4.0-beta.9] - 2026-10-18
 
