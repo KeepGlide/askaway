@@ -21,7 +21,7 @@ A question card appears in the Askaway panel for each decision an agent filed wh
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Early access (0.4.0-beta.15):** the mod API moves between Claude Code releases, so expect changes until a stable release. The changes of this version are listed in [CHANGELOG.md](CHANGELOG.md).
+> ⚠️ **Early access (0.4.0-beta.16):** the mod API moves between Claude Code releases, so expect changes until a stable release. The changes of this version are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## 💡 What it is
 
@@ -198,13 +198,13 @@ When no question is open, the pane shows one footer line under the History tree,
 
 The card draws these parts from top to bottom. The labels are the English ones; the panel shows them in Portuguese when the language is `pt-BR`.
 
-The card opens with the title, the Urgency line (coloured by its grade), the lead line, the explanation before the question (**What it is** and **The problem**), a divider, the **Askaway Details:** block (the mark and the title, then **Analogy**, **💡 Why A**, **↩️ Undo**, **🛠️ How**, **🎁 What we gain**, **⚖️ What we lose** and **🧭 Context and origin**), the question, Urgency, the options with their tradeoff, fit, the **What happens**, **Pros** and **Cons** lines, and the nav row. The details are always open: there is no link or key to open them.
+The card opens with the title, the Urgency line (coloured by its grade), the explanation before the question (**What it is** and **The problem**, two plain paragraphs with no heading), the **Askaway Details:** block (the mark and the title, then **Analogy**, **💡 Why A**, **↩️ Undo**, **🛠️ How**, **🎁 What we gain**, **⚖️ What we lose** and **🧭 Context and origin**), the question, the lead line under it, the options with their tradeoff, fit, the **What happens**, **Pros** and **Cons** lines, and the nav row. The details are always open: there is no link or key to open them.
 
 1. **Title row:** the title in bold, then the risk label and the age, for example `⚠️ medium risk · 12 min ago`. A question filed without `title` gets its question clipped to 60 characters as its title (the CLI does it). The pane cuts a stored empty title to 24 characters. The risk wraps under the title when there is no room.
-2. **Lead line:** in bold, what the agent does now and what happens if nobody answers: `Working on A since 14:05 while it waits for you. Your answer still counts: pick another option and it switches; with no answer it stays on A.`, or `Paused since 14:05: it waits for your answer before going on.` for a `high` risk question.
-3. **Explanation before the question:** a box with the sections that are set, one line each, `heading: text`: **What it is** (`what`) and **The problem** (`problem`). Then a divider and the **Askaway Details:** block (with the mark): **🔁 Analogy** (`analogy`), **💡 Why A** (`why`; the letter is the recommended key), **↩️ Undo** (`undo`), **🛠️ How** (`how`), **🎁 What we gain** (`gains`), **⚖️ What we lose** (`losses`) and **🧭 Context and origin** (`context`) last. The block has no border: it sits on a fill that follows the theme (dark `#282828`, light `#EEEDE9`). Section titles are bold.
+2. **Urgency:** under the title, a line **⏱️ Urgency** (`urgency`) when it is set, its text coloured by grade: `urgency_level` (`low`, `medium`, `high`), or the words of the text when the level is absent.
+3. **Explanation before the question:** the sections that are set, as plain paragraphs with no headings: the **What it is** text (`what`), then the **The problem** text (`problem`). Then the **Askaway Details:** block (with the mark): **🔁 Analogy** (`analogy`), **💡 Why A** (`why`; the letter is the recommended key), **↩️ Undo** (`undo`), **🛠️ How** (`how`), **🎁 What we gain** (`gains`), **⚖️ What we lose** (`losses`) and **🧭 Context and origin** (`context`) last. The block has no border: it sits on a fill that follows the theme (dark `#282828`, light `#EEEDE9`). Section titles are bold.
 4. **The question:** the question text, in bold. Always present.
-5. **Urgency:** under the title, a line **⏱️ Urgency** (`urgency`) when it is set, its text coloured by grade: `urgency_level` (`low`, `medium`, `high`), or the words of the text when the level is absent.
+5. **Lead line:** in bold, right under the question: what the agent does now and what happens if nobody answers: `On A since 14:05. Pick another option to switch; no answer keeps A.`, or `Paused since 14:05, waiting for your answer.` for a `high` risk question.
 6. **The options:** each one a full-width button, `A · Label`, with `(Recommended)` after the label of the recommended one. Under it, a line `└ trade-off · fit 88` (the fit is the agent's estimate), then **What happens** (`does`), **Pros** (`pros`) and **Cons** (`cons`), which show at once. The picked option is the filled button; the recommended one is bold until it is picked. The last one is **Other…**, shown with the letter after the last option (`C · Other…` with two options).
 7. **The nav row:** a separator, then **← Back** (dim on the first question), **Next →** (every question but the last), or on the last question **Submit all (N)** (see step 6 above).
 
@@ -278,8 +278,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache b
 | `options` | yes | At least 2 objects. Their `key`s are consecutive uppercase letters in order: `A`, `B`, `C`… Each has a `label`, a `tradeoff` (up to 300 characters), a `fit` (the agent's own estimate, an integer 0-100; `null` is refused), and `does` (what happens if it is chosen), `pros` and `cons`, each up to 300 characters. The panel draws the fit after the trade-off as `· fit 88`. |
 | `recommended` | yes | One of the option keys. |
 | `title` | no | Up to 60 characters. When it is missing, the question is clipped to 60 characters and used as the title. |
-| `what` | yes | What the thing is, in at least two sentences. Up to 600 characters. Drawn as **What it is**. |
-| `problem` | yes | The concrete consequence if nothing is decided. Up to 400 characters. Drawn as **The problem**. |
+| `what` | yes | What the thing is, in at least two sentences. Up to 600 characters. Drawn as the first paragraph of the card. |
+| `problem` | yes | The concrete consequence if nothing is decided. Up to 400 characters. Drawn as the second paragraph of the card. |
 | `context` | yes | Where the question comes from: the task and the step that stopped. Up to 600 characters. |
 | `why` | yes | One or two sentences on why the recommended option. Up to 300 characters. |
 | `how` | yes | One or two sentences on how the recommended option works. Up to 400 characters. |

@@ -2,8 +2,25 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.15, set by the beta.15 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.16, set by the beta.16 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.16] - 2026-10-18
+
+### Changed
+
+- The "Other…" text is kept in the pane's memory while typing, so a keystroke no longer redraws the pane. It is recorded as the Other pick on Enter, when the field loses focus (the `ui.focus` hook passes the move on first), and before Next, Back, Submit all, a tree jump, an option pick or a switch to another Other field. Drafts of questions that left the board are dropped, and closing the pane (`ui.close`) clears them (`typeOther`, `recordPendingOther`, `afterPendingOther`, `leavesOtherField` in `hooks/register.tsx` and `hooks/model.ts`).
+- The first block of the card (What it is, The problem) is two plain paragraphs with no headings (`firstBlockOf`, `renderFirstBlock` in `hooks/model.ts` and `hooks/pane.tsx`).
+- The lead line is shorter and sits right under the question: "On A since 14:32. Pick another option to switch; no answer keeps A." or "Paused since 14:32, waiting for your answer." (`card.lead.agent`, `card.lead.paused` in `hooks/i18n.ts`).
+- The divider before the details block is gone; the block's fill marks it (`renderDetailsBlock` in `hooks/pane.tsx`).
+
+### Fixed
+
+- None.
+
+### Migration needed
+
+- none.
 
 ## [0.4.0-beta.15] - 2026-10-18
 
