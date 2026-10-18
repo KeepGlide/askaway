@@ -2,8 +2,28 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.12, set by the beta.12 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.13, set by the beta.13 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.13] - 2026-10-18
+
+### Added
+
+- `ask` stores `family` and `family_title` from the Claude Desktop session files (`~/.config/Claude/claude-code-sessions`, or the folder named by `ASKAWAY_DESKTOP_SESSIONS`), and prefers the Desktop window title for `session_title`. The lookup reads regular files only (no symlinks or FIFOs), at most 2 MB each and 2000 files per lookup, strips control characters from titles, and walks fork and spawn links up to 8 hops with a cycle guard (`askaway.py`, SPEC.md).
+
+### Changed
+
+- The details are always shown: the Details / Hide details link and the `e` hotkey are gone. The card is the lead, What it is and The problem, a divider, then an "Askaway Details:" block (rounded border in the theme key `subtle`, the Askaway mark in its title) holding Analogy, Why, Undo, How, What we gain, What we lose and Context and origin; then the question, Urgency and the options. Section titles are bold.
+- The per-answer tree button reads "Submit Answer" ("Enviar resposta").
+- The tree groups questions by the Claude Desktop session family, named by the root session's title, instead of the folder the ask command ran in. Questions filed before the family field existed keep the folder grouping.
+
+### Fixed
+
+- None.
+
+### Migration needed
+
+- none.
 
 ## [0.4.0-beta.12] - 2026-10-18
 
