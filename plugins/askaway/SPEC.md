@@ -28,8 +28,10 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   {"v":1,"id":"q-lq3x9a1-a3f9c2","ts":1791993000000,
    "project":"<absolute project path>","session":"<CLAUDE_CODE_SESSION_ID or null>",
    "run_kind":"main|subagent|goal|loop|bash|codex","session_title":"<<= 80 chars> | null>",
-   "title":"<= 60 chars","question":"<= 400 chars","context":"<<= 600 chars>",
-   "options":[{"key":"A","label":"...","tradeoff":"<one line>","fit":88}],
+   "title":"<= 60 chars","question":"<= 400 chars",
+   "what":"<<= 600 chars, 2+ sentences>","problem":"<<= 400 chars>","context":"<<= 600 chars>",
+   "options":[{"key":"A","label":"...","tradeoff":"<one line>","fit":88,
+               "does":"<<= 300 chars>","pros":"<<= 300 chars>","cons":"<<= 300 chars>"}],
    "recommended":"A","how":"<<= 400 chars>","gains":"<<= 300 chars>",
    "losses":"<<= 300 chars>","why":"<1-2 sentences>","analogy":"<free text>",
    "urgency":"<free text, e.g. 'Blocks in ~8 min' | 'Can wait'>",
@@ -45,9 +47,13 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   80 chars. It is null when there is no session, no transcript or the lookup fails; the lookup
   never fails the ask. Questions filed by the AskUserQuestion hook get it the same way. Session
   ids that are not plain tokens (`[A-Za-z0-9_-]`) are never looked up.
-  `context`, `why`, `how` (how the option works), `gains`, `losses`, `analogy`, `urgency` and `undo` are
-  required explanation fields for the panel: `ask` refuses an entry with any of them blank (see `ask`).
-  Questions filed before they were required load unchanged (missing keys read as null).
+  `what` ("What it is": what the thing is, what the spec says, what the code does today, the discrepancy),
+  `problem` ("The problem": the concrete consequence if nothing is decided, with an example), `context`,
+  `why`, `how` (how the option works), `gains`, `losses`, `analogy`, `urgency` and `undo` are required
+  explanation fields for the panel, and each option's `does` (what happens if chosen), `pros` and `cons`
+  are required too: `ask` refuses an entry with any of them blank (see `ask`). Questions filed before
+  these fields existed load unchanged: `what`, `problem` and the option keys `does`, `pros`, `cons` are
+  absent there, and readers must treat a missing key as null (`list`, `status` and `answer` never read them).
   `pause` is true only when `risk` is `high`: pause applies to risk high only, and it ends when the
   answer is delivered to the asking session, not when it is written. A `pause` value the caller sends
   for `low` or `medium` is type-checked (a non-boolean is refiled) and then ignored.
@@ -98,10 +104,17 @@ writes its document instead); exit 0 always, unless `--strict` is given (below).
   `title` defaults to the question clipped to 60 chars. Fills `session` from env
   `CLAUDE_CODE_SESSION_ID`, `project` from the working directory, and `run_kind` defaults to `main`
   (`codex` when env `CODEX_*` vars exist and there is no session id). Validates: at least 2
-  options, unique keys, `recommended` among the keys; `context`, `why`, `how`, `gains`, `losses`,
-  `analogy`, `urgency` and `undo` are required (non-blank strings); each option requires `tradeoff`
-  (non-blank) and `fit` (integer 0-100). Every missing or invalid field is named in one error, e.g.
-  `missing fields: analogy, undo; option B: fit`. Truncates long strings. Prints
+  options, unique keys, `recommended` among the keys. The required top-level fields are `what`, `problem`,
+  `context`, `why`, `how`, `gains`, `losses`, `analogy`, `urgency` and `undo` (non-blank strings). Each option
+  requires `tradeoff` (non-blank), `fit` (integer 0-100), `does`, `pros` and `cons` (non-blank strings).
+  `what` must hold at least 2 sentences, counted leniently: the non-empty runs between terminators, where a
+  terminator is one or more of `.`, `!` or `?` followed by a space or the end of the text (so `2.0` and
+  `e.g.` do not break a sentence, and the last sentence needs no terminator). Every missing or invalid
+  field is named in one error, e.g. `missing fields: analogy, undo; option B: fit; option B: does`, and a
+  `what` shorter than 2 sentences adds `what needs at least 2 sentences`. Gaps are listed in this order:
+  the missing top-level fields, the `what` sentence rule, then each option's gaps in option order
+  (`tradeoff`, `fit`, `does`, `pros`, `cons`). Truncates long strings (`what` 600 chars, `problem` 400; the
+  sentence rule reads the kept text). Prints
   `{"id","recommended","action":"continue|pause"}`. An incomplete or invalid entry files nothing and
   prints `{"action":"refile","recommended":<given or null>,"error":"..."}`: the caller completes the
   fields named in `error` and files again. An internal error prints
@@ -154,7 +167,8 @@ It fails open: any error exits 0 with no output. The command hooks are declared 
   C… from `options[].label` with a trailing "(Recommended)" or "(Recomendado)" removed (case-insensitive);
   `tradeoff` = `options[].description`; `fit` null; `context` = the question's own context, else the
   descriptions as "<key>: <description>" lines; recommended = the option whose label had the marker, else
-  the first; `why`, `how`, `gains`, `losses`, `analogy`, `urgency`, `undo` = ""; risk low. It then prints
+  the first; `what`, `problem`, `why`, `how`, `gains`, `losses`, `analogy`, `urgency`, `undo` = ""; each
+  option's `does`, `pros`, `cons` = ""; risk low. It then prints
   `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":<reason>}}`,
   where the reason says the questions are NOT in the inbox yet, and that the agent must fill every empty
   field of each skeleton and file it with `python3 "<this script>" ask --json '<skeleton>'` (one command

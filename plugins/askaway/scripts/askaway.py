@@ -81,9 +81,15 @@ TITLE_MAX: Final = 60
 QUESTION_MAX: Final = 400
 CONTEXT_MAX: Final = 600
 HOW_MAX: Final = 400
+WHAT_MAX: Final = 600
+PROBLEM_MAX: Final = 400
 TEXT_MAX: Final = 300
-TEXT_CAPS: Final = {"context": CONTEXT_MAX, "how": HOW_MAX}
-REQUIRED_TEXT: Final = ("context", "why", "how", "gains", "losses", "analogy", "urgency", "undo")
+TEXT_CAPS: Final = {"context": CONTEXT_MAX, "how": HOW_MAX, "what": WHAT_MAX, "problem": PROBLEM_MAX}
+REQUIRED_TEXT: Final = ("what", "problem", "context", "why", "how", "gains", "losses", "analogy",
+                        "urgency", "undo")
+REQUIRED_OPTION_TEXT: Final = ("does", "pros", "cons")
+MIN_SENTENCES: Final = 2
+SENTENCE_END: Final = re.compile(r"[.!?]+(?:\s|$)")
 RECOMMENDED_MARKER: Final = re.compile(r"\s*\((?:recommended|recomendad[oa])\)\s*$", re.IGNORECASE)
 SESSION_TITLE_MAX: Final = 80
 SESSION_PATTERN: Final = re.compile(r"[A-Za-z0-9_-]{1,128}")
@@ -316,7 +322,8 @@ def _option(raw: object) -> dict[str, Any]:
         raise ValueError("option label is required")
     return {"key": key.strip(), "label": label,
             "tradeoff": _strict_text(raw.get("tradeoff"), TEXT_MAX),
-            "fit": _strict_fit(raw.get("fit"))}
+            "fit": _strict_fit(raw.get("fit")),
+            **{name: _strict_text(raw.get(name), TEXT_MAX) for name in REQUIRED_OPTION_TEXT}}
 
 
 def _options(raw_options: object) -> list[dict[str, Any]]:
@@ -329,15 +336,27 @@ def _options(raw_options: object) -> list[dict[str, Any]]:
     return options
 
 
+def _sentence_count(text: str) -> int:
+    """Sentences as the non-empty runs between terminators ('.', '!', '?' before a space or the end)."""
+    return sum(1 for part in SENTENCE_END.split(text) if part.strip())
+
+
+def _sentence_gaps(texts: Mapping[str, str | None]) -> list[str]:
+    what = texts["what"]
+    if what is None or _sentence_count(what) >= MIN_SENTENCES:
+        return []
+    return [f"what needs at least {MIN_SENTENCES} sentences"]
+
+
 def _option_gaps(options: Sequence[Mapping[str, Any]]) -> list[str]:
     return [f"option {option['key']}: {name}" for option in options
-            for name in ("tradeoff", "fit") if option[name] is None]
+            for name in ("tradeoff", "fit", *REQUIRED_OPTION_TEXT) if option[name] is None]
 
 
 def _entry_gaps(texts: Mapping[str, str | None], options: Sequence[Mapping[str, Any]]) -> list[str]:
     missing = [name for name in REQUIRED_TEXT if texts[name] is None]
     gaps = [f"missing fields: {', '.join(missing)}"] if missing else []
-    return gaps + _option_gaps(options)
+    return gaps + _sentence_gaps(texts) + _option_gaps(options)
 
 
 def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
@@ -820,13 +839,14 @@ def askuser_skeleton(question: Mapping[str, Any]) -> dict[str, Any]:
     options = _askuser_options(question)
     labels = [str(option.get("label") or "") for option in options]
     keyed = [{"key": letter, "label": RECOMMENDED_MARKER.sub("", label).strip() or None,
-              "tradeoff": option.get("description"), "fit": None}
+              "tradeoff": option.get("description"), "fit": None,
+              **{name: "" for name in REQUIRED_OPTION_TEXT}}
              for letter, label, option in zip(string.ascii_uppercase, labels, options, strict=False)]
     return {"title": question.get("header"), "question": question.get("question"),
             "context": question.get("context") or _option_context(keyed),
             "options": keyed, "recommended": _recommended_key(keyed, labels),
-            "why": "", "how": "", "gains": "", "losses": "", "analogy": "", "urgency": "",
-            "undo": "", "risk": "low"}
+            "what": "", "problem": "", "why": "", "how": "", "gains": "", "losses": "",
+            "analogy": "", "urgency": "", "undo": "", "risk": "low"}
 
 
 def askuser_reason(skeletons: Sequence[Mapping[str, Any]]) -> str:

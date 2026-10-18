@@ -50,10 +50,18 @@ def base_entry(**over) -> dict:
         "title": "Cache backend",
         "question": "Which cache should the service use?",
         "options": [
-            {"key": "A", "label": "Redis", "tradeoff": "one more service to run", "fit": 88},
-            {"key": "B", "label": "In-process", "tradeoff": "lost on restart", "fit": 40},
+            {"key": "A", "label": "Redis", "tradeoff": "one more service to run", "fit": 88,
+             "does": "The API caches responses in a Redis server.",
+             "pros": "Hits are shared across workers.",
+             "cons": "One more service to run."},
+            {"key": "B", "label": "In-process", "tradeoff": "lost on restart", "fit": 40,
+             "does": "Each worker caches responses in its own memory.",
+             "pros": "No service to run.",
+             "cons": "Each worker caches alone; the cache is lost on restart."},
         ],
         "recommended": "A",
+        "what": "Redis is a cache server that runs next to the API. The service would keep its responses there.",
+        "problem": "Without a decision, each worker keeps its own cache and the API slows down after a restart.",
         "context": "Sizing the API for three workers.",
         "why": "Shared across workers.",
         "how": "Redis runs as a service next to the API.",
@@ -68,7 +76,8 @@ def base_entry(**over) -> dict:
     return entry
 
 
-REQUIRED_TEXT = ("context", "why", "how", "gains", "losses", "analogy", "urgency", "undo")
+REQUIRED_TEXT = ("what", "problem", "context", "why", "how", "gains", "losses", "analogy", "urgency", "undo")
+REQUIRED_OPTION_TEXT = ("does", "pros", "cons")
 
 
 def cli(capsys, *args: str) -> dict:
@@ -135,7 +144,10 @@ def test_ask_valid_entry_is_filed_and_reported(home, capsys, monkeypatch):
     assert entry["run_kind"] == "main" and entry["source"] == "cli"
     assert entry["pause"] is False and entry["risk"] == "low"
     assert entry["options"][0] == {"key": "A", "label": "Redis",
-                                   "tradeoff": "one more service to run", "fit": 88}
+                                   "tradeoff": "one more service to run", "fit": 88,
+                                   "does": "The API caches responses in a Redis server.",
+                                   "pros": "Hits are shared across workers.",
+                                   "cons": "One more service to run."}
     assert [p.name for p in (home / "q").iterdir()] == [f"{out['id']}.json"]
 
 
@@ -229,6 +241,83 @@ def test_ask_error_names_an_option_missing_its_tradeoff(capsys):
     entry["options"][0].pop("tradeoff")
     out = cli(capsys, "ask", "--json", json.dumps(entry))
     assert out["error"] == "option A: tradeoff"
+
+
+def test_ask_error_names_a_missing_what_and_problem_together(home, capsys):
+    entry = base_entry()
+    del entry["what"]
+    del entry["problem"]
+    out = cli(capsys, "ask", "--json", json.dumps(entry))
+    assert out == {"action": "refile", "recommended": "A", "error": "missing fields: what, problem"}
+    assert not (home / "q").exists() or list((home / "q").glob("*.json")) == []
+
+
+@pytest.mark.parametrize("field", REQUIRED_OPTION_TEXT)
+def test_ask_requires_every_option_text_field(field, home, capsys):
+    entry = base_entry()
+    del entry["options"][1][field]
+    out = cli(capsys, "ask", "--json", json.dumps(entry))
+    assert out == {"action": "refile", "recommended": "A", "error": f"option B: {field}"}
+    assert not (home / "q").exists() or list((home / "q").glob("*.json")) == []
+
+
+@pytest.mark.parametrize("value", ["   ", 5])
+@pytest.mark.parametrize("field", REQUIRED_OPTION_TEXT)
+def test_ask_rejects_a_blank_or_non_string_option_text_field(field, value, capsys):
+    entry = base_entry()
+    entry["options"][0][field] = value
+    assert cli(capsys, "ask", "--json", json.dumps(entry))["error"] == f"option A: {field}"
+
+
+def test_ask_error_lists_each_missing_option_field_in_order(capsys):
+    entry = base_entry()
+    entry["options"][0].pop("does")
+    entry["options"][0].pop("cons")
+    out = cli(capsys, "ask", "--json", json.dumps(entry))
+    assert out["error"] == "option A: does; option A: cons"
+
+
+@pytest.mark.parametrize("what", [
+    "Redis is a cache server.",
+    "Redis is a cache server",
+])
+def test_ask_refiles_a_what_with_fewer_than_two_sentences(what, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(what=what)))
+    assert out == {"action": "refile", "recommended": "A", "error": "what needs at least 2 sentences"}
+
+
+@pytest.mark.parametrize("what", [
+    "Redis is a cache server. It runs next to the API.",
+    "Redis 7.2 is a cache server. It runs next to the API!",
+    "Redis is a cache server. It runs next to the API",
+])
+def test_ask_accepts_a_what_of_two_sentences_in_normal_prose(what, home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(what=what)))
+    assert out["action"] == "continue" and stored(home, "q", out["id"])["what"] == what
+
+
+def test_ask_caps_what_at_600_and_checks_its_sentences_on_the_kept_text(home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(what="A. " + "x" * 700)))
+    value = stored(home, "q", out["id"])["what"]
+    assert len(value) == 600 and value.endswith("…")
+
+
+def test_ask_files_what_problem_and_the_option_explanations(home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry()))
+    entry = stored(home, "q", out["id"])
+    assert entry["what"] == base_entry()["what"] and entry["problem"] == base_entry()["problem"]
+    assert entry["options"] == base_entry()["options"]
+
+
+def test_entries_filed_before_the_explanation_fields_still_list_and_report_status(home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry()))
+    entry = stored(home, "q", out["id"])
+    legacy = {k: v for k, v in entry.items() if k not in {"what", "problem"}}
+    legacy["options"] = [{k: v for k, v in option.items() if k not in REQUIRED_OPTION_TEXT}
+                         for option in entry["options"]]
+    (home / "q" / f"{out['id']}.json").write_text(json.dumps(legacy), encoding="utf-8")
+    assert [item["id"] for item in askaway.cmd_list(False)["items"]] == [out["id"]]
+    assert cli(capsys, "status", out["id"]) == {"id": out["id"], "status": "open", "key": None}
 
 
 def test_ask_error_echoes_the_recommended_value_given(capsys):
@@ -523,9 +612,11 @@ def test_ask_guard_skeleton_carries_the_question_with_empty_explanations(capsys,
     assert guard_skeletons(capsys, monkeypatch)["Cache"] == {
         "title": "Cache", "question": "Which cache?",
         "context": "A: lost on restart\nB: one more service",
-        "options": [{"key": "A", "label": "In-process", "tradeoff": "lost on restart", "fit": None},
-                    {"key": "B", "label": "Redis", "tradeoff": "one more service", "fit": None}],
-        "recommended": "B", "why": "", "how": "", "gains": "", "losses": "",
+        "options": [{"key": "A", "label": "In-process", "tradeoff": "lost on restart", "fit": None,
+                     "does": "", "pros": "", "cons": ""},
+                    {"key": "B", "label": "Redis", "tradeoff": "one more service", "fit": None,
+                     "does": "", "pros": "", "cons": ""}],
+        "recommended": "B", "what": "", "problem": "", "why": "", "how": "", "gains": "", "losses": "",
         "analogy": "", "urgency": "", "undo": "", "risk": "low",
     }
 
@@ -560,8 +651,8 @@ def test_ask_guard_command_runs_its_json_as_one_argument_under_sh(home, capsys, 
     reason = hook_json(capsys, monkeypatch, "ask-guard", payload)["hookSpecificOutput"]["permissionDecisionReason"]
     line = next(text for text in reason.splitlines() if '"title":"Cache"' in text)
     command = line.split(". ", 1)[1]
-    for name in REQUIRED_TEXT:
-        command = command.replace(f'"{name}":""', f'"{name}":"Filled in."')
+    for name in (*REQUIRED_TEXT, *REQUIRED_OPTION_TEXT):
+        command = command.replace(f'"{name}":""', f'"{name}":"Filled in. Done."')
     command = command.replace('"fit":null', '"fit":80')
     env = {**os.environ, "ASKAWAY_HOME": str(home)}
     proc = subprocess.run(["sh", "-c", command], capture_output=True, text=True, env=env,
@@ -1341,7 +1432,7 @@ def test_legacy_entries_without_the_newer_keys_still_list(home, capsys):
 
 
 @pytest.mark.parametrize("field, limit", [("how", 400), ("gains", 300), ("losses", 300),
-                                          ("context", 600)])
+                                          ("context", 600), ("problem", 400)])
 def test_ask_caps_explanation_fields(field, limit, home, capsys):
     out = cli(capsys, "ask", "--json", json.dumps(base_entry(**{field: "x" * (limit + 50)})))
     value = stored(home, "q", out["id"])[field]
