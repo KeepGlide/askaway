@@ -240,6 +240,7 @@ On the desktop, the KeepGlide mark sits beside the counter and beside **Submit a
 | `/askaway lang en` | Shows them in English. |
 | `/askaway lang auto` | Follows your locale again. |
 | `/askaway away` | Turns away mode on or off and reports the new state. |
+| `/askaway quiet on` or `off` | Quiet mode: no toast for a new question and no fade after an answer. Without a value it reports the state. Off by default. |
 | `/askaway who <name>` | Sets the name your panel answers are signed with; without a name it shows the current one. The panel asks for it once, the first time a question is open. |
 
 | Setting | Default | How to change it |

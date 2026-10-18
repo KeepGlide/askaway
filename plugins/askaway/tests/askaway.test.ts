@@ -3019,3 +3019,47 @@ test('the name question reads in Portuguese when the language is pt-BR', async (
   expect(await ui.find({ type: 'Button', key: 'who-skip' })).toBeDefined()
   await ui.unmount()
 })
+
+test('/askaway quiet on|off stores the flag, reports it in both languages, and rejects other values', async ($, on) => {
+  const files = new Map<string, string>()
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  expect((await run($, 'quiet')).text).toBe('Modo silencioso do Askaway desligado.')
+  expect((await run($, 'quiet on')).text).toBe('Modo silencioso do Askaway ligado: sem aviso para pergunta nova e sem esmaecer depois de uma resposta.')
+  expect((await run($, 'quiet')).text).toContain('ligado')
+  expect((await run($, 'quiet maybe')).text).toBe('Use /askaway quiet on ou off.')
+  expect((await run($, 'quiet off')).text).toBe('Modo silencioso do Askaway desligado.')
+})
+
+test('quiet mode raises no toast for a new question, and the stored flag holds across a session start', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { toasts, clock } = stubHost(on, files, true, { quiet: true })
+  await $.session.start(SESSION)
+  await clock.advance(5000)
+  files.set(path('q', 'q-l5-eeeeee'), question('q-l5-eeeeee', 3000, { title: 'Pick a parser' }))
+  await clock.advance(5000)
+  expect(toasts).toEqual([])
+  expect((await run($, 'quiet')).text).toContain('ligado')
+})
+
+test('quiet mode draws no fade: the answered card is not dimmed and leaves at once', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files, true, { quiet: true })
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-A' })
+  await ui.press({ key: 'submit-all' })
+  expect(await ui.find({ type: 'Text', text: 'Which way for q-l1-aaaaaa?' })).toBeUndefined()
+  expect(await textsOf(ui)).toContain('Nenhuma pendente')
+  await ui.unmount()
+})
+
+test('quiet off keeps the toast and the fade', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { toasts, clock } = stubHost(on, files, true, { quiet: false })
+  await $.session.start(SESSION)
+  await clock.advance(5000)
+  files.set(path('q', 'q-l5-eeeeee'), question('q-l5-eeeeee', 3000, { title: 'Pick a parser' }))
+  await clock.advance(5000)
+  expect(toasts).toEqual(['Nova pergunta: Pick a parser'])
+})

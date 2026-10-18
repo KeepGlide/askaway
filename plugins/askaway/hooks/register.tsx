@@ -45,6 +45,8 @@ const CLEARED_KEY = 'cleared'
 const LANG_KEY = 'lang'
 // The name the person signs answers with: a name, '' once they skipped the question, absent before it was asked.
 const WHO_KEY = 'who'
+// Quiet mode (/askaway quiet on|off): true stops the toast per new question and the fade after an answer.
+const QUIET_KEY = 'quiet'
 // The choices of /askaway lang, as typed (case does not matter; `pt` and `pt_br` still work); `pt-BR` is stored as
 // the dictionary's `pt`, and `auto` follows the environment. A Map, so `constructor` and the like are not choices.
 const LANG_CHOICES: ReadonlyMap<string, string> = new Map([
@@ -79,6 +81,7 @@ const langAtom = atom({ plugin: 'askaway', key: 'lang' } as const, DEFAULT_LANG)
 const endedAtom = atom({ plugin: 'askaway', key: 'ended' } as const, [] as string[])
 // The stored answerer name: null before the question was asked, '' after a skip, else the name.
 const whoAtom = atom({ plugin: 'askaway', key: 'who' } as const, null as string | null)
+const quietAtom = atom({ plugin: 'askaway', key: 'quiet' } as const, false)
 const wizardAtom = atom({ plugin: 'askaway', key: 'wizard' } as const, flow.EMPTY_WIZARD)
 
 // Files are written once and never change, so a parsed file stays until its name leaves the folder.
@@ -188,6 +191,7 @@ async function announceNew($: EngineInterface, next: Board): Promise<void> {
   if (known.isPrimed && fresh.length === 0) return
   await update($, seen, () => ({ isPrimed: true, ids: [...known.ids, ...fresh.map(question => question.id)] }))
   if (!known.isPrimed) return
+  if (await read($, quietAtom)) return
   const lang = await read($, langAtom)
   for (const question of fresh) {
     if (isOpenIn(next, question.id)) $.ui.toast(t(lang, 'toast.newQuestion', { title: question.title }))
@@ -374,7 +378,7 @@ async function writeAnswer($: EngineInterface, home: string, id: string, key: st
   const path = `${home}/a/${id}.json`
   const pressedAt = await $.clock.now()
   // The card dims at once, before the CLI answers: the press gives its feedback without waiting for the disk.
-  await startFade($, id, pressedAt)
+  if (!(await read($, quietAtom))) await startFade($, id, pressedAt)
   const written = await answerViaCli($, home, id, key, text)
   // The board takes the record on disk, whoever wrote it. The CLI stamps its own ts, who and session, so a copy made here
   // would differ from the file and redraw the pane on the next poll.
@@ -447,6 +451,17 @@ async function whoReply($: EngineInterface, lang: Lang, name: string): Promise<s
   await saveWho($, name)
   const stored = await read($, whoAtom)
   return stored ? t(lang, 'command.whoSet', { name: stored }) : t(lang, 'command.whoNone')
+}
+
+// /askaway quiet on|off: stores the flag; with no value it reports it.
+async function quietReply($: EngineInterface, lang: Lang, value: string): Promise<string> {
+  const choice = value.toLowerCase()
+  if (choice !== '' && choice !== 'on' && choice !== 'off') return t(lang, 'command.quietInvalid')
+  if (choice !== '') {
+    await $.store.set(QUIET_KEY, choice === 'on')
+    await update($, quietAtom, () => choice === 'on')
+  }
+  return t(lang, (await read($, quietAtom)) ? 'command.quietOn' : 'command.quietOff')
 }
 
 // Flips away.json and returns the new state.
@@ -625,6 +640,8 @@ export const register: Register = on => {
     const ids = Array.isArray(storedIds) ? storedIds.filter((id): id is string => typeof id === 'string') : []
     await update($, cleared, () => ids)
     const storedWho = await $.store.get(WHO_KEY)
+    const storedQuiet = (await $.store.get(QUIET_KEY)) === true
+    await update($, quietAtom, () => storedQuiet)
     await update($, whoAtom, () => (typeof storedWho === 'string' ? storedWho : null))
     await update($, turn, () => ({ isBusy: false }))
     await update($, wizardAtom, () => flow.EMPTY_WIZARD)
@@ -659,6 +676,7 @@ export const register: Register = on => {
     const rest = e.args.trim().slice(verb.length).trim()
     const lang = await read($, langAtom)
     if (verb === 'lang') return { text: await setLang($, value) }
+    if (verb === 'quiet') return { text: await quietReply($, lang, value) }
     if (verb === 'who') return { text: await whoReply($, lang, rest) }
     if (verb === 'away') return { text: await awayText($, lang) }
     if (verb !== '') return { text: t(lang, 'command.langInvalid') }

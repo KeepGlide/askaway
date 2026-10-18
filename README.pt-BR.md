@@ -240,6 +240,7 @@ No desktop, a marca KeepGlide fica ao lado do contador e ao lado de **Enviar tud
 | `/askaway lang en` | Mostra em inglês. |
 | `/askaway lang auto` | Volta a seguir o seu locale. |
 | `/askaway away` | Liga ou desliga o modo ausente e informa o novo estado. |
+| `/askaway quiet on` ou `off` | Modo silencioso: sem aviso (*toast*) para pergunta nova e sem esmaecer depois de uma resposta. Sem valor, informa o estado. Desligado por padrão. |
 | `/askaway who <nome>` | Define o nome com que as respostas do painel são assinadas; sem nome, mostra o atual. O painel pergunta uma vez, na primeira vez que há uma pergunta aberta. |
 
 | Ajuste | Padrão | Como mudar |
