@@ -2007,7 +2007,7 @@ def test_bash_run_with_an_inline_home_under_tmp_is_allowed(command, capsys, monk
     f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} answer q-1-abcdef A; python3 {SCRIPT} answer q-1-abcdef A",
     f"ASKAWAY_HOME={TMP_INBOX} python3 -m pytest; cp x {STATE_FOLDER}/a/",
     f"ASKAWAY_HOME={TMP_INBOX} python3 -m pytest; cp {STATE_FOLDER}/a/x.json /tmp/x.json",
-    "ASKAWAY_HOME=/tmp/../home/user/.claude/state/askaway python3 -m pytest",
+    "ASKAWAY_HOME=/tmp/.." + str(Path.home()) + "/.claude/state/askaway python3 -m pytest",
     f"ASKAWAY_HOME=$(echo {TMP_INBOX}) python3 {SCRIPT} answer q-1-abcdef A",
 ])
 def test_bash_inline_tmp_home_does_not_license_another_segment_or_the_real_folder(
