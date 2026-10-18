@@ -52,7 +52,14 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   answer is delivered to the asking session, not when it is written. A `pause` value the caller sends
   for `low` or `medium` is type-checked (a non-boolean is refiled) and then ignored.
   id = `q-` + base36(ms) + `-` + 6 hex chars from os.urandom.
-- `a/<id>.json` — the answer: `{"id":"...","key":"B","by":"panel|accept_recommended|accept_all|cli","session":<session or null>,"ts":<ms>}`.
+- `a/<id>.json` — the answer: `{"id":"...","key":"B","by":"panel|accept_recommended|accept_all|cli","who":"<name>","ts":<ms>,"session":<session or null>}`.
+  Full shape: `id`, `key`, `by`, `who`, `ts`, `text` (key `other` only), `session`.
+  `by` names the channel that wrote the answer, not the person; `who` names the person. `answer` stamps `who`:
+  env `ASKAWAY_WHO` when it holds a name, else the OS user name (`getpass.getuser()`), else `unknown`. The name is
+  trimmed, its control characters become spaces, and it is capped at 40 characters (the last one `…`); a blank
+  `ASKAWAY_WHO` falls back to the OS user name. First writer wins, so the first answer's `who` stays.
+  A record without `who` (written before it existed, or by the panel, which does not stamp it yet) reads fine:
+  `status` and `list` then show no `who` for it.
   `session` is the session the answer is bound to: for `by: cli` the caller's `CLAUDE_CODE_SESSION_ID`
   (or the question's session when the caller has none); for a panel answer the question's own session.
   Free text carries key `"other"` and the text in `text`: `{"id":"...","key":"other","text":"Use a fork","by":"panel","session":"<session>","ts":<ms>}`.
@@ -104,7 +111,7 @@ writes its document instead); exit 0 always, unless `--strict` is given (below).
   `CLAUDE_CODE_SESSION_ID` equals that session (a shell with no session is refused too); the refusal
   prints `{"error":"answer refused: ..."}`, exit 0, and writes nothing, so the slot stays free. Panel
   answers (`--by panel|accept_recommended|accept_all`) are not bound to a shell session.
-- `status <id>` — prints `{"id","status","key"|null}`.
+- `status <id>` — prints `{"id","status","key"|null}`, plus `"who"` when the item is answered and its answer record carries one.
 - `--strict` (opt-in, on `ask`, `answer` and `status`) — a refile, an error, or a usage error that
   names `--strict` exits 1 instead of 0. The JSON line is printed as usual. Without the flag the exit
   code stays 0. A repeated `answer` that loses the first-writer race (`written:false`) is not an error.
@@ -114,12 +121,12 @@ writes its document instead); exit 0 always, unless `--strict` is given (below).
   `{"id","status":"unknown id"}`. Exit 0. The pause guard exempts `wait` and `export` like `ask`,
   `status` and `list`, so a paused turn can wait for its answer.
 - `list [--open | --answered] [--since <when>]` — prints `{"items":[{"id","title","status","recommended","key"}...]}`,
-  newest first. `--answered` keeps the answered items (`answered`, `delivered`, `expired`). With
+  with `"who"` on each answered item whose answer record carries one; newest first. `--answered` keeps the answered items (`answered`, `delivered`, `expired`). With
   `--since`, only the items whose answer `ts` is at or after `<when>`; `--since` needs `--answered`.
   `<when>` is a duration counted back from now (`30m`, `2h`, `7d`) or an ISO 8601 timestamp; a
   timestamp without a zone is read as UTC. Any other value is an error.
 - `export [--since <when>] [--format json|jsonl|csv]` — writes every question, newest first, with its
-  answer record. Rows are `{"id","status","question":<stored question>,"answer":<stored answer>|null}`:
+  answer record (as stored, so it carries `who` when `answer` wrote one). Rows are `{"id","status","question":<stored question>,"answer":<stored answer>|null}`:
   `json` (the default) is one array, `jsonl` one row per line, `csv` one row per question with the
   header `id,status,question,answer`, the last two cells as JSON. `--since` keeps the questions
   asked at or after `<when>` (the question's `ts`; unlike `list --since`, which filters by the answer's).

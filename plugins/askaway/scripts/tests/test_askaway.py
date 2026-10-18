@@ -20,6 +20,7 @@ import askaway
 
 SCRIPT = SCRIPTS / "askaway.py"
 SESSION = "sess-under-test"
+WHO = "tester"
 DAY_MS = 86_400_000
 
 
@@ -27,6 +28,7 @@ DAY_MS = 86_400_000
 def home(tmp_path, monkeypatch):
     state = tmp_path / "inbox"
     monkeypatch.setenv("ASKAWAY_HOME", str(state))
+    monkeypatch.setenv("ASKAWAY_WHO", WHO)
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ATTENDED", raising=False)
     for name in [n for n in os.environ if n.startswith("CODEX_")]:
@@ -341,6 +343,64 @@ def test_answer_to_a_question_without_a_session_records_the_shell_session(home, 
     assert stored(home, "a", item)["session"] == SESSION
 
 
+# ---- who ---------------------------------------------------------------
+
+def test_answer_records_the_os_user_as_who_when_no_override_is_set(home, capsys, monkeypatch):
+    monkeypatch.delenv("ASKAWAY_WHO")
+    monkeypatch.setattr(askaway.getpass, "getuser", lambda: "os-user")
+    item = ask_item(capsys)
+    cli(capsys, "answer", item, "B")
+    assert stored(home, "a", item)["who"] == "os-user"
+    assert stored(home, "a", item)["by"] == "cli"
+
+
+def test_answer_who_override_wins_over_the_os_user(home, capsys, monkeypatch):
+    monkeypatch.setattr(askaway.getpass, "getuser", lambda: "os-user")
+    monkeypatch.setenv("ASKAWAY_WHO", "Ana Silva")
+    item = ask_item(capsys)
+    cli(capsys, "answer", item, "B", "--by", "panel")
+    assert stored(home, "a", item)["who"] == "Ana Silva"
+    assert stored(home, "a", item)["by"] == "panel"
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    ("  Ana\n\tSilva  ", "Ana Silva"),
+    ("a\x1bb\x7fc", "a b c"),
+    ("x" * 100, "x" * 39 + "…"),
+    ("   ", "os-user"),
+    ("", "os-user"),
+])
+def test_answer_who_is_trimmed_flattened_capped_and_blank_falls_back(raw, expected, home, capsys, monkeypatch):
+    monkeypatch.setenv("ASKAWAY_WHO", raw)
+    monkeypatch.setattr(askaway.getpass, "getuser", lambda: "os-user")
+    item = ask_item(capsys)
+    cli(capsys, "answer", item, "B")
+    assert stored(home, "a", item)["who"] == expected
+
+
+@pytest.mark.parametrize("error", [KeyError, OSError])
+def test_answer_who_is_unknown_when_no_os_user_name_exists(error, home, capsys, monkeypatch):
+    monkeypatch.delenv("ASKAWAY_WHO")
+
+    def no_user_name() -> str:
+        raise error("no user name")
+
+    monkeypatch.setattr(askaway.getpass, "getuser", no_user_name)
+    item = ask_item(capsys)
+    cli(capsys, "answer", item, "B")
+    assert stored(home, "a", item)["who"] == "unknown"
+
+
+def test_an_answer_record_without_who_still_reads(home, capsys):
+    item = ask_item(capsys)
+    (home / "a").mkdir()
+    old = {"id": item, "key": "B", "by": "panel", "session": None, "ts": askaway.now_ms()}
+    (home / "a" / f"{item}.json").write_text(json.dumps(old), encoding="utf-8")
+    assert cli(capsys, "status", item) == {"id": item, "status": "answered", "key": "B"}
+    assert [row["key"] for row in cli(capsys, "list", "--answered")["items"]] == ["B"]
+    assert json.loads(run_text(capsys, "export"))[0]["answer"] == old
+
+
 # ---- status / list -----------------------------------------------------
 
 def test_status_follows_open_answered_delivered(home, capsys, monkeypatch):
@@ -348,9 +408,9 @@ def test_status_follows_open_answered_delivered(home, capsys, monkeypatch):
     item = ask_item(capsys)
     assert cli(capsys, "status", item) == {"id": item, "status": "open", "key": None}
     cli(capsys, "answer", item, "B")
-    assert cli(capsys, "status", item) == {"id": item, "status": "answered", "key": "B"}
+    assert cli(capsys, "status", item) == {"id": item, "status": "answered", "key": "B", "who": WHO}
     run_hook(capsys, monkeypatch, "deliver", deliver_event())
-    assert cli(capsys, "status", item) == {"id": item, "status": "delivered", "key": "B"}
+    assert cli(capsys, "status", item) == {"id": item, "status": "delivered", "key": "B", "who": WHO}
 
 
 def test_status_and_list_report_expired_when_the_ttl_passes_unread(home, clock, capsys, monkeypatch):
@@ -360,7 +420,7 @@ def test_status_and_list_report_expired_when_the_ttl_passes_unread(home, clock, 
     item = ask_item(capsys)
     cli(capsys, "answer", item, "B")
     clock["ms"] = base + 8 * DAY_MS
-    assert cli(capsys, "status", item) == {"id": item, "status": "expired", "key": "B"}
+    assert cli(capsys, "status", item) == {"id": item, "status": "expired", "key": "B", "who": WHO}
     assert cli(capsys, "list")["items"][0]["status"] == "expired"
 
 
@@ -387,8 +447,18 @@ def test_list_is_newest_first_and_open_filter(clock, capsys):
     items = cli(capsys, "list")["items"]
     assert [i["id"] for i in items] == [new, old]
     assert items[1] == {"id": old, "title": "old one", "status": "answered",
-                        "recommended": "A", "key": "A"}
+                        "recommended": "A", "key": "A", "who": WHO}
     assert [i["id"] for i in cli(capsys, "list", "--open")["items"]] == [new]
+
+
+def test_status_and_list_show_who_only_for_answered_items(home, capsys):
+    item = ask_item(capsys, title="answered")
+    open_item = ask_item(capsys, title="open")
+    assert "who" not in cli(capsys, "status", open_item)
+    cli(capsys, "answer", item, "A")
+    rows = {row["id"]: row for row in cli(capsys, "list")["items"]}
+    assert rows[item]["who"] == WHO
+    assert "who" not in rows[open_item]
 
 
 # ---- away --------------------------------------------------------------
@@ -1602,6 +1672,14 @@ def test_export_json_writes_each_question_with_its_answer_record(home, capsys):
     assert rows[item]["question"]["title"] == "cache"
     assert rows[item]["answer"] == stored(home, "a", item)
     assert rows[open_item]["status"] == "open" and rows[open_item]["answer"] is None
+
+
+def test_export_shows_who_in_the_answer_record_json_and_csv(home, capsys):
+    item = ask_item(capsys)
+    cli(capsys, "answer", item, "B")
+    assert json.loads(run_text(capsys, "export"))[0]["answer"]["who"] == WHO
+    rows = list(csv.DictReader(io.StringIO(run_text(capsys, "export", "--format", "csv"))))
+    assert json.loads(rows[0]["answer"])["who"] == WHO
 
 
 def test_export_jsonl_writes_one_row_per_line(home, capsys):

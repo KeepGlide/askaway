@@ -48,6 +48,7 @@ if __name__ == "__main__":
 import argparse
 import contextlib
 import csv
+import getpass
 import io
 import json
 import math
@@ -71,6 +72,10 @@ BASE36: Final = string.digits + string.ascii_lowercase
 RUN_KINDS: Final = frozenset({"main", "subagent", "goal", "loop", "bash", "codex"})
 RISKS: Final = frozenset({"low", "medium", "high"})
 ANSWER_SOURCES: Final = frozenset({"panel", "accept_recommended", "accept_all", "cli"})
+WHO_ENV: Final = "ASKAWAY_WHO"
+WHO_MAX: Final = 40
+UNKNOWN_WHO: Final = "unknown"
+CONTROL_CHARS: Final = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 MIN_OPTIONS: Final = 2
 TITLE_MAX: Final = 60
 QUESTION_MAX: Final = 400
@@ -521,6 +526,27 @@ def answer_session(entry: Mapping[str, Any], by: str) -> str | None:
     return caller or asked
 
 
+def _who_text(raw: str) -> str | None:
+    """A name on one line and capped: control characters become spaces, the ends are trimmed."""
+    flat = " ".join(CONTROL_CHARS.sub(" ", raw).split())
+    return _clip(flat, WHO_MAX) if flat else None
+
+
+def answerer_name() -> str:
+    """Who answered: ASKAWAY_WHO when it holds a name, else the OS user name, else "unknown"."""
+    try:
+        os_user = getpass.getuser()
+    except (KeyError, OSError):
+        os_user = ""
+    return _who_text(os.environ.get(WHO_ENV, "")) or _who_text(os_user) or UNKNOWN_WHO
+
+
+def answer_who(answer: Mapping[str, Any] | None) -> str | None:
+    """The name stamped on an answer, or None for a record written without one."""
+    who = (answer or {}).get("who")
+    return who if isinstance(who, str) and who else None
+
+
 def cmd_answer(item_id: str, key: str, by: str) -> dict[str, Any]:
     if by not in ANSWER_SOURCES:
         raise ValueError(f"--by must be one of: {', '.join(sorted(ANSWER_SOURCES))}")
@@ -529,8 +555,8 @@ def cmd_answer(item_id: str, key: str, by: str) -> dict[str, Any]:
         raise ValueError("unknown inbox id")
     if key not in option_keys(entry):
         raise ValueError("unknown option key")
-    record = {"id": item_id, "key": key, "by": by, "session": answer_session(entry, by),
-              "ts": now_ms()}
+    record = {"id": item_id, "key": key, "by": by, "who": answerer_name(),
+              "session": answer_session(entry, by), "ts": now_ms()}
     if create_once(item_path("a", item_id), record):
         return {"id": item_id, "key": key, "written": True}
     stored = read_json(item_path("a", item_id)) or {}
@@ -542,9 +568,13 @@ def cmd_status(item_id: str) -> dict[str, Any]:
         raise ValueError("unknown inbox id")
     status, key = item_status(item_id)
     result = {"id": item_id, "status": status, "key": key}
-    text = other_text(read_json(item_path("a", item_id)))
+    answer = read_json(item_path("a", item_id))
+    text = other_text(answer)
     if text:
         result["text"] = text
+    who = answer_who(answer)
+    if who:
+        result["who"] = who
     return result
 
 
@@ -552,9 +582,13 @@ def _list_row(entry: Mapping[str, Any]) -> dict[str, Any]:
     status, key = item_status(entry["id"])
     row = {"id": entry["id"], "title": entry.get("title"), "status": status,
            "recommended": entry.get("recommended"), "key": key}
-    text = other_text(read_json(item_path("a", entry["id"]))) if key == "other" else None
+    answer = read_json(item_path("a", entry["id"]))
+    text = other_text(answer) if key == "other" else None
     if text:
         row["text"] = text
+    who = answer_who(answer)
+    if who:
+        row["who"] = who
     return row
 
 
