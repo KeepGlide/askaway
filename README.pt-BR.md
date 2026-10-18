@@ -21,7 +21,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Acesso antecipado (0.4.0-beta.6):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável.
+> ⚠️ **Acesso antecipado (0.4.0-beta.7):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável.
 
 ## 💡 O que é
 
