@@ -2,8 +2,24 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.11, set by the beta.11 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.12, set by the beta.12 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.12] - 2026-10-18
+
+### Added
+
+- Other field always open: the "Other…" link focuses the field under it, typing records Other as you type, and Enter records it and moves on. The hotkeys stay off while the field holds text.
+
+### Changed
+
+- The Details link opens Why, Undo, How, What we gain, What we lose and Context right after Analogy, in the box above the question, instead of under the options.
+- A question with a pick shows `✓ - Submit` in the tree; that Submit sends only its answer and removes the row. Submit all still sends the other picks.
+- Status rows ("Answer A sent to …") have no filled background: plain dim text, with only the mark (⏳, ✓ or ⚠️) in the accent colour. The explanation box has no grey background.
+
+### Migration needed
+
+- none.
 
 ## [0.4.0-beta.11] - 2026-10-18
 

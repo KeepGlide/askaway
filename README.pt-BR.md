@@ -21,7 +21,7 @@ Um cartão de pergunta aparece no painel do Askaway para cada decisão que um ag
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Acesso antecipado (0.4.0-beta.11):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável. As mudanças desta versão estão listadas no [CHANGELOG.md](CHANGELOG.md).
+> ⚠️ **Acesso antecipado (0.4.0-beta.12):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável. As mudanças desta versão estão listadas no [CHANGELOG.md](CHANGELOG.md).
 
 ## 💡 O que é
 
