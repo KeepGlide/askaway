@@ -2,8 +2,20 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.22, set by the beta.22 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.23, set by the beta.23 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.23] - 2026-10-18
+
+### Changed
+
+- The History heading carries its own icon, a clock with an arrow turning back (`historySvg` in `hooks/logo.ts`, "⟲" on the terminal), instead of the Askaway logo (`renderHistoryIcon` in `hooks/logo-element.tsx`).
+- In the History tree the family label and each derived session row are Markdown links to their Desktop sessions, which the Desktop opens itself (`sessionLink` in `hooks/pane.tsx`; `HistoryGroup.href`, `HistorySession.href` in `hooks/model.ts`).
+- Clear history became **Clear all (N)** ("Limpar tudo (N)"): it removes every History row shown, pending ones included; the answer file stays, so the session still reads it (`clearableIdsOf`, `historyOf` in `hooks/model.ts`; `HistoryEntry.clearable` removed).
+
+### Fixed
+
+- A History record filed before `desktop_session` existed counts as its family's root when its session title is its family title, so old answers no longer repeat the title either (`isRootSession` in `hooks/model.ts`).
 
 ## [0.4.0-beta.22] - 2026-10-18
 

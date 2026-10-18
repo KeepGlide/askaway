@@ -21,7 +21,7 @@ Um cartão de pergunta aparece no painel do Askaway para cada decisão que um ag
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Acesso antecipado (0.4.0-beta.22):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável. As mudanças desta versão estão listadas no [CHANGELOG.md](CHANGELOG.md).
+> ⚠️ **Acesso antecipado (0.4.0-beta.23):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável. As mudanças desta versão estão listadas no [CHANGELOG.md](CHANGELOG.md).
 
 ## 💡 O que é
 
@@ -190,7 +190,7 @@ Enquanto há perguntas abertas, uma faixa fica acima do prompt: `2 perguntas agu
 5. **← Voltar** vai para a pergunta anterior. **Próxima →** vai para a seguinte, com ou sem resposta. Ele aparece em todas as perguntas, menos na última.
 6. Na última pergunta do grupo, o botão de avançar é **Enviar tudo (N)**, em que N é o número de perguntas do grupo na tela. Ele só fica disponível quando todas as perguntas têm resposta. Ao apertá-lo, todas as respostas do grupo vão para as sessões que perguntaram. Nada é enviado antes desse botão.
 
-Embaixo do cartão, o bloco **Histórico** é desenhado como a árvore acima: o logo e **Histórico** como cabeçalho, depois as respostas do último tempo, agrupadas por família e sessão, cada uma como uma única linha `○`: o título da pergunta, ` ✓ - ` e a resposta com o ponto em que está (`Resposta A · enviada 14:32`, depois `entregue 14:33 (lida pela sessão)` quando a sessão a leu, `a sessão encerrou antes de ler`, ou `expirou sem ser lida`: nenhuma sessão a leu em 7 dias; nada é acrescentado enquanto ela espera). Quando a pergunta veio de uma sessão do Desktop, o título é um link que abre essa sessão. Uma linha lida sai 30 segundos depois que o painel a mostra; as encerradas e expiradas ficam. **Limpar histórico (N)** no fim do painel remove as linhas lidas, encerradas e expiradas; uma linha aguardando fica até ser lida.
+Embaixo do cartão, o bloco **Histórico** é desenhado como a árvore acima: um ícone de histórico (um relógio voltando) e **Histórico** como cabeçalho, depois as respostas do último tempo, agrupadas por família e sessão, cada uma como uma única linha `○`: o título da pergunta, ` ✓ - ` e a resposta com o ponto em que está (`Resposta A · enviada 14:32`, depois `entregue 14:33 (lida pela sessão)` quando a sessão a leu, `a sessão encerrou antes de ler`, ou `expirou sem ser lida`: nenhuma sessão a leu em 7 dias; nada é acrescentado enquanto ela espera). Quando a pergunta veio de uma sessão do Desktop, o rótulo da família, a linha da sessão e o título da pergunta são links que abrem essas sessões. Uma linha lida sai 30 segundos depois que o painel a mostra; as outras ficam. **Limpar tudo (N)** no fim do painel remove todas as linhas mostradas, inclusive as que aguardam (o arquivo da resposta fica, então a sessão ainda a lê).
 
 Quando nenhuma pergunta está aberta, o painel mostra uma linha de rodapé sob o Histórico, com as contagens: `Nada aguardando · 1 respondida nas últimas 24 h · última: <título> → A, <idade> · 1 ainda não lida · 1 expirada`. Ela some enquanto uma pergunta está aberta.
 
