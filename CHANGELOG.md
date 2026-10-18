@@ -2,10 +2,10 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.8, set by the beta.8 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.9, set by the beta.9 release commit.
 Commit hashes name the change in `git log`.
 
-## [0.4.0-beta.9] - Unreleased
+## [0.4.0-beta.9] - 2026-10-18
 
 ### Added
 
