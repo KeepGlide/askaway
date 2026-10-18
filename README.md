@@ -49,7 +49,7 @@ Askaway does not:
 ## ✨ Advantages
 
 - **Answer when you are back, from any project or session.** The panel reads the state folder that every Claude Code session on your machine shares, so the open questions of all projects show in one place. Each answer goes back to the session that asked.
-- **A tree by project and session.** Each project with open questions is a group, with its sessions and their questions under it.
+- **A tree by session family and session.** Each Claude Desktop session family with open questions (its root session and the sessions it started or forked) is a group, named by the root's title, with its sessions and their questions under it. The family is read from Claude Desktop's own session records on this machine; questions with no family group by project.
 - **A recommended default.** Every question carries the option the agent would take, so the session keeps working instead of waiting for you.
 - **First click on the desktop.** Each button keeps its press handle across redraws (`hooks/held.ts`), which is the cause of the first click the desktop used to drop.
 - **Risk-aware pausing.** A question with `risk` high pauses the session whose id it carries, until the answer is delivered to that session. A question from Codex has no session id: it replies `"action": "pause"`, but nothing holds a Codex run, so its script waits for the answer itself ([From Codex](#-from-codex)). Low and medium questions never pause.
@@ -63,7 +63,7 @@ Components and the file flow:
 flowchart LR
     agent["Agent needs a decision"] -->|"ask: writes a question"| folder[("State folder: q/ questions")]
     folder -->|"poll every 5 s"| band["Band button and toast"]
-    band --> panel["Panel: tree of questions by project, one card at a time, Submit all"]
+    band --> panel["Panel: tree of questions by session family, one card at a time, Submit all"]
     panel -->|"Submit all: the CLI writes a/ answers"| answers[("State folder: a/ answers")]
     answers -->|"deliver hook or idle hand-off"| agent
 ```
@@ -175,7 +175,7 @@ claude plugin install askaway@keepglide
 
 ## 🧭 Usage
 
-Agents file questions instead of stopping. You answer them in the panel, one card at a time, and send each project's answers at once.
+Agents file questions instead of stopping. You answer them in the panel, one card at a time, and send each group's answers at once.
 
 ![The Askaway band above the prompt](assets/band-en.png)
 
@@ -184,11 +184,11 @@ While questions are open, a band sits above the prompt: `2 questions waiting · 
 ### Answering a question
 
 1. Press `1` from an empty prompt, or click **Answer** on the band, to open the pane. The header shows the Askaway logo, the heading **Questions waiting** and the counter, such as `2 pending · 1 group`.
-2. The tree lists every project with open questions, one under the other, each project name in bold. Under each project, its sessions (`├` or `└`) hold their questions. A mark shows where each question stands: `●` the one on screen, `○` waiting. A question with a picked option shows `✓ - Submit` after its text: that **Submit** sends only that question's answer, at once; the other picks wait for **Submit all**. Nothing is sent until one of them is pressed. Project and session names are text, not buttons; each question row is a button, and pressing one jumps to its card.
+2. The tree lists every session family with open questions, one under the other, each family's root title in bold. Under each family, its sessions (`├` or `└`) hold their questions. A mark shows where each question stands: `●` the one on screen, `○` waiting. A question with a picked option shows `✓ - Submit Answer` after its text: that **Submit Answer** sends only that question's answer, at once; the other picks wait for **Submit all**. Nothing is sent until one of them is pressed. Family and session names are text, not buttons; each question row is a button, and pressing one jumps to its card.
 3. Click an option to record it. The pane moves to the next question without an answer, wrapping to the start if needed, or to the last question once every question has one. Nothing is sent yet.
 4. For your own answer, the field under **Other…** is always open: click into it and type. The text is recorded as your answer as you type, and the hotkeys stay off while the field holds text. Press Enter (the field's button reads **Done**) to record it and move on. The **Other…** link only moves the focus to the field.
 5. **← Back** goes to the previous question. **Next →** goes to the next one, with or without an answer. It is on every question but the last.
-6. On the project's last question, the forward button is **Submit all (N)**, where N is the number of questions of the project on screen. It is pressable only once every question has an answer. Pressing it sends every answer of the project to the sessions that asked. Nothing is sent before this button.
+6. On the group's last question, the forward button is **Submit all (N)**, where N is the number of questions of the group on screen. It is pressable only once every question has an answer. Pressing it sends every answer of the group to the sessions that asked. Nothing is sent before this button.
 
 Status lines at the bottom of the pane show where each answer is: `⏳` sent, `✓` read by the session (the check replaces the hourglass; the text is plain, only the mark is coloured), `⚠️` the session ended before reading it, or the answer expired unread (`expired`: no session read it within 7 days). The last two can be dismissed with `✕`.
 
@@ -198,11 +198,11 @@ When no question is open, the pane shows one footer line under the status lines,
 
 The card draws these parts from top to bottom. The labels are the English ones; the panel shows them in Portuguese when the language is `pt-BR`.
 
-The card opens with the title, the lead line, the **Details** link under it, the explanation before the question (**What it is**, **The problem**, **Analogy** and, once you open the details, those details right after Analogy), the question, Urgency, the options with their trade-off, fit, **What happens**, **Pros** and **Cons** lines, and the nav row. The details (step 3) stay folded until you press `e` (the **Details** link, drawn `e: Details`). The link opens and closes them for that card, and it appears only when the card has something in step 3.
+The card opens with the title, the lead line, the explanation before the question (**What it is** and **The problem**), a divider, the **Askaway Details:** block (the mark and the title, then **Analogy**, **💡 Why A**, **↩️ Undo**, **🛠️ How**, **🎁 What we gain**, **⚖️ What we lose** and **🧭 Context and origin**), the question, Urgency, the options with their tradeoff, fit, the **What happens**, **Pros** and **Cons** lines, and the nav row. The details are always open: there is no link or key to open them.
 
 1. **Title row:** the title in bold, then the risk label and the age, for example `⚠️ medium risk · 12 min ago`. A question filed without `title` gets its question clipped to 60 characters as its title (the CLI does it). The pane cuts a stored empty title to 24 characters. The risk wraps under the title when there is no room.
 2. **Lead line:** in bold, what the agent does now and what happens if nobody answers: `Working on A since 14:05 while it waits for you. Your answer still counts: pick another option and it switches; with no answer it stays on A.`, or `Paused since 14:05: it waits for your answer before going on.` for a `high` risk question.
-3. **Explanation before the question:** a box with the sections that are set, one line each, `heading: text`: **What it is** (`what`), **The problem** (`problem`) and **🔁 Analogy** (`analogy`). Once you open the details, they follow Analogy in the same box: **💡 Why A** (`why`; the letter is the recommended key), **↩️ Undo** (`undo`), **🛠️ How** (`how`), **🎁 What we gain** (`gains`), **⚖️ What we lose** (`losses`) and **🧭 Context and origin** (`context`) last.
+3. **Explanation before the question:** a box with the sections that are set, one line each, `heading: text`: **What it is** (`what`) and **The problem** (`problem`). Then a divider and the **Askaway Details:** block (with the mark): **🔁 Analogy** (`analogy`), **💡 Why A** (`why`; the letter is the recommended key), **↩️ Undo** (`undo`), **🛠️ How** (`how`), **🎁 What we gain** (`gains`), **⚖️ What we lose** (`losses`) and **🧭 Context and origin** (`context`) last. The block has a rounded border and no fill of its own. Section titles are bold.
 4. **The question:** the question text, in bold. Always present.
 5. **Explanation before the options:** a box with **⏱️ Urgency** (`urgency`), when it is set.
 6. **The options:** each one a full-width button, `A · Label`, with `(Recommended)` after the label of the recommended one. Under it, a line `└ trade-off · fit 88` (the fit is the agent's estimate), then **What happens** (`does`), **Pros** (`pros`) and **Cons** (`cons`), which show at once. The picked option is the filled button; the recommended one is bold until it is picked. The last one is **Other…**, numbered with the position after the options (`3. Other…` with two options).
@@ -223,8 +223,8 @@ The risk label is the risk of accepting the recommended option, as the agent jud
 - Each option button shows its key letter and answers to it in lower case: `a` picks A, `b` picks B, and so on, on the terminal and on the desktop.
 - **Other…** keeps its digit, the position after the options (`3` with two options; the digits stop at 9).
 - Back, Next and Submit all take `z`, `x` and `w` on the terminal, and `p`, `f` and `w` on the desktop.
-- `e` opens and closes the card's details (the long sections); with an option keyed E, the details toggle has no hotkey. A letter that one of the card's options uses is skipped, and the keys shift to the next free letters of the same list.
-- For dictation, say a nav key by its letter: `p` (Back), `f` (Next) or `w` (Submit all) on the desktop, and `e` for the details.
+- There is no `e` key: the card always shows its details. A letter that one of the card's options uses is skipped, and the keys shift to the next free letters of the same list.
+- For dictation, say a nav key by its letter: `p` (Back), `f` (Next) or `w` (Submit all) on the desktop.
 - The band's **Answer** button keeps hotkey `1`.
 - No hotkey works while the **Other…** field holds typed text, so typed text presses no button.
 

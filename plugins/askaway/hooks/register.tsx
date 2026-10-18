@@ -27,7 +27,6 @@ import {
   parseDelivery,
   parseQuestion,
   sameBoard,
-  sectionsOf,
   statusLines,
   withAnswer,
   withLocalAnswers,
@@ -72,8 +71,6 @@ const cleared = atom({ plugin: 'askaway', key: 'cleared' } as const, [] as strin
 const deliveredAt = atom({ plugin: 'askaway', key: 'deliveredAt' } as const, {} as Record<string, number>)
 // The cards fading out after a press: question id → press time. The pane is one instance, so a plain atom holds it.
 const leaving = atom({ plugin: 'askaway', key: 'leaving' } as const, {} as Record<string, number>)
-// The questions whose details are open (the long sections of the card): question id → true. Kept while the plugin lives.
-const expanded = atom({ plugin: 'askaway', key: 'expanded' } as const, {} as Record<string, boolean>)
 // Whether this session's main loop is inside a turn: an answer is handed to the prompt only while it is idle.
 const turn = atom({ plugin: 'askaway', key: 'turn' } as const, { isBusy: false })
 // The language in use, and the question wizard (group, step, picks, Other…).
@@ -588,26 +585,15 @@ async function typeOther($: EngineInterface, id: string, text: string): Promise<
   await update($, wizardAtom, prev => flow.typedOther(prunedWizard(prev, open), id, text))
 }
 
-// Opens or closes the details of one question's card. The state lives in the plugin, one entry per question.
-async function toggleDetails($: EngineInterface, id: string): Promise<void> {
-  await update($, expanded, prev => ({ ...prev, [id]: prev[id] !== true }))
-}
-
 // The tree's press on a question: the card on screen becomes that question, as if the wizard had walked there with Next or
-// Back, and its group becomes the group on screen. The card's Details link takes the focus when the card has one, so an
-// Enter right after the press toggles the details and never answers a question; then the card scrolls into view. A
-// question that is fading out takes nothing.
+// Back, and its group becomes the group on screen; then the card scrolls into view. A question that is fading out takes
+// nothing.
 async function jumpToQuestion($: EngineInterface, id: string): Promise<void> {
   const { open, leaving: fading } = await snapshot($)
   if (fading[id] !== undefined) return
   const target = flow.groupsOf(open).find(group => group.questions.some(question => question.id === id))
   if (target === undefined) return
   await update($, wizardAtom, prev => flow.jumpTo(prunedWizard(prev, open), target, id))
-  const question = target.questions.find(candidate => candidate.id === id)
-  const lang = await read($, langAtom)
-  if (question !== undefined && sectionsOf(lang, question, 'details').length > 0) {
-    await $.ui.focus({ requestId: PANE, key: `details-${id}` })
-  }
   await $.ui.scroll({ in: PANE, to: { key: `card-${id}` }, block: 'start' })
 }
 
@@ -646,7 +632,6 @@ const actionsFor = ($: EngineInterface): PaneActions => ({
   focusOther: id => report($, focusOther($, id)),
   typeOther: (id, text) => report($, typeOther($, id, text)),
   submitOne: id => report($, submitOne($, id)),
-  toggleDetails: id => report($, toggleDetails($, id)),
   jump: id => report($, jumpToQuestion($, id)),
   submitOther: (id, text) => report($, submitOther($, id, text)),
   back: () => report($, moveWizard($, (current, group) => flow.back(current, group))),
@@ -738,7 +723,6 @@ export const register: Register = on => {
       now,
       leaving: fading,
       footer: footerText(lang, current, now),
-      expanded: await read($, expanded),
       ended: await read($, endedAtom),
       askWho: (await read($, whoAtom)) === null,
       groups,

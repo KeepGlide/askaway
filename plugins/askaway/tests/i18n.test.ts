@@ -56,6 +56,8 @@ test('t fills the named placeholders and keeps a placeholder with no value', () 
 test('t reads a numeric value as its text', () => {
   expect(t('en', 'review.submit', { n: 3 })).toBe('Submit all (3)')
   expect(t('pt', 'review.submit', { n: 3 })).toBe('Enviar tudo (3)')
+  expect(t('en', 'tree.submit')).toBe('Submit Answer')
+  expect(t('pt', 'tree.submit')).toBe('Enviar resposta')
 })
 
 test('plural picks the one form for exactly 1 and the many form otherwise, in both languages', () => {

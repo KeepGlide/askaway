@@ -101,6 +101,27 @@ test('groupsOf keeps two projects with the same folder name apart', () => {
   expect(groups.map(group => group.questions.length)).toEqual([1, 1])
 })
 
+test('groupsOf groups by family: the sessions of one family are one group even across folders, keyed by the family', () => {
+  const groups = groupsOf([
+    question('q-a-000001', 10, 'root', { family: 'local_root', family_title: 'Big abstraction', project: '/work/app' }),
+    question('q-b-000002', 20, 'child', { family: 'local_root', family_title: 'Big abstraction', project: '/work/app/scratch' }),
+    question('q-c-000003', 30, 'root', { family: 'local_root', family_title: 'Big abstraction', project: '/work/app' }),
+  ])
+  expect(groups.map(group => group.key)).toEqual(['local_root'])
+  expect(groups[0]?.sessions.map(questions => questions.map(one => one.id))).toEqual([['q-a-000001', 'q-c-000003'], ['q-b-000002']])
+  expect(groups[0]?.questions.map(one => one.id)).toEqual(['q-a-000001', 'q-c-000003', 'q-b-000002'])
+})
+
+test('groupsOf keeps a family group apart from an old question of the same project, in the order of their oldest question', () => {
+  const groups = groupsOf([
+    question('q-a-000001', 10, 's1', { family: 'local_root', family_title: 'Big abstraction' }),
+    question('q-b-000002', 20, 's2', { project: '/work/app' }),
+    question('q-c-000003', 30, 's3', { family: 'local_root', family_title: 'Big abstraction' }),
+  ])
+  expect(groups.map(group => group.key)).toEqual(['local_root', '/work/app'])
+  expect(groups.map(group => group.questions.map(one => one.id))).toEqual([['q-a-000001', 'q-c-000003'], ['q-b-000002']])
+})
+
 test('groupsOf of nothing open is empty', () => {
   expect(groupsOf([])).toEqual([])
 })

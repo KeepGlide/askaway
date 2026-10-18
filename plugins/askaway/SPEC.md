@@ -14,7 +14,9 @@ Two parts, one shared folder:
   toggle, its own store keys and the hand-off prompt.
 
 Terms:
-- **Group**: the open questions of one project (`project`). The group's label is the project's name.
+- **Group**: the open questions of one session family (`family`: the Claude Desktop root session that started or forked the
+  asking session, and its family's other sessions). A question with no `family` (filed before the field existed) groups by
+  its project (`project`). The group's label is the root's title (`family_title`), or the project's name when there is none.
 - **Session**: the questions of a group that were asked by one session (`session`). A question with no
   session sits in its group under the session label "the session" ("a sessão").
 - **Round**: the open questions of one group; Submit all writes the round of the group on screen.
@@ -28,6 +30,7 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   {"v":1,"id":"q-lq3x9a1-a3f9c2","ts":1791993000000,
    "project":"<absolute project path>","session":"<CLAUDE_CODE_SESSION_ID or null>",
    "run_kind":"main|subagent|goal|loop|bash|codex","session_title":"<<= 80 chars> | null>",
+   "family":"<Claude Desktop root sessionId, local_<uuid> | null>","family_title":"<<= 80 chars> | null>",
    "title":"<= 60 chars","question":"<= 400 chars",
    "what":"<<= 600 chars, 2+ sentences>","problem":"<<= 400 chars>","context":"<<= 600 chars>",
    "options":[{"key":"A","label":"...","tradeoff":"<one line>","fit":88,
@@ -47,6 +50,22 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   80 chars. It is null when there is no session, no transcript or the lookup fails; the lookup
   never fails the ask. Questions filed by the AskUserQuestion hook get it the same way. Session
   ids that are not plain tokens (`[A-Za-z0-9_-]`) are never looked up.
+  The Desktop title comes first. Claude Desktop keeps one JSON record per session under
+  `~/.config/Claude/claude-code-sessions/<org>/<user>/local_<uuid>.json`; the record whose
+  `cliSessionId` equals the session id gives its `title`, when non-empty, and that title takes
+  precedence over the transcript rows above, which are the fallback. The folder can be moved with
+  the `ASKAWAY_DESKTOP_SESSIONS` variable (the tests use it). Only regular files are read: symlinks,
+  FIFOs and devices are skipped, a file over 2 MB is skipped, and at most 2000 files are examined
+  per lookup. Escape sequences and control characters are removed from a Desktop title, which is
+  then clipped to 80 chars. `ask` reads the Desktop record once and uses it for both fields.
+  `family` and `family_title` group the question. `family` is the `sessionId` (`local_<uuid>`) of
+  the root of the asking session's Desktop family, and `family_title` is that root's title, clipped
+  to 80 chars. The walk starts at the session's record and follows `forkedFromSessionId` first,
+  then `spawnedFrom.sessionId`, loading each ancestor by its file name (`<sessionId>.json`) until a
+  record has neither link. At most 8 links are followed. A cycle, a longer chain, or a root with no
+  title (its own `title`, else the `spawnedFrom.title` its child records) gives both fields null.
+  A root whose file is missing is taken as the last `sessionId` reached, titled from its child's
+  `spawnedFrom`.
   `what` ("What it is": what the thing is, what the spec says, what the code does today, the discrepancy),
   `problem` ("The problem": the concrete consequence if nothing is decided, with an example), `context`,
   `why`, `how` (how the option works), `gains`, `losses`, `analogy`, `urgency` and `undo` are required
@@ -299,11 +318,15 @@ status list). `hooks/pane.tsx`, `renderPane`.
   (`hooks/logo-element.tsx`, `LOGO_GLYPH`). The counter reads "<n> pending · <n> groups" ("<n> pendentes · <n> grupos"), or
   "Nothing pending" ("Nenhuma pendente") when no question is open (`counterText`, `hooks/model.ts`).
 - **Tree of the open questions** (drawn when at least one question is open). The questions are grouped by GROUP =
-  their `project`, in the order of each group's oldest question. Every open group is drawn in turn, one under the other,
-  in a Box keyed `group-<project path>`. No group draws a Button: a group's label is a Text.
-  - Group label: the project's basename with hyphens and underscores turned into spaces, title-cased
-    ("my-sample_project" becomes "My Sample Project"). Session label: the session's title, title-cased the same way;
-    "the session" ("a sessão") when there is no title (`projectLabel`, `sessionLabelOf`, `titleCase`, `hooks/model.ts`).
+  their `family` when they have one, else their `project` (`groupKeyOf`, `hooks/model.ts`), in the order of each group's
+  oldest question. Every open group is drawn in turn, one under the other, in a Box keyed `group-<group key>`. No group
+  draws a Button: a group's label is a Text. The header counter counts the same groups.
+  - Group label: the `family_title` of the group's oldest question, title-cased like a session title ("release checklist
+    review" becomes "Release Checklist Review"). A group whose oldest question has no family title takes the
+    project's basename with hyphens and underscores turned into spaces, title-cased ("my-sample_project" becomes
+    "My Sample Project"). Session label: the session's title, title-cased the same way;
+    "the session" ("a sessão") when there is no title (`projectLabel`, `sessionLabelOf`, `titleCase`, `groupLabel`,
+    `hooks/model.ts`, `hooks/pane.tsx`).
     Minor words stay lower-case after the first word (English: a, an, and, as, at, but, by, for, in, of, on, or,
     the, to, via, with; Portuguese: its own list, `MINOR_WORDS`). A word that already has a capital stays as typed.
   - **Label of each group**: a bold row (`renderGroup`, `hooks/pane.tsx`). The group on screen is the wizard's `groupKey`
@@ -318,8 +341,8 @@ status list). `hooks/pane.tsx`, `renderPane`.
   - **Pressing a question row**: each question row is a plain Button (key `tree-jump-<question id>`, `renderTreeQuestion`,
     `hooks/pane.tsx`). Its press puts that question on the card, the same move as walking there with Next or Back
     (`jumpToQuestion`, `hooks/register.tsx`; `jumpTo`, `hooks/wizard.ts`): the question's group becomes the group on screen
-    and its step is the question's place in that group. The card's Details link takes the focus (`$.ui.focus`) when the card has one, so Enter toggles the details and never answers and the
-    card scrolls to the top of the window (`$.ui.scroll`). The focus is a request the surface may refuse, since it is
+    and its step is the question's place in that group. The card
+    scrolls to the top of the window (`$.ui.scroll`). The focus is a request the surface may refuse, since it is
     granted only while the pane holds the keys. A question that is fading out after a press takes nothing. Groups and
     sessions stay Text, with no press.
 - **KeepGlide mark**: an SVG of the KeepGlide tile (`hooks/keepglide.ts`, `renderKeepGlide`, `hooks/logo-element.tsx`),
@@ -336,7 +359,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
   - the explanation group before the question, drawn (not folded) when one of its sections is set: plain text on the
     card's own background, with no box and no fill (`renderExplanation`), its sections spaced by `gap={1}`. Its sections, each
     drawn only when its field is set: "What it is" (`what`; pt "O que é"), "The problem" (`problem`; pt "O problema"),
-    and "🔁 Analogy" (`analogy`; pt "🔁 Analogia"), and, while the details are open, the details (below) follow Analogy in the same box;
+    (Analogy moves to the details block below);
   - the question text, bold;
   - the explanation box before the options, when `urgency` is set: "⏱️ Urgency" (pt "⏱️ Urgência");
   - the options, one full-width Button each, "<key> · Label" (for example "A · Label"), with "(Recommended)" (pt
@@ -347,33 +370,25 @@ status list). `hooks/pane.tsx`, `renderPane`.
     "Cons: <cons>" (pt "O que acontece", "Prós", "Contras"). The options are in a column with `gap={2}` and
     `marginTop={1}`, so two blank lines part them from the explanation box (`renderQuestion`, `renderOption`,
     `hooks/pane.tsx`);
-  - "N. Other…" is the last option (Portuguese: "Outra…"), a plain Button with underlined text like the Details link,
+  - "N. Other…" is the last option (Portuguese: "Outra…"), a plain Button with underlined text,
     bold while its pick holds text. The text field under it is always open (no press needed, no autofocus, so the keys
     stay with the card until the person clicks in). Pressing the link only focuses that field (`$.ui.focus`, key
     `other-input-<id>`). Typing in the field records Other as the pick with the text typed so far, without moving on
     (`typeOther`, the Input's `onInput`, `flow.typedOther`); a blank field takes that pick away. Enter ("Done" /
     "Pronto") records the text and moves on (`submitOther`). Once recorded, the text shows under the link. A surface
     with no Input draws no Other option (`renderOther`);
-  - the details, folded by default: while the details toggle is open, they draw in the box above the question, right
-    after Analogy and before the question, in the same box and style as What it is, The problem and Analogy. Their
-    sections, each drawn only when its field is set, in this order: "💡 Why <rec>" (`why`; pt "💡 Por que A", the letter
-    is the recommended key), "↩️ Undo" (`undo`; pt "↩️ Como desfazer"), "🛠️ How" (`how`; pt "🛠️ Como"), "🎁 What we
-    gain" (`gains`; pt "🎁 O que ganhamos"), "⚖️ What we lose" (`losses`; pt "⚖️ O que perdemos"), and "🧭 Context and
-    origin" (`context`; pt "🧭 Contexto e origem") last. Each section is one line, "heading: text", the heading in bold,
-    the text wrapping as one paragraph; every name in the text (a slash command, or anything the agent wrote between
-    backticks) is drawn in bold ink (`piecesOf`, `renderSection`, `hooks/model.ts`, `hooks/pane.tsx`). The sections
-    come from `sectionsOf` (slot `details`); `sectionsAboveQuestion` joins them to the box above the question
-    (`renderExplanation`, `hooks/pane.tsx`);
-  - **Details toggle**: a link under the lead line, drawn before What it is. It is a plain Button (no chrome, no variant)
-    whose label is underlined text: "Details" (pt "Detalhes"), or "Hide details" (pt "Ocultar detalhes") while the details
-    are open. Pressing it opens and shuts the details, which then draw right after Analogy and before the question. Its
-    hotkey `e` is drawn before the label ("e: Details"). When an option is keyed E, the toggle has no hotkey, since the
-    option keeps the letter. The rest keeps its order: the title, the lead line, What it is, The problem, Analogy (with
-    the details after them when open), the question, Urgency, and each option's tradeoff, What happens, Pros and Cons
-    lines, and the nav row. The toggle is drawn only when the card has a folded section. Its state is kept per question
-    in the plugin's state (`expanded`, `hooks/register.tsx`) while the plugin is loaded; it is not written to disk
-    (`renderDetailsToggle`, `hasDetailsOf`, `hooks/pane.tsx`). On the terminal the link is text with an underline; on the
-    desktop the surface draws its native button for a Button, plain or not, since the API has no link-style control.
+  - the details block, drawn when one of its sections is set (`renderDetailsBlock`, key `details-<id>`), under a divider rule
+    (`renderDivider`, key `divider-details`). It is always open: there is no toggle and no `e` hotkey. Its first line is the
+    title: the Askaway mark (`renderLogo`: the SVG on the desktop, the glyph on the terminal), then "Askaway Details:" (pt
+    "Detalhes do Askaway:"), in bold. Its sections, each drawn only when its field is set, in this order: "🔁 Analogy"
+    (`analogy`; pt "🔁 Analogia"), "💡 Why <rec>" (`why`; pt "💡 Por que A", the letter is the recommended key), "↩️ Undo"
+    (`undo`; pt "↩️ Como desfazer"), "🛠️ How" (`how`; pt "🛠️ Como"), "🎁 What we gain" (`gains`; pt "🎁 O que ganhamos"),
+    "⚖️ What we lose" (`losses`; pt "⚖️ O que perdemos") and "🧭 Context and origin" (`context`; pt "🧭 Contexto e origem")
+    last. Each section is one line, "heading: text": the heading in bold, the text regular, wrapping as one paragraph; every
+    name in the text (a slash command, or anything the agent wrote between backticks) is drawn in bold ink (`piecesOf`,
+    `renderSection`). The sections come from `sectionsOf` (slot `details`). The block is the card's one boxed part: a round
+    border and no fill. Its background is not set, because the option buttons' background comes from the engine's variant,
+    which the mod cannot read (`hooks/pane.tsx`).
   - a separator: a 1px rule on the desktop, a row of "─" on the terminal (`renderDivider`);
   - the nav row: [← Back] (Portuguese: "← Voltar") on every question, dim on the first; [Next →] (Portuguese:
     "Próxima →") on every question but the last; on the last one, [Submit all (n)] (Portuguese: "Enviar tudo (n)"),
@@ -381,8 +396,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
 - **Hotkeys**: each option button draws its key letter in lower case as its hotkey (`optionHotkey`, `hooks/pane.tsx`), on
   every surface. "Other…" keeps its digit, the position after the options (none after nine). Back, Next and Submit all
   take the first free letters of their surface's pool (`letterFor`, `NAV_POOLS`, `hooks/pane.tsx`): `z`, `x`, `w` on the
-  terminal; `p`, `f` and then `w`, `z`, `x` on the desktop. The letter `e` is the details toggle's, on both surfaces, so no
-  pool holds it. A letter that an option of the card uses is skipped. No
+  terminal; `p`, `f` and then `w`, `z`, `x` on the desktop. A letter that an option of the card uses is skipped. No
   hotkey is drawn while the Other field holds typed text, so typed text presses no button. The Input reports typing
   (`onInput`) but no focus change, so a bare focus on the field keeps the hotkeys (a known limit of the API).
 - **Choosing**: an option, or "Other…" with its text, records the pick and moves on: to the first question without a
@@ -392,7 +406,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
 - **Next** moves to the next question whether or not it has a pick; **Back** moves to the previous one. Next does
   nothing on the last question.
 - **Per-question Submit**: a tree row whose question holds a pick not yet submitted draws, after its text, " ✓ - " and a
-  plain "Submit" button (key `tree-submit-<id>`, pt "Enviar"; `renderTreeQuestion`, `renderTreeSubmit`). Its press
+  plain "Submit Answer" button (key `tree-submit-<id>`, pt "Enviar resposta"; `renderTreeQuestion`, `renderTreeSubmit`). Its press
   answers that question alone, through the answer path (`submitOne`), at once, and the row leaves the tree and the round
   as Submit all's questions do. The other picks stay for Submit all. The leading mark of a row is only ● (on screen) or ○.
 - **Submit all (n)** writes every answer of the group's round at once. On each press the card dims at once; each
@@ -419,7 +433,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
 
 Decision: every Button of the pane and of the band keeps its press handle across redraws, on the desktop and on the
 terminal alike. The plugin does not hold the focus ring any more (there is no `ui.focus` hook); the engine moves the
-ring as it does for any plugin, and the pane's hotkeys (the option letters on both surfaces, the digit of "Other…", and `z`, `x`, `w` or `p`, `f`, `e` for Back, Next and Submit all) are its keyboard path.
+ring as it does for any plugin, and the pane's hotkeys (the option letters on both surfaces, the digit of "Other…", and `z`, `x`, `w` or `p`, `f`, `w` for Back, Next and Submit all) are its keyboard path.
 
 Why: the engine hands a Button a new press handle on every redraw, unless the very same element object comes back. On
 the desktop a click moves the focus onto the Button, and that move redraws the site just before the press arrives. The
@@ -456,7 +470,7 @@ Two guards keep the drawn state from changing for nothing:
 Colour: the accent `#3566C8` (`ACCENT_COLOR`, `hooks/look.ts`) is never used for text (since 0.4.0-beta.7, commit 0a01eb5):
 text is bold ink, or the theme's own foreground, and the pane draws no fill of its own: the explanation and the status rows sit on the card's background. Measured WCAG 2.x
 contrast of the accent, for the record: 5.40:1 on `#FFFFFF` and 3.28:1 on `#111827` (`#1E40AF` measured 8.72:1 and 2.03:1).
-The engine gives the mod no theme signal, so the colours cannot switch with the theme.
+The engine gives the mod no theme signal, so the colours cannot switch with the theme. The details block's border is the theme key `subtle` (`borderColor="subtle"`, `renderDetailsBlock`, `hooks/pane.tsx`), which the engine resolves per theme, so it follows light and dark.
 
 ## Polling
 

@@ -49,7 +49,7 @@ O Askaway não:
 ## ✨ Vantagens
 
 - **Responda quando voltar, de qualquer projeto ou sessão.** O painel lê a pasta de estado que todas as sessões do Claude Code na sua máquina compartilham, então as perguntas abertas de todos os projetos aparecem num só lugar. Cada resposta volta para a sessão que perguntou.
-- **Uma árvore por projeto e sessão.** Cada projeto com perguntas abertas é um grupo, com as sessões e as perguntas dele logo abaixo.
+- **Uma árvore por família de sessões e sessão.** Cada família de sessões do Claude Desktop com perguntas abertas (a sessão raiz e as sessões que ela iniciou ou bifurcou) é um grupo, com o título da raiz como nome, e as sessões e perguntas dele logo abaixo. A família é lida dos registros de sessão do próprio Claude Desktop nesta máquina; perguntas sem família agrupam por projeto.
 - **Uma opção recomendada.** Cada pergunta traz a opção que o agente escolheria, então a sessão segue trabalhando em vez de esperar por você.
 - **Primeiro clique no desktop.** Cada botão mantém o seu identificador de clique entre as redesenhas (`hooks/held.ts`), que era a causa do primeiro clique que o desktop perdia.
 - **Pausa conforme o risco.** Uma pergunta com `risk` alto pausa a sessão cujo id ela traz, até a resposta ser entregue a essa sessão. Uma pergunta do Codex não tem id de sessão: ela responde `"action": "pause"`, mas nada segura uma execução do Codex, então o script dela espera a resposta sozinho ([Pelo Codex](#-pelo-codex)). Perguntas de risco baixo e médio nunca pausam.
@@ -63,7 +63,7 @@ Componentes e o fluxo dos arquivos:
 flowchart LR
     agent["Agente precisa de uma decisão"] -->|"ask: grava uma pergunta"| folder[("Pasta de estado: perguntas q/")]
     folder -->|"consulta a cada 5 s"| band["Botão da faixa e aviso"]
-    band --> panel["Painel: árvore de perguntas por projeto, um cartão por vez, Enviar tudo"]
+    band --> panel["Painel: árvore de perguntas por família de sessões, um cartão por vez, Enviar tudo"]
     panel -->|"Enviar tudo: a CLI grava respostas a/"| answers[("Pasta de estado: respostas a/")]
     answers -->|"gancho de entrega ou entrega na ociosidade"| agent
 ```
@@ -175,7 +175,7 @@ claude plugin install askaway@keepglide
 
 ## 🧭 Uso
 
-Os agentes registram perguntas em vez de parar. Você responde no painel, um cartão por vez, e envia as respostas de cada projeto de uma vez.
+Os agentes registram perguntas em vez de parar. Você responde no painel, um cartão por vez, e envia as respostas de cada grupo de uma vez.
 
 ![A faixa do Askaway acima do prompt](assets/band-en.png)
 
@@ -184,11 +184,11 @@ Enquanto há perguntas abertas, uma faixa fica acima do prompt: `2 perguntas agu
 ### Responder uma pergunta
 
 1. Aperte `1` com o prompt vazio, ou clique em **Responder** na faixa, para abrir o painel. O cabeçalho mostra o logo do Askaway, o título **Perguntas aguardando** e o contador, como `2 pendentes · 1 grupo`.
-2. A árvore lista cada projeto com perguntas abertas, um abaixo do outro, com o nome de cada projeto em negrito. Embaixo de cada projeto, as sessões (`├` ou `└`) guardam as suas perguntas. Uma marca mostra em que ponto está cada pergunta: `●` a que está na tela, `○` aguardando. Uma pergunta com opção escolhida mostra depois do texto `✓ - Enviar`: esse **Enviar** manda só a resposta dela, na hora; as demais escolhas esperam o **Enviar tudo**. Nada é enviado antes de um dos dois. Os nomes de projeto e de sessão são texto, não botões; cada linha de pergunta é um botão, e apertar uma leva ao cartão dela.
+2. A árvore lista cada família de sessões com perguntas abertas, uma abaixo da outra, com o título da sessão raiz em negrito. Embaixo de cada família, as sessões (`├` ou `└`) guardam as suas perguntas. Uma marca mostra em que ponto está cada pergunta: `●` a que está na tela, `○` aguardando. Uma pergunta com opção escolhida mostra depois do texto `✓ - Enviar resposta`: esse **Enviar resposta** manda só a resposta dela, na hora; as demais escolhas esperam o **Enviar tudo**. Nada é enviado antes de um dos dois. Os nomes de família e de sessão são texto, não botões; cada linha de pergunta é um botão, e apertar uma leva ao cartão dela.
 3. Clique numa opção para registrá-la. O painel avança para a próxima pergunta sem resposta, voltando ao início se preciso, ou para a última pergunta quando todas já têm resposta. Nada é enviado ainda.
 4. Para responder com as suas palavras, o campo embaixo de **Outra…** fica sempre aberto: clique nele e digite. O texto vira a resposta enquanto você digita, e as teclas ficam desligadas enquanto o campo tiver texto. Aperte Enter (o botão do campo diz **Pronto**) para registrar e avançar; o link **Outra…** só leva o foco ao campo.
 5. **← Voltar** vai para a pergunta anterior. **Próxima →** vai para a seguinte, com ou sem resposta. Ele aparece em todas as perguntas, menos na última.
-6. Na última pergunta do projeto, o botão de avançar é **Enviar tudo (N)**, em que N é o número de perguntas do projeto na tela. Ele só fica disponível quando todas as perguntas têm resposta. Ao apertá-lo, todas as respostas do projeto vão para as sessões que perguntaram. Nada é enviado antes desse botão.
+6. Na última pergunta do grupo, o botão de avançar é **Enviar tudo (N)**, em que N é o número de perguntas do grupo na tela. Ele só fica disponível quando todas as perguntas têm resposta. Ao apertá-lo, todas as respostas do grupo vão para as sessões que perguntaram. Nada é enviado antes desse botão.
 
 As linhas de estado no fim do painel mostram onde está cada resposta: `⏳` enviada, `✓` lida pela sessão (o visto troca a ampulheta; o texto é simples, só a marca tem cor), `⚠️` a sessão encerrou antes de ler, ou a resposta expirou sem ser lida (`expired`: nenhuma sessão a leu em 7 dias). As duas últimas podem ser dispensadas com `✕`.
 
@@ -198,11 +198,11 @@ Quando nenhuma pergunta está aberta, o painel mostra uma linha de rodapé sob a
 
 O cartão desenha estas partes de cima para baixo. Os rótulos são os do painel em português (pt-BR).
 
-O cartão abre com o título, a linha de estado, o link **Detalhes** logo abaixo, a explicação antes da pergunta (**O que é**, **O problema**, **Analogia** e, abertos os detalhes, eles logo depois da Analogia), a pergunta, a Urgência, as opções com a troca, a aderência, as linhas **O que acontece**, **Prós** e **Contras**, e a linha de navegação. Os detalhes (passo 3) ficam dobrados até você apertar `e` (o link **Detalhes**, que aparece como `e: Detalhes`). A tecla abre e fecha esse trecho naquele cartão, e o link só aparece quando o passo 3 tem algo dobrado.
+O cartão abre com o título, a linha de estado, a explicação antes da pergunta (**O que é** e **O problema**), um separador, o bloco **Detalhes do Askaway:** (o logo e o título, depois **Analogia**, **💡 Por que A**, **↩️ Como desfazer**, **🛠️ Como**, **🎁 O que ganhamos**, **⚖️ O que perdemos** e **🧭 Contexto e origem**), a pergunta, a Urgência, as opções com a troca, a aderência, as linhas **O que acontece**, **Prós** e **Contras**, e a linha de navegação. Os detalhes ficam sempre abertos: não há link nem tecla para abri-los.
 
 1. **Linha do título:** o título em negrito, seguido do rótulo de risco e da idade, por exemplo `⚠️ risco médio · há 12 min`. Uma pergunta registrada sem `title` recebe a pergunta cortada em 60 caracteres como título (a CLI faz isso). O painel corta em 24 caracteres só um título armazenado vazio. O risco quebra para baixo do título quando não cabe na linha.
 2. **Linha de estado:** em negrito, o que o agente faz agora e o que acontece se ninguém responder: `Trabalhando na A desde 14:05 enquanto espera você. Sua resposta ainda vale: escolha outra opção e ele muda; sem resposta, segue na A.`, ou `Pausado desde 14:05: espera a sua resposta para seguir.` para uma pergunta de risco `high`.
-3. **Explicação antes da pergunta:** uma caixa com as seções preenchidas, uma linha cada, `título: texto`: **O que é** (`what`), **O problema** (`problem`) e **🔁 Analogia** (`analogy`). Abertos os detalhes, eles seguem a Analogia na mesma caixa: **💡 Por que A** (`why`; a letra é a chave recomendada), **↩️ Como desfazer** (`undo`), **🛠️ Como** (`how`), **🎁 O que ganhamos** (`gains`), **⚖️ O que perdemos** (`losses`) e **🧭 Contexto e origem** (`context`) por último.
+3. **Explicação antes da pergunta:** uma caixa com as seções preenchidas, uma linha cada, `título: texto`: **O que é** (`what`) e **O problema** (`problem`). Depois, um separador e o bloco **Detalhes do Askaway:** (com o logo): **🔁 Analogia** (`analogy`), **💡 Por que A** (`why`; a letra é a chave recomendada), **↩️ Como desfazer** (`undo`), **🛠️ Como** (`how`), **🎁 O que ganhamos** (`gains`), **⚖️ O que perdemos** (`losses`) e **🧭 Contexto e origem** (`context`) por último. O bloco tem borda arredondada e nenhum fundo próprio. Os títulos das seções vão em negrito.
 4. **A pergunta:** o texto da pergunta, em negrito. Sempre presente.
 5. **Explicação antes das opções:** uma caixa com **⏱️ Urgência** (`urgency`), quando estiver preenchida.
 6. **As opções:** cada uma é um botão de largura total, `A · Rótulo`, com `(Recomendada)` depois do rótulo da recomendada. Embaixo, uma linha `└ troca · aderência 88` (a aderência é a estimativa do agente), depois **O que acontece** (`does`), **Prós** (`pros`) e **Contras** (`cons`), que aparecem logo. A opção escolhida é o botão preenchido; a recomendada fica em negrito até ser escolhida. A última é **Outra…**, numerada com a posição depois das opções (`3. Outra…` com duas opções).
@@ -223,8 +223,8 @@ O rótulo de risco é o risco de aceitar a opção recomendada, como o agente av
 - Cada botão de opção mostra a sua letra e responde a ela em minúscula: `a` escolhe A, `b` escolhe B, e assim por diante, no terminal e no desktop.
 - **Outra…** mantém o seu dígito, a posição depois das opções (`3` com duas opções; os dígitos param em 9).
 - Voltar, Próxima e Enviar tudo usam `z`, `x` e `w` no terminal, e `p`, `f` e `w` no desktop.
-- A tecla `e` abre e fecha os detalhes do cartão (as seções longas); com uma opção de letra E, o botão de detalhes não tem tecla. Uma letra que uma das opções do cartão usa é pulada, e as teclas passam para as próximas letras livres da mesma lista.
-- Para ditado, diga uma tecla de navegação pela sua letra: `p` (Voltar), `f` (Próxima) ou `w` (Enviar tudo) no desktop, e `e` para os detalhes.
+- Não há tecla `e`: o cartão mostra os detalhes sempre. Uma letra que uma das opções do cartão usa é pulada, e as teclas passam para as próximas letras livres da mesma lista.
+- Para ditado, diga uma tecla de navegação pela sua letra: `p` (Voltar), `f` (Próxima) ou `w` (Enviar tudo) no desktop.
 - O botão **Responder** da faixa mantém a tecla `1`.
 - Nenhuma tecla de atalho funciona enquanto o campo **Outra…** tem texto digitado, então o texto digitado não aperta botão.
 

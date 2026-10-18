@@ -309,6 +309,24 @@ test('model: the counter counts two sessions of one project as one group', () =>
   expect(counterText('en', twoSessions)).toBe('2 pending · 1 group')
 })
 
+test('model: the counter counts a family once across its folders, and an old question by its project', () => {
+  const questions = [
+    parsedQuestion('q-m-000001', 10, { family: 'local_root', family_title: 'Big abstraction', project: '/work/app', session: 's1' }),
+    parsedQuestion('q-m-000002', 20, { family: 'local_root', family_title: 'Big abstraction', project: '/work/app/scratch', session: 's2' }),
+    parsedQuestion('q-m-000003', 30, { project: '/work/app', session: 's3' }),
+  ]
+  expect(counterText('en', questions)).toBe('3 pending · 2 groups')
+})
+
+test('model: parseQuestion keeps family and family_title, and a null or blank one reads as absent', () => {
+  const kept = parsedQuestion('q-m-000001', 10, { family: 'local_root', family_title: 'release checklist of the API' })
+  expect(kept.family).toBe('local_root')
+  expect(kept.family_title).toBe('release checklist of the API')
+  const bare = parsedQuestion('q-m-000002', 20, { family: null, family_title: '  ' })
+  expect(bare.family).toBeUndefined()
+  expect(bare.family_title).toBeUndefined()
+})
+
 test('model: titleCase title-cases a slug and a session title, keeps inner capitals, and leaves minor words after the first', () => {
   expect(projectLabel('/home/user/projects/my-sample_project', 'en')).toBe('My Sample Project')
   expect(projectLabel('/work/bridge_to-the_moon', 'en')).toBe('Bridge to the Moon')
@@ -479,15 +497,16 @@ test('model: each explanation section reads in the chosen language and shows onl
   expect(sectionsOf('en', short, 'before-question')).toEqual([])
 
   const full = parsedQuestion('q-m-000002', 10, { context: 'C', analogy: 'An', how: 'H', gains: 'G', losses: 'L' })
-  expect(sectionsOf('pt', full, 'before-question').map(section => section.heading)).toEqual(['🔁 Analogia'])
+  expect(sectionsOf('pt', full, 'before-question')).toEqual([])
   expect(sectionsOf('pt', full, 'details').map(section => section.heading)).toEqual([
+    '🔁 Analogia',
     '💡 Por que A',
     '🛠️ Como',
     '🎁 O que ganhamos',
     '⚖️ O que perdemos',
     '🧭 Contexto e origem',
   ])
-  expect(sectionsOf('en', full, 'details').slice(2, 4)).toEqual([
+  expect(sectionsOf('en', full, 'details').slice(3, 5)).toEqual([
     { heading: '🎁 What we gain', body: 'G' },
     { heading: '⚖️ What we lose', body: 'L' },
   ])
@@ -502,9 +521,10 @@ test('model: each card slot keeps its sections in the card order, each only when
   const every = parsedQuestion('q-m-000004', 10, {
     what: 'W', problem: 'P', context: 'C', analogy: 'An', how: 'H', gains: 'G', losses: 'L', urgency: 'Blocks in ~8 min', undo: 'Changing later ≈ 10 min',
   })
-  expect(sectionsOf('en', every, 'before-question').map(section => section.heading)).toEqual(['What it is', 'The problem', '🔁 Analogy'])
+  expect(sectionsOf('en', every, 'before-question').map(section => section.heading)).toEqual(['What it is', 'The problem'])
   expect(sectionsOf('en', every, 'before-options')).toEqual([{ heading: '⏱️ Urgency', body: 'Blocks in ~8 min' }])
   expect(sectionsOf('en', every, 'details').map(section => section.heading)).toEqual([
+    '🔁 Analogy',
     '💡 Why A',
     '↩️ Undo',
     '🛠️ How',
@@ -512,10 +532,11 @@ test('model: each card slot keeps its sections in the card order, each only when
     '⚖️ What we lose',
     '🧭 Context and origin',
   ])
-  expect(sectionsOf('en', every, 'details')[1]).toEqual({ heading: '↩️ Undo', body: 'Changing later ≈ 10 min' })
-  expect(sectionsOf('pt', every, 'before-question').map(section => section.heading)).toEqual(['O que é', 'O problema', '🔁 Analogia'])
+  expect(sectionsOf('en', every, 'details')[2]).toEqual({ heading: '↩️ Undo', body: 'Changing later ≈ 10 min' })
+  expect(sectionsOf('pt', every, 'before-question').map(section => section.heading)).toEqual(['O que é', 'O problema'])
   expect(sectionsOf('pt', every, 'before-options')).toEqual([{ heading: '⏱️ Urgência', body: 'Blocks in ~8 min' }])
   expect(sectionsOf('pt', every, 'details').map(section => section.heading)).toEqual([
+    '🔁 Analogia',
     '💡 Por que A',
     '↩️ Como desfazer',
     '🛠️ Como',
@@ -902,28 +923,30 @@ test('the question card has one blank line under its nav row: paddingBottom 1, o
   }
 })
 
-test('a separator is drawn after the options and Other…, and before the nav row: an SVG rule on the desktop, a row of ─ on the terminal', async ($, on) => {
+test('the nav row has a separator after the options and Other…: an SVG rule on the desktop, a row of ─ on the terminal', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   stubHost(on, files)
   await $.session.start(SESSION)
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface)
-    // The engine keeps keys on Box nodes only, so the Other field, the separator and the nav row are found by content.
+    // The engine keeps keys on Box nodes only, so the Other field and the nav row are found by key, the rules by content.
+    // The details block has a divider above it too, so the separator before the nav row is the last rule drawn.
     const nodes = nodesOf(await ui.drawn())
     const rule = '─'.repeat(40)
     const keyAt = (key: string): number => nodes.findIndex(node => keyOfNode(node) === key)
+    const isRule = (node: Record<string, unknown>): boolean =>
+      (node.props as Record<string, unknown> | undefined)?.alt === 'divider' || (Array.isArray(node.children) && node.children.includes(rule))
+    const navRuleAt = nodes.map(isRule).lastIndexOf(true)
     const otherAt = keyAt('other-row-q-l1-aaaaaa')
-    const dividerAt = nodes.findIndex(
-      node => (node.props as Record<string, unknown> | undefined)?.alt === 'divider' || (Array.isArray(node.children) && node.children.includes(rule)),
-    )
     expect(otherAt).toBeGreaterThan(-1)
-    expect(dividerAt).toBeGreaterThan(otherAt)
-    expect(keyAt('nav-q-l1-aaaaaa')).toBeGreaterThan(dividerAt)
+    expect(navRuleAt).toBeGreaterThan(otherAt)
+    expect(keyAt('nav-q-l1-aaaaaa')).toBeGreaterThan(navRuleAt)
     const svgRules = (await ui.findAll({ type: 'Svg' })).filter(found => found.props.alt === 'divider')
     if (surface === 'desktop') {
-      expect(svgRules).toHaveLength(1)
+      // Two rules: the one above the details block, then the one above the nav row.
+      expect(svgRules).toHaveLength(2)
       expect(svgRules[0]?.props).toMatchObject({ alt: 'divider', height: 21 })
-      expect(String(svgRules[0]?.props.source)).toContain('<rect x="0" y="10" width="320" height="1"')
+      expect(String(svgRules[1]?.props.source)).toContain('<rect x="0" y="10" width="320" height="1"')
       expect(await ui.find({ type: 'Text', text: rule })).toBeUndefined()
     } else {
       expect(svgRules).toHaveLength(0)
@@ -950,7 +973,7 @@ test('a status row has no fill and no border: its mark alone takes the accent, a
   expect((await ui.find({ type: 'Text', text: pending }))?.props).toMatchObject({ dimColor: true })
   expect((await ui.find({ type: 'Text', text: '⏳' }))?.props.color).toBe(ACCENT_COLOR)
   expect((await ui.find({ type: 'Text', text: '⚠️' }))?.props.color).toBe(ACCENT_COLOR)
-  // No node of the pane is filled or boxed: the status rows and the explanation boxes sit on the card's own background.
+  // No node of the pane is filled: the status rows and the explanation sections sit on the card's own background. The only box is the details block's round border.
   const filled = nodesOf(await ui.drawn()).filter(node => {
     const props = node.props as Record<string, unknown> | undefined
     return props?.backgroundColor !== undefined || props?.borderStyle !== undefined && props?.borderStyle !== 'round'
@@ -1025,7 +1048,6 @@ test('only the recommended option says "(Recomendada)", and the card has no JEV 
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  await ui.press({ key: 'details-q-l1-aaaaaa' })
   expect(await ui.findAll({ type: 'Text', text: /\(Recomendada\)$/ })).toHaveLength(1)
   expect(await ui.findAll({ type: 'Text', text: '🎯' })).toHaveLength(0)
   const texts = await textsOf(ui)
@@ -1045,7 +1067,6 @@ test('each explanation section shows only when its field is set, in the box of i
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  await ui.press({ key: 'details-q-l1-aaaaaa' })
   const texts = await textsOf(ui)
   // A section is one Text, "heading: text": its whole line, and the bold heading as a Text of its own before the body.
   expect(texts.filter(text => text.startsWith('🧭'))).toEqual(['🧭 Contexto e origem: Why now.', '🧭 Contexto e origem: '])
@@ -1069,7 +1090,6 @@ test('the card draws the details right after the explanation before the question
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  await ui.press({ key: 'details-q-l3-cccccc' })
   const texts = await textsOf(ui)
   const questionLine = texts.indexOf('Which way for q-l3-cccccc?')
   const urgencyLine = texts.indexOf('⏱️ Urgência: Blocks in ~8 min')
@@ -1104,10 +1124,10 @@ test('the card draws the lead line under the title in pt-BR: the recommended key
   const texts = await cardTextsAt1402($, on, {}, {})
   const lead = 'Trabalhando na B desde 14:02 enquanto espera você. Sua resposta ainda vale: escolha outra opção e ele muda; sem resposta, segue na B.'
   expect(texts).toContain(lead)
-  // The details toggle sits between the lead and the question: the lead, then the toggle, then the question.
-  expect(texts.indexOf(lead)).toBe(texts.indexOf('Detalhes') - 1)
-  expect(texts.indexOf('Detalhes')).toBe(texts.indexOf('Which way for q-l1-aaaaaa?') - 1)
+  // The title line of the details block comes after the lead, and the question after it.
   expect(texts.indexOf(lead)).toBeGreaterThan(texts.indexOf('Title q-l1-aaaaaa'))
+  expect(texts.indexOf('Detalhes do Askaway:')).toBeGreaterThan(texts.indexOf(lead))
+  expect(texts.indexOf('Detalhes do Askaway:')).toBeLessThan(texts.indexOf('Which way for q-l1-aaaaaa?'))
 })
 
 test('the card draws the lead line under the title in English: the recommended key and the time', async ($, on) => {
@@ -1136,12 +1156,10 @@ test('a losses-only question draws the losses section alone, and a gains-only on
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  await ui.press({ key: 'details-q-l1-aaaaaa' })
   const losses = await textsOf(ui)
   expect(losses).toContain('⚖️ O que perdemos: Extra file.')
   expect(losses.some(text => text.startsWith('🎁'))).toBe(false)
   await ui.press({ key: 'nav-next' })
-  await ui.press({ key: 'details-q-l2-bbbbbb' })
   const gains = await textsOf(ui)
   expect(gains).toContain('🎁 O que ganhamos: Quick answers.')
   expect(gains.some(text => text.startsWith('⚖️'))).toBe(false)
@@ -1166,7 +1184,6 @@ test('a legacy question with tradeoff and no how, gains, losses or session title
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  await ui.press({ key: 'details-q-l1-aaaaaa' })
   const texts = await textsOf(ui)
   expect(texts).toContain('💡 Por que A: It is smaller.')
   expect(texts).toContain('└ Cheap · aderência 80')
@@ -1183,7 +1200,6 @@ test('a name in an explanation is drawn bold, a slash command bare and a backtic
   await $.session.start(SESSION)
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface)
-    await ui.press({ key: 'details-q-l1-aaaaaa' })
     expect(await textsOf(ui)).toContain('🛠️ Como: Run /reload-plugins, then open frontend-code-engineer.')
     const nodes = nodesOf(await ui.drawn())
     const nameChildren = nodes
@@ -1195,9 +1211,7 @@ test('a name in an explanation is drawn bold, a slash command bare and a backtic
     expect(await textsOf(ui)).toContain('🛠️ Como: Run /reload-plugins, then open frontend-code-engineer.')
     const drawnText = nodes.flatMap(node => (Array.isArray(node.children) ? node.children : [])).filter((child): child is string => typeof child === 'string')
     expect(drawnText.some(text => text.includes('`'))).toBe(false)
-    // The fold state outlives the mount, so close the details again before the next surface starts folded.
-    await ui.press({ key: 'details-q-l1-aaaaaa' })
-    await ui.unmount()
+      await ui.unmount()
   }
 })
 
@@ -1455,7 +1469,7 @@ test('the footer drops an answer from the last-24-hours count once the window pa
   await ui.unmount()
 })
 
-test('the card folds only Why to Context behind the details toggle, and each question keeps its own fold state', async ($, on) => {
+test('the card has no details toggle and no e hotkey: every section is drawn at once, under the Askaway Details title', async ($, on) => {
   const long = {
     what: 'What W', problem: 'Problem P', analogy: 'Analogy N', why: 'Reason R', undo: 'Undo U', how: 'How H',
     gains: 'Gain G', losses: 'Loss L', context: 'Context C', urgency: 'Blocks soon',
@@ -1468,84 +1482,39 @@ test('the card folds only Why to Context behind the details toggle, and each que
     [path('q', 'q-f1-aaaaaa'), question('q-f1-aaaaaa', 1000, { ...long, options })],
     [path('q', 'q-f2-bbbbbb'), question('q-f2-bbbbbb', 2000, { ...long, options })],
   ])
-  const shown = ['What W', 'Problem P', 'Analogy N', 'Blocks soon', 'Keeps the queue', 'Fast path', 'Stale data']
-  const folded = ['Reason R', 'Undo U', 'How H', 'Gain G', 'Loss L', 'Context C']
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  // Folded: the title, the lead, What it is, The problem, Analogy, the question, Urgency, the option lines with what happens,
-  // pros and cons, and the toggle draw; Why to Context does not.
   let texts = await textsOf(ui)
-  expect(texts).toContain('Which way for q-f1-aaaaaa?')
-  for (const name of shown) expect(texts.some(text => text.includes(name))).toBe(true)
+  for (const name of ['What W', 'Problem P', 'Analogy N', 'Reason R', 'Undo U', 'How H', 'Gain G', 'Loss L', 'Context C', 'Blocks soon', 'Keeps the queue', 'Fast path', 'Stale data']) {
+    expect(texts.some(text => text.includes(name))).toBe(true)
+  }
   expect(texts.some(text => text.startsWith('└ Cheap'))).toBe(true)
-  for (const name of folded) expect(texts.some(text => text.includes(name))).toBe(false)
-  expect(await labelOf(ui, 'details-q-f1-aaaaaa')).toBe('Detalhes')
-  // Unfolded: the same card, with Why to Context too, and the toggle now says Hide details.
-  await ui.press({ key: 'details-q-f1-aaaaaa' })
-  expect(await labelOf(ui, 'details-q-f1-aaaaaa')).toBe('Ocultar detalhes')
-  texts = await textsOf(ui)
-  for (const name of [...shown, ...folded]) expect(texts.some(text => text.includes(name))).toBe(true)
-  // The details sit right after Analogy and before the question, in the same box as What it is.
+  // No toggle: no details Button, no "Detalhes" or "Ocultar detalhes" link, and no button carries the hotkey e.
+  expect(await ui.find({ type: 'Button', key: 'details-q-f1-aaaaaa' })).toBeUndefined()
+  expect(texts).not.toContain('Detalhes')
+  expect(texts).not.toContain('Ocultar detalhes')
+  for (const button of await ui.findAll({ type: 'Button' })) expect(button.props.hotkey).not.toBe('e')
+  // The title line sits after What it is and before the details; the question and Urgency come after them.
   const at = (name: string): number => texts.findIndex(text => text.includes(name))
+  expect(at('What W')).toBeLessThan(at('Detalhes do Askaway:'))
+  expect(at('Detalhes do Askaway:')).toBeLessThan(at('Analogy N'))
   expect(at('Analogy N')).toBeLessThan(at('Reason R'))
   expect(at('Reason R')).toBeLessThan(at('Context C'))
   expect(at('Context C')).toBeLessThan(at('Which way for q-f1-aaaaaa?'))
   expect(at('Which way for q-f1-aaaaaa?')).toBeLessThan(at('Blocks soon'))
-  // The fold is kept per question: the second question starts folded, and the first is open again on return.
+  // The details block's border is the theme key "subtle", so it follows light and dark; no other node sets a border colour.
+  const bordered = nodesOf(await ui.drawn()).filter(node => (node.props as Record<string, unknown> | undefined)?.borderColor !== undefined)
+  expect(bordered.map(node => (node.props as Record<string, unknown>).borderColor)).toEqual(['subtle'])
+  // The second question draws the same sections, reached by Next.
   await ui.press({ key: 'nav-next' })
   texts = await textsOf(ui)
   expect(texts).toContain('Which way for q-f2-bbbbbb?')
-  expect(texts.some(text => text.includes('Reason R'))).toBe(false)
-  await ui.press({ key: 'nav-back' })
-  texts = await textsOf(ui)
   expect(texts.some(text => text.includes('Reason R'))).toBe(true)
-  await ui.press({ key: 'details-q-f1-aaaaaa' })
-  texts = await textsOf(ui)
-  expect(texts.some(text => text.includes('Reason R'))).toBe(false)
   await ui.unmount()
 })
 
-test('the details toggle draws the plain "details" label and no hotkey when an option is keyed E', async ($, on) => {
-  const options = [
-    { key: 'A', label: 'Keep', tradeoff: 'cheap', fit: 80 },
-    { key: 'E', label: 'Other path', tradeoff: 'slow', fit: 40 },
-  ]
-  const files = new Map([
-    [path('q', 'q-f3-cccccc'), question('q-f3-cccccc', 1000, { what: 'What W', options })],
-  ])
-  stubHost(on, files)
-  await $.session.start(SESSION)
-  const ui = await mountPane($)
-  expect(await labelOf(ui, 'details-q-f3-cccccc')).toBe('Detalhes')
-  expect((await ui.find({ type: 'Button', key: 'details-q-f3-cccccc' }))?.props.hotkey).toBeUndefined()
-  await ui.unmount()
-})
 
-test('the details toggle sits under the lead line as a plain Button with underlined link text and the hotkey e', async ($, on) => {
-  const options = [
-    { key: 'A', label: 'Keep', tradeoff: 'cheap', fit: 80, does: 'Keeps the queue' },
-    { key: 'B', label: 'Rewrite', tradeoff: 'slow', fit: 40 },
-  ]
-  const files = new Map([
-    [path('q', 'q-f4-dddddd'), question('q-f4-dddddd', 1000, { what: 'What W', why: 'Reason R', options })],
-  ])
-  stubHost(on, files)
-  await $.session.start(SESSION)
-  const ui = await mountPane($)
-  // The toggle comes after the title and before the explanation and the question: its label sits between them in order.
-  const texts = await textsOf(ui)
-  const toggleAt = texts.indexOf('Detalhes')
-  expect(toggleAt).toBeGreaterThan(texts.indexOf('Title q-f4-dddddd'))
-  expect(toggleAt).toBeLessThan(texts.findIndex(text => text.includes('What W')))
-  expect(toggleAt).toBeLessThan(texts.indexOf('Which way for q-f4-dddddd?'))
-  // A link, not a button: no chrome (plain), no variant, underlined text, and the hotkey e drawn before it.
-  const toggle = await ui.find({ type: 'Button', key: 'details-q-f4-dddddd' })
-  expect(toggle?.props).toMatchObject({ plain: true, hotkey: 'e' })
-  expect(toggle?.props.variant).toBeUndefined()
-  expect(JSON.stringify(toggle)).toContain('"underline":true')
-  await ui.unmount()
-})
 
 test('a legacy answer written by accept_recommended reads as a normal status line', async ($, on) => {
   const files = new Map([
@@ -2174,7 +2143,7 @@ test('a group answered from outside while another is open: the pane shows the fi
   await ui.unmount()
 })
 
-test('hotkeys: each option its key letter, Other the next digit, then z, x and w on the terminal and p, f and e on the desktop; none once the Other field holds typed text', async ($, on) => {
+test('hotkeys: each option its key letter, Other the next digit, then z, x and w on the terminal and p, f and w on the desktop; none once the Other field holds typed text', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
@@ -2201,15 +2170,14 @@ test('hotkeys: each option its key letter, Other the next digit, then z, x and w
   // A blank field holds no text, so the hotkeys come back; the desktop mount below starts from that state.
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: '', kind: 'change' })
   await ui.unmount()
-  // The desktop takes p, f and e for Back, Next and Submit: none of them is an option key of this question (A or B), so no
-  // shortcut clashes with another. Options take their letters on the desktop too.
+  // The desktop takes p and f for Back and Next: none of them is an option key of this question (A or B), so no shortcut
+  // clashes with another. Options take their letters on the desktop too.
   const desk = await mountPane($, 'desktop')
   const deskHotkey = async (key: string): Promise<unknown> => (await desk.find({ type: 'Button', key }))?.props.hotkey
   expect(await deskHotkey('opt-q-l1-aaaaaa-A')).toBe('a')
   expect(await deskHotkey('other-q-l1-aaaaaa')).toBe('3')
   expect(await deskHotkey('nav-back')).toBe('p')
   expect(await deskHotkey('nav-next')).toBe('f')
-  expect(await deskHotkey('details-q-l1-aaaaaa')).toBe('e')
   await desk.press({ key: 'nav-next' })
   expect(await deskHotkey('submit-all')).toBe('w')
   await desk.press({ key: 'nav-back' })
@@ -2365,6 +2333,8 @@ test('after a pick the ● moves to the next question, and the picked row shows 
   // Only the picked row has its own Submit.
   expect(await ui.find({ type: 'Button', key: 'tree-submit-q-l1-aaaaaa' })).toMatchObject({ props: { plain: true } })
   expect(await ui.find({ type: 'Button', key: 'tree-submit-q-l2-bbbbbb' })).toBeUndefined()
+  // The row's own Submit reads "Enviar resposta" in pt-BR ("Submit Answer" in English), never a bare Submit.
+  expect(await labelOf(ui, 'tree-submit-q-l1-aaaaaa')).toBe('Enviar resposta')
   await ui.unmount()
 })
 
@@ -2400,9 +2370,8 @@ test('a question row under the last session is indented 4, and one under another
   await ui.unmount()
 })
 
-test('a question row of the tree is a plain Button: its press puts that question on the card, whose Details link is there to take the focus', async ($, on) => {
-  // q-l3 has a folded section (why), so its card draws the Details link the press focuses. The focus itself is a request the
-  // harness does not grant (ui.focus needs the keys), so the test checks the card and the link it would focus.
+test('a question row of the tree is a plain Button: its press puts that question on the card, with no details toggle', async ($, on) => {
+  // q-l3 has its details block drawn (Why) and no toggle; its row press puts the card on screen.
   const files = treeFiles()
   files.set(path('q', 'q-l3-cccccc'), question('q-l3-cccccc', 2000, { session: 's2', why: 'Reason R' }))
   stubHost(on, files)
@@ -2415,7 +2384,7 @@ test('a question row of the tree is a plain Button: its press puts that question
   expect(texts).toContain('Which way for q-l3-cccccc?')
   expect(texts).not.toContain('Which way for q-l1-aaaaaa?')
   expect(await ui.find({ type: 'Text', text: '● Title q-l3-cccccc' })).toMatchObject({ props: { bold: true } })
-  expect(await ui.find({ type: 'Button', key: 'details-q-l3-cccccc' })).toMatchObject({ props: { plain: true } })
+  expect(await ui.find({ type: 'Button', key: 'details-q-l3-cccccc' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -2548,6 +2517,26 @@ test('two projects with the same folder name stay apart: two groups in turn, eac
   expect(labels.map(node => (node.props as Record<string, unknown>).color)).toEqual([undefined, undefined])
   expect(labels.map(node => (node.props as Record<string, unknown>).bold)).toEqual([true, true])
   expect(await textsOf(ui)).toContain('Which way for q-l1-aaaaaa?')
+  await ui.unmount()
+})
+
+test('a session family is one group labelled by its root title; an old question keeps its project label', async ($, on) => {
+  const family = { family: 'local_root', family_title: 'release checklist review' }
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { project: '/work/app/scratch', session: 's1', session_title: 'root session', ...family })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { project: '/work/app/scratch', session: 's2', session_title: 'child session', ...family })],
+    [path('q', 'q-l3-cccccc'), question('q-l3-cccccc', 3000, { project: '/work/web', session: 's3' })],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  const labels = nodesOf(await ui.drawn()).filter(node => node.type === 'Text' && Array.isArray(node.children) && node.children.includes('Release Checklist Review'))
+  expect(labels.map(node => (node.props as Record<string, unknown>).bold)).toEqual([true])
+  expect(await ui.find({ type: 'Text', text: 'Web' })).toBeDefined()
+  const texts = await textsOf(ui)
+  expect(texts).toContain('├ Root Session')
+  expect(texts).toContain('└ Child Session')
+  expect(texts).not.toContain('Scratch')
   await ui.unmount()
 })
 
@@ -2700,25 +2689,26 @@ test('the card has no n/total counter, no More button, no m hotkey and no JEV te
   await ui.unmount()
 })
 
-test('the details open inside the box above the question, right after Analogy; the Urgency box follows the question and the options column has gap 2', async ($, on) => {
+test('the details block sits between What it is and the question; the Urgency box follows the question and the options column has gap 2', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { what: 'W', urgency: 'Soon' })]])
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  await ui.press({ key: 'details-q-l1-aaaaaa' })
   const nodes = nodesOf(await ui.drawn())
   const keyAt = (key: string): number => nodes.findIndex(node => keyOfNode(node) === key)
   const questionAt = nodes.findIndex(node => Array.isArray(node.children) && node.children.includes('Which way for q-l1-aaaaaa?'))
   const whatAt = keyAt('explanation-before-question')
+  const detailsAt = keyAt('details-q-l1-aaaaaa')
   const urgencyAt = keyAt('explanation-before-options')
   const firstOptionAt = keyAt('optrow-q-l1-aaaaaa-A')
   expect(questionAt).toBeGreaterThan(-1)
   expect(whatAt).toBeGreaterThan(-1)
-  // One box above the question holds What it is and the details: no box of its own after the options.
-  expect(keyAt('explanation-after-options')).toBe(-1)
-  expect(questionAt).toBeGreaterThan(whatAt)
+  expect(detailsAt).toBeGreaterThan(whatAt)
+  expect(questionAt).toBeGreaterThan(detailsAt)
   expect(urgencyAt).toBeGreaterThan(questionAt)
   expect(firstOptionAt).toBeGreaterThan(urgencyAt)
+  // No explanation box after the options: Urgency is the only one below the question.
+  expect(keyAt('explanation-after-options')).toBe(-1)
   const column = nodes.find(
     node =>
       Array.isArray(node.children) &&
@@ -2752,15 +2742,15 @@ const expectInOrder = (texts: string[], lines: string[]): void => {
   expect(found).toEqual([...found].sort((a, b) => a - b))
 }
 
-test('the card draws What, The problem, Analogy, then the details (Why to Context) before the question, then Urgency and the options with their sub-lines, in pt-BR', async ($, on) => {
+test('the card draws What, The problem, then the details block (title, Analogy, Why to Context) before the question, then Urgency and the options with their sub-lines, in pt-BR', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, FULL_CARD)]])
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  await ui.press({ key: 'details-q-l1-aaaaaa' })
   expectInOrder(await textsOf(ui), [
     'O que é: W',
     'O problema: P',
+    'Detalhes do Askaway:',
     '🔁 Analogia: An',
     '💡 Por que A: It is smaller.',
     '↩️ Como desfazer: U',
@@ -2780,15 +2770,45 @@ test('the card draws What, The problem, Analogy, then the details (Why to Contex
   await ui.unmount()
 })
 
-test('the card draws the same order in English: the details right after Analogy, the question, then the option sub-lines under each link line', async ($, on) => {
+test('the section titles are bold and their bodies regular; the details block is one round-bordered box with no fill, its title bold beside the mark', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, FULL_CARD)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const isBoldText = (node: Record<string, unknown>): boolean =>
+    node.type === 'Text' && (node.props as Record<string, unknown> | undefined)?.bold === true
+  const childrenOf = (node: Record<string, unknown>): string[] =>
+    Array.isArray(node.children) ? node.children.filter((child): child is string => typeof child === 'string') : []
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    const nodes = nodesOf(await ui.drawn())
+    const block = nodes.find(node => keyOfNode(node) === 'details-q-l1-aaaaaa')
+    const inBlock = nodesOf(block)
+    expect(block?.props).toMatchObject({ borderStyle: 'round' })
+    expect(block?.props).not.toHaveProperty('backgroundColor')
+    expect(inBlock.some(node => isBoldText(node) && childrenOf(node).includes('Detalhes do Askaway:'))).toBe(true)
+    if (surface === 'desktop') {
+      expect(inBlock.some(node => node.type === 'Svg' && (node.props as Record<string, unknown>).alt === 'Askaway')).toBe(true)
+    }
+    // Each section title is a bold run; its body, drawn in the same line, is not bold.
+    const boldRuns = nodes.filter(isBoldText).flatMap(childrenOf)
+    for (const heading of ['O que é', 'O problema', '🔁 Analogia', '💡 Por que A', '↩️ Como desfazer', '🛠️ Como', '🎁 O que ganhamos', '⚖️ O que perdemos', '🧭 Contexto e origem', '⏱️ Urgência']) {
+      expect(boldRuns).toContain(`${heading}: `)
+    }
+    expect(boldRuns).toContain('Which way for q-l1-aaaaaa?')
+    expect((await ui.find({ type: 'Text', text: '🔁 Analogia: An' }))?.props.bold).not.toBe(true)
+    await ui.unmount()
+  }
+})
+
+test('the card draws the same order in English: the details block with its title, the question, then the option sub-lines under each link line', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, FULL_CARD)]])
   stubHost(on, files, true, {}, {}, { LANG: 'en_US.UTF-8' })
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  await ui.press({ key: 'details-q-l1-aaaaaa' })
   expectInOrder(await textsOf(ui), [
     'What it is: W',
     'The problem: P',
+    'Askaway Details:',
     '🔁 Analogy: An',
     '💡 Why A: It is smaller.',
     '↩️ Undo: U',
@@ -2813,7 +2833,6 @@ test('a question filed before the new fields still draws its card and option lin
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  await ui.press({ key: 'details-q-l1-aaaaaa' })
   const texts = await textsOf(ui)
   expect(texts).toContain('Which way for q-l1-aaaaaa?')
   expect(texts).toContain('└ Cheap · aderência 80')

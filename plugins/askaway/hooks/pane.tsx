@@ -21,6 +21,7 @@ import {
   riskLabel,
   sectionsOf,
   sessionLabelOf,
+  titleCase,
   type CardSlot,
   type Leaving,
   type Section,
@@ -43,8 +44,6 @@ export type PaneView = {
   surface: RenderSurface
   // The footer line (footerText, hooks/model.ts), set by the register only while no question is open.
   footer?: string
-  // The questions whose details are open: question id → true. A question not listed keeps its details folded.
-  expanded: Readonly<Record<string, boolean>>
   // The ids of open questions whose asking session has ended: their card shows a notice and Dismiss, no options.
   ended: readonly string[]
   // True until the person gave a name or skipped: the pane then asks for it above the card, once.
@@ -60,7 +59,6 @@ export type PaneActions = {
   focusOther: (id: string) => void
   typeOther: (id: string, text: string) => void
   submitOne: (id: string) => void
-  toggleDetails: (id: string) => void
   jump: (id: string) => void
   submitOther: (id: string, text: string) => void
   back: () => void
@@ -76,7 +74,6 @@ type CardContext = {
   wizard: Wizard
   isLeaving: boolean
   isTyping: boolean
-  isExpanded: boolean
   held: HeldButtons
   surface: RenderSurface
 }
@@ -159,9 +156,12 @@ function renderStatusLine(ui: Ui, actions: PaneActions, line: StatusLine, held: 
   )
 }
 
-// The name of a group: its project's name, or the words for "the session" when the project is unknown.
+// The name of a group: the title of its session family's root, title-cased, when its oldest question has one. Else the
+// project's name, or the words for "the session" when the project is unknown (questions with no family).
 function groupLabel(group: Group, lang: Lang): string {
-  return projectLabel(group.questions[0]?.project ?? '', lang) || t(lang, 'status.target.session')
+  const oldest = group.questions[0]
+  if (oldest?.family_title !== undefined) return titleCase(oldest.family_title, lang)
+  return projectLabel(oldest?.project ?? '', lang) || t(lang, 'status.target.session')
 }
 
 // What the tree draws from: the view and the language, the actions a row's press runs, and the held table for its Buttons.
@@ -294,8 +294,7 @@ const optionHotkey = (card: CardContext, key: string): string | undefined =>
 
 // Back, Next and Submit take the first free letters of their surface's pool, in that order. A letter that an option key
 // uses on this card is skipped, so no shortcut clashes with an option. The terminal pool avoids b, n and s, because
-// option B, N and S would clash with them; the desktop keeps p and f while no option uses them. The letter e is the details
-// toggle's (DETAILS_KEY), so it is in no pool. A surface not listed draws none.
+// option B, N and S would clash with them; the desktop keeps p and f while no option uses them. A surface not listed draws none.
 type NavKey = 'back' | 'next' | 'submit'
 const NAV_ORDER: readonly NavKey[] = ['back', 'next', 'submit']
 const NAV_POOLS: Partial<Record<RenderSurface, readonly string[]>> = {
@@ -309,11 +308,10 @@ const letterFor = (card: CardContext, key: NavKey): string | undefined => {
   return hotkeyFor(card, free[NAV_ORDER.indexOf(key)])
 }
 
-// One question on screen: the title in bold with the risk and age beside it, the bold lead line under it, the details
-// toggle under the lead, then the box above the question: What it is, The problem and Analogy, and the details (Why to
-// Context) right after Analogy while they are open. Then the question, the Urgency box, the options with their tradeoff,
-// fit, what happens, pros and cons, and "Other…". Then a separator, and the Back / Next or Submit all row. One blank
-// line sits under it.
+// One question on screen: the title in bold with the risk and age beside it, the bold lead line under it, the first block
+// (What it is and The problem), then the details block under a divider: the "Askaway Details:" title and Analogy, Why to
+// Context. Then the question, the Urgency box, the options with their tradeoff, fit, what happens, pros and cons, and
+// "Other…". Then a separator, and the Back / Next or Submit all row. One blank line sits under it.
 function renderQuestion(
   ui: Ui,
   lang: Lang,
@@ -329,12 +327,12 @@ function renderQuestion(
     wizard: view.wizard,
     isLeaving: view.leaving[question.id] !== undefined,
     isTyping: view.wizard.other === question.id,
-    isExpanded: view.expanded[question.id] === true,
     held,
     surface: view.surface,
   }
   const { isLeaving } = card
   const isEnded = view.ended.includes(question.id)
+  const details = sectionsOf(lang, question, 'details')
   return (
     <Box key={`card-${question.id}`} flexDirection="column" gap={1} borderStyle="round" borderDimColor={isLeaving} paddingX={1} paddingBottom={1}>
       <Box flexDirection="row" flexWrap="wrap" gap={2}>
@@ -342,8 +340,9 @@ function renderQuestion(
         <Text dimColor>{`${riskLabel(lang, question.risk)} · ${ageLabel(lang, question.ts, view.now)}`}</Text>
       </Box>
       <Text bold dimColor={isLeaving}>{leadOf(lang, question)}</Text>
-      {hasDetailsOf(lang, question) && renderDetailsToggle(ui, lang, actions, card)}
-      {renderExplanation(ui, 'before-question', sectionsAboveQuestion(lang, card), isLeaving)}
+      {renderExplanation(ui, 'before-question', sectionsOf(lang, question, 'before-question'), isLeaving)}
+      {details.length > 0 && renderDivider(ui, view.surface, 'divider-details')}
+      {details.length > 0 && renderDetailsBlock(ui, lang, card, details)}
       <Text bold dimColor={isLeaving}>{question.question}</Text>
       {renderExplanation(ui, 'before-options', sectionsOf(lang, question, 'before-options'), isLeaving)}
       {isEnded ? (
@@ -354,55 +353,38 @@ function renderQuestion(
           {renderOther(ui, lang, actions, card)}
         </Box>
       )}
-      {renderDivider(ui, view.surface)}
+      {renderDivider(ui, view.surface, 'divider-nav')}
       {isEnded ? renderEndedNav(ui, lang, actions, card, screen) : renderNav(ui, lang, actions, card, screen)}
     </Box>
   )
 }
 
-// The key of the details toggle: "e" opens and closes the long sections of the card.
-const DETAILS_KEY = 'e'
-
-// The sections of the box above the question: What it is, The problem and Analogy, then the details while they are open,
-// so the details come right after Analogy in the same text flow.
-const sectionsAboveQuestion = (lang: Lang, card: CardContext): Section[] => [
-  ...sectionsOf(lang, card.question, 'before-question'),
-  ...(card.isExpanded ? sectionsOf(lang, card.question, 'details') : []),
-]
-
-// Whether the card has anything behind the details toggle: a section of the folded details.
-const hasDetailsOf = (lang: Lang, question: Question): boolean => sectionsOf(lang, question, 'details').length > 0
-
-// The details toggle, a link under the lead line: a plain Button (no chrome) whose label is underlined text, "Details" or,
-// while the long sections are open, "Hide details". Its hotkey is drawn before the label ("e: Details"). An option keyed E
-// takes the letter, so the toggle then draws no hotkey.
-function renderDetailsToggle(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext): RenderElement {
-  const { Button, Text } = ui
-  const { question, isLeaving, isExpanded, held } = card
-  const takesKey = question.options.some(option => option.key.toLowerCase() === DETAILS_KEY)
-  const label = t(lang, isExpanded ? 'details.hide' : 'details.show')
-  const hotkey = takesKey ? undefined : hotkeyFor(card, DETAILS_KEY)
-  const key = `details-${question.id}`
-  const onPress = () => {
-    if (isLeaving) return
-    actions.toggleDetails(question.id)
-  }
-  return held.hold(key, [label, isLeaving, hotkey], onPress, press => (
-    <Button key={key} label={label} plain dimColor={isLeaving} hotkey={hotkey} onPress={press}>
-      <Text underline dimColor={isLeaving}>{label}</Text>
-    </Button>
-  ))
+// The details block: the "Askaway Details:" title line (the mark, then the text in bold), then the sections (Analogy, Why
+// to Context). It is the card's one boxed part: a rounded border, as the card's own. It draws no fill: the option buttons'
+// background comes from the engine's variant, which the mod cannot read (see SPEC.md, pane).
+function renderDetailsBlock(ui: Ui, lang: Lang, card: CardContext, sections: Section[]): RenderElement {
+  const { Box, Text } = ui
+  const { question, isLeaving, surface } = card
+  return (
+    <Box key={`details-${question.id}`} flexDirection="column" gap={1} borderStyle="round" borderColor="subtle" borderDimColor={isLeaving} paddingX={1}>
+      <Box key="details-title" flexDirection="row" alignItems="center" gap={1}>
+        {renderLogo(ui, surface)}
+        <Text bold dimColor={isLeaving}>{t(lang, 'details.title')}</Text>
+      </Box>
+      {sections.map(section => renderSection(ui, section, isLeaving))}
+    </Box>
+  )
 }
 
-// The separator above the nav row: a 1px SVG rule on the desktop, a row of '─' on the terminal. It is drawn after the
-// options and the Other field, and before the nav row.
-function renderDivider(ui: Ui, surface: RenderSurface): RenderElement {
+// A divider rule: a 1px SVG rule on the desktop, a row of '─' on the terminal. It separates the first block from the
+// details block, and the options from the nav row.
+function renderDivider(ui: Ui, surface: RenderSurface, key: string): RenderElement {
   if (surface === 'desktop' && 'Svg' in ui) {
     const { Svg } = ui
-    return <Svg key="divider" source={dividerSvg(DIVIDER_PX)} alt="divider" height={DIVIDER_HEIGHT} />
+    return <Svg key={key} source={dividerSvg(DIVIDER_PX)} alt="divider" height={DIVIDER_HEIGHT} />
   }
   const { Text } = ui
-  return <Text key="divider" dimColor>{'─'.repeat(DIVIDER_COLUMNS)}</Text>
+  return <Text key={key} dimColor>{'─'.repeat(DIVIDER_COLUMNS)}</Text>
 }
 
 // The explanations of one slot of the card, as a group of sections on the card's own background, the sections gap-spaced.
@@ -464,7 +446,7 @@ function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContex
   )
 }
 
-// "Other…": the last option, a link under the options styled like the Details link. Its field is always open right under
+// "Other…": the last option, a link under the options, styled as a plain link. Its field is always open right under
 // it, ready to type; the link only focuses that field. Typing records Other with the text typed so far (typeOther), and
 // Enter records it and moves on (submitOther). A surface with no Input (mobile) draws no field, so no Other option either.
 function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext): RenderElement | false {

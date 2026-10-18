@@ -101,6 +101,8 @@ export function parseQuestion(raw: unknown, id: string): Question | undefined {
     project: typeof raw.project === 'string' ? raw.project : '',
     session: typeof raw.session === 'string' ? raw.session : null,
     session_title: optionalText(raw.session_title),
+    family: optionalText(raw.family),
+    family_title: optionalText(raw.family_title),
     options,
     recommended,
     risk: typeof raw.risk === 'string' ? raw.risk : 'low',
@@ -285,6 +287,12 @@ export function titleCase(text: string, lang: Lang): string {
     .join(' ')
 }
 
+// The key of a question's group: its session family (the Claude Desktop root session) when it has one, else its project.
+// Old questions carry no family and keep the project grouping. The tree and the counter both use this one rule.
+export function groupKeyOf(question: Pick<Question, 'project' | 'family'>): string {
+  return question.family ?? question.project
+}
+
 // The name of a project: its folder name, title-cased from its slug ("my-sample_project" becomes "My Sample Project").
 export function projectLabel(project: string, lang: Lang): string {
   return titleCase(basename(project).replace(/[-_]+/g, ' '), lang)
@@ -358,10 +366,10 @@ export function statusLines(lang: Lang, board: Board, context: StatusContext): S
   return lines
 }
 
-// The header counter: the open questions and the distinct groups (projects) they come from.
+// The header counter: the open questions and the distinct groups (session families, or projects for old questions).
 export function counterText(lang: Lang, questions: readonly Question[]): string {
   if (questions.length === 0) return t(lang, 'counter.none')
-  const groups = new Set(questions.map(question => question.project)).size
+  const groups = new Set(questions.map(groupKeyOf)).size
   return t(lang, 'counter.line', {
     pending: plural(lang, questions.length, 'counter.pending.one', 'counter.pending.many'),
     groups: plural(lang, groups, 'count.group.one', 'count.group.many'),
@@ -414,10 +422,10 @@ export function ageLabel(lang: Lang, ts: number, now: number): string {
   return t(lang, 'age.days', { n: Math.round(hours / 24) })
 }
 
-// Where an explanation section sits on the card: the box above the question text (What it is, The problem, Analogy), the
-// box between the question and the options (Urgency), or the details (Why to Context), which the card draws inside the
-// box above the question, right after Analogy, while they are open. The sections keep that order.
-export type CardSlot = 'before-question' | 'before-options' | 'details'
+// Where an explanation section sits on the card: the first block (What it is, The problem), the details block (Analogy,
+// then Why to Context, under the divider and the "Askaway Details:" title), or the box between the question and the
+// options (Urgency). The sections keep that order.
+export type CardSlot = 'before-question' | 'details' | 'before-options'
 
 // The explanation sections of one slot, in the approved order; each one only when its field is set.
 export function sectionsOf(lang: Lang, question: Question, slot: CardSlot): Section[] {
@@ -428,10 +436,10 @@ export function sectionsOf(lang: Lang, question: Question, slot: CardSlot): Sect
   if (slot === 'before-question') {
     add(t(lang, 'section.what'), question.what)
     add(t(lang, 'section.problem'), question.problem)
-    add(t(lang, 'section.analogy'), question.analogy)
   } else if (slot === 'before-options') {
     add(t(lang, 'section.urgency'), question.urgency)
   } else {
+    add(t(lang, 'section.analogy'), question.analogy)
     add(t(lang, 'section.why', { key: question.recommended }), question.why)
     add(t(lang, 'section.undo'), question.undo)
     add(t(lang, 'section.how'), question.how)

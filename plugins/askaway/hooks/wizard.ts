@@ -1,9 +1,9 @@
 // The question wizard's state and rules: which group is open, which question is on screen, what was picked. Pure: each
-// function returns a new value and never touches the store or the drawing. A group is the questions of one project,
-// in tree order (session by session). The step runs 0..total-1 over the questions of the group; the last question
-// carries the Submit all button, so there is no review step.
+// function returns a new value and never touches the store or the drawing. A group is the questions of one session
+// family (or of one project, for questions with no family), in tree order (session by session). The step runs
+// 0..total-1 over the questions of the group; the last question carries the Submit all button, so there is no review step.
 import type { Question } from '../types'
-import { OTHER_KEY } from './model'
+import { OTHER_KEY, groupKeyOf } from './model'
 
 // A chosen option. The key 'other' carries the free text in `text`.
 export type Pick = { key: string; text?: string }
@@ -20,7 +20,7 @@ export type Wizard = {
 
 export const EMPTY_WIZARD: Wizard = { groupKey: null, step: 0, questionId: null, picks: {}, other: null }
 
-// The open questions of one project. `sessions` holds the same questions split by session (sessions in the order of
+// The open questions of one group. `sessions` holds the same questions split by session (sessions in the order of
 // their oldest question, questions oldest first); `questions` is those sessions one after the other: the step order.
 export type Group = { key: string; sessions: Question[][]; questions: Question[] }
 
@@ -38,7 +38,7 @@ export type Screen = {
 const lastStep = (total: number): number => Math.max(total - 1, 0)
 const clampStep = (step: number, total: number): number => Math.min(Math.max(step, 0), lastStep(total))
 
-// The sessions of one project's questions (oldest first): grouped by session, in the order of each session's oldest one.
+// The sessions of one group's questions (oldest first): grouped by session, in the order of each session's oldest one.
 function sessionsOf(questions: readonly Question[]): Question[][] {
   const bySession = new Map<string | null, Question[]>()
   for (const question of questions) {
@@ -49,15 +49,17 @@ function sessionsOf(questions: readonly Question[]): Question[][] {
   return [...bySession.values()]
 }
 
-// The open questions grouped by project. Groups come in the order of their oldest question.
+// The open questions grouped by family (groupKeyOf: the project when a question has no family). Groups come in the order
+// of their oldest question.
 export function groupsOf(open: readonly Question[]): Group[] {
-  const byProject = new Map<string, Question[]>()
+  const byGroup = new Map<string, Question[]>()
   for (const question of [...open].sort((a, b) => a.ts - b.ts)) {
-    const questions = byProject.get(question.project)
+    const key = groupKeyOf(question)
+    const questions = byGroup.get(key)
     if (questions) questions.push(question)
-    else byProject.set(question.project, [question])
+    else byGroup.set(key, [question])
   }
-  return [...byProject].map(([key, questions]) => {
+  return [...byGroup].map(([key, questions]) => {
     const sessions = sessionsOf(questions)
     return { key, sessions, questions: sessions.flat() }
   })

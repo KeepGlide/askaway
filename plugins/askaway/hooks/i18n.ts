@@ -71,7 +71,7 @@ const EN = {
   'card.lead.agent': 'Working on {key} since {time} while it waits for you. Your answer still counts: pick another option and it switches; with no answer it stays on {key}.',
   'card.lead.paused': 'Paused since {time}: it waits for your answer before going on.',
   'review.submit': 'Submit all ({n})',
-  'tree.submit': 'Submit',
+  'tree.submit': 'Submit Answer',
   'band.open': 'Answer',
   'band.text': '{questions} waiting · {groups}',
   'toast.newQuestion': 'New question: {title}',
@@ -98,8 +98,7 @@ const EN = {
   'footer.unread.many': '{n} not yet read',
   'footer.expired.one': '{n} expired',
   'footer.expired.many': '{n} expired',
-  'details.show': 'Details',
-  'details.hide': 'Hide details',
+  'details.title': 'Askaway Details:',
 } as const
 
 export type MessageKey = keyof typeof EN
@@ -166,7 +165,7 @@ const PT: Record<MessageKey, string> = {
   'card.lead.agent': 'Trabalhando na {key} desde {time} enquanto espera você. Sua resposta ainda vale: escolha outra opção e ele muda; sem resposta, segue na {key}.',
   'card.lead.paused': 'Pausado desde {time}: espera a sua resposta para seguir.',
   'review.submit': 'Enviar tudo ({n})',
-  'tree.submit': 'Enviar',
+  'tree.submit': 'Enviar resposta',
   'band.open': 'Responder',
   'band.text': '{questions} aguardando · {groups}',
   'toast.newQuestion': 'Nova pergunta: {title}',
@@ -193,8 +192,7 @@ const PT: Record<MessageKey, string> = {
   'footer.unread.many': '{n} ainda não lidas',
   'footer.expired.one': '{n} expirada',
   'footer.expired.many': '{n} expiradas',
-  'details.show': 'Detalhes',
-  'details.hide': 'Ocultar detalhes',
+  'details.title': 'Detalhes do Askaway:',
 }
 
 export const MESSAGES: Readonly<Record<Lang, Readonly<Record<MessageKey, string>>>> = { en: EN, pt: PT }

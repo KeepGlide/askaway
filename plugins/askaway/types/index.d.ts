@@ -35,6 +35,10 @@ export type Question = {
   project: string
   session: string | null
   session_title?: string
+  // The Claude Desktop root session of the asking session's family ("local_<uuid>") and that root's title. Absent on
+  // questions filed before they existed; the tree then groups by project.
+  family?: string
+  family_title?: string
   options: QuestionOption[]
   recommended: string
   risk: string
@@ -77,8 +81,8 @@ export type Board = {
 }
 
 // The drawn state the hooks module reads and writes (see hooks/register.tsx), named in the contract.
-// `wizard` mirrors hooks/wizard.ts `Wizard`: the window on screen, the step, the picks, the open "Other…" field
-// and the explanations shown. The shape is written out here so the contract stands on its own.
+// `wizard` mirrors hooks/wizard.ts `Wizard`: the window on screen, the step, the picks and the open "Other…" field.
+// The shape is written out here so the contract stands on its own.
 declare module 'claude-code' {
   interface PluginState {
     askaway: {
@@ -92,8 +96,6 @@ declare module 'claude-code' {
       deliveredAt: Record<string, number>
       // The answered cards still fading out (250 ms after the press): question id → press time. Drawn dim, then gone.
       leaving: Record<string, number>
-      // Whether each card shows its long sections (the `e` toggle): question id → true while open.
-      expanded: Record<string, boolean>
       // Whether this session is inside a model turn of its own (turn.start to turn.complete; subagent turns excluded).
       turn: { isBusy: boolean }
       // Ids of open questions whose asking session has ended (`list --open` marks them `ended`): their card shows a notice.
@@ -104,14 +106,13 @@ declare module 'claude-code' {
       quiet: boolean
       // The language in use: the stored choice, else the environment's. Set at session start and by /askaway lang.
       lang: 'en' | 'pt'
-      // The question wizard: window key, step (0..total, total = review), picks by question id, the open "Other…"
-      // field and the explanations shown per question.
+      // The question wizard: window key, step (0..total, total = review), picks by question id and the open "Other…"
+      // field.
       wizard: {
         windowKey: string | null
         step: number
         picks: Record<string, { key: string; text?: string }>
         other: { id: string; text: string } | null
-        expanded: Record<string, boolean>
       }
     }
   }

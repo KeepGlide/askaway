@@ -1,4 +1,5 @@
-// The Askaway palette. The pane takes the theme's own text colours and background: no fill and no box of its own. The
+// The Askaway palette. The pane takes the theme's own text colours and background: no fill of its own. The details block of
+// a card is its one boxed part (a rounded border, no fill). The
 // accent is never a text colour: it marks only the status mark (✓, ⏳, ⚠️), a non-text mark that needs 3:1 (WCAG 2.2
 // 1.4.11). The terminal logo glyph (logo-element.tsx) still draws it as text.
 // Measured WCAG 2.x contrast, before (#1E40AF) and after (#3566C8):
