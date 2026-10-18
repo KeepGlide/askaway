@@ -42,6 +42,7 @@ export type Answer = {
   ts: number
   text?: string
   session?: string
+  who?: string
 }
 
 // d/<id>.json: the delivery marker. `expired` is true when no session can read the answer; `reason` says why.

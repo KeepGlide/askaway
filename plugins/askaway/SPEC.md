@@ -58,8 +58,9 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   env `ASKAWAY_WHO` when it holds a name, else the OS user name (`getpass.getuser()`), else `unknown`. The name is
   trimmed, its control characters become spaces, and it is capped at 40 characters (the last one `…`); a blank
   `ASKAWAY_WHO` falls back to the OS user name. First writer wins, so the first answer's `who` stays.
-  A record without `who` (written before it existed, or by the panel, which does not stamp it yet) reads fine:
-  `status` and `list` then show no `who` for it.
+  The panel stamps `who` the same way, reading `ASKAWAY_WHO`, then `LOGNAME`, `USER`, `LNAME` and `USERNAME`
+  (it cannot query the account database, so `unknown` when none is set). A record without `who` (written before
+  it existed) reads fine: `status` and `list` then show no `who` for it.
   `session` is the session the answer is bound to: for `by: cli` the caller's `CLAUDE_CODE_SESSION_ID`
   (or the question's session when the caller has none); for a panel answer the question's own session.
   Free text carries key `"other"` and the text in `text`: `{"id":"...","key":"other","text":"Use a fork","by":"panel","session":"<session>","ts":<ms>}`.

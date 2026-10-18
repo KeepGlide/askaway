@@ -6,6 +6,7 @@ import {
   ageLabel,
   counterText,
   deliveryLine,
+  answerWho,
   footerText,
   groupBySession,
   leadOf,
@@ -644,6 +645,26 @@ test('a second press on another option replaces the pick; the answer is written 
   await ui.unmount()
 })
 
+test('a panel answer stamps who from ASKAWAY_WHO when it is set', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files, true, {}, {}, { ASKAWAY_WHO: '  Ana\tSilva  ' })
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
+  await ui.press({ key: 'submit-all' })
+  expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ by: 'panel', who: 'Ana Silva' })
+})
+
+test('a panel answer stamps who from the OS user name when ASKAWAY_WHO is not set', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files, true, {}, {}, { USER: 'jdoe' })
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
+  await ui.press({ key: 'submit-all' })
+  expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ by: 'panel', who: 'jdoe' })
+})
+
 test('a click picks and advances; Submit all on the last question writes every answer of the window in one go', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
@@ -1140,6 +1161,34 @@ test('an option with fit null draws its tradeoff and no fit, and an option with 
   expect(row).toBeDefined()
   expect(nodesOf(row).some(node => (node.props as Record<string, unknown> | undefined)?.paddingLeft === 1)).toBe(false)
   await ui.unmount()
+})
+
+test('model: parseAnswer reads the who an answer carries, and a record without one parses equal to the same record', () => {
+  expect(parseAnswer({ id: 'q-m-000001', key: 'A', by: 'panel', ts: 5, who: 'Ana' }, 'q-m-000001')?.who).toBe('Ana')
+  expect(parseAnswer({ id: 'q-m-000001', key: 'A', by: 'panel', ts: 5, who: '' }, 'q-m-000001')?.who).toBeUndefined()
+  expect(parseAnswer({ id: 'q-m-000001', key: 'A', by: 'panel', ts: 5, who: 7 }, 'q-m-000001')?.who).toBeUndefined()
+  const old = parseAnswer({ id: 'q-m-000001', key: 'A', by: 'panel', ts: 5 }, 'q-m-000001')
+  expect(old).toEqual({ id: 'q-m-000001', key: 'A', by: 'panel', ts: 5 })
+  const written: Answer = { id: 'q-m-000001', key: 'A', by: 'panel', ts: 5, who: 'Ana' }
+  expect(parseAnswer(JSON.parse(JSON.stringify(written)), 'q-m-000001')).toEqual(written)
+})
+
+test('model: answerWho is ASKAWAY_WHO when it holds a name, else the OS user name, else unknown', () => {
+  expect(answerWho('Ana', 'jdoe')).toBe('Ana')
+  expect(answerWho(undefined, 'jdoe')).toBe('jdoe')
+  expect(answerWho('  \t ', 'jdoe')).toBe('jdoe')
+  expect(answerWho(undefined, undefined)).toBe('unknown')
+  expect(answerWho('', ' \n ')).toBe('unknown')
+})
+
+test('model: answerWho trims, turns control characters into spaces, and caps at 40 characters with an ellipsis', () => {
+  expect(answerWho('  Ana\tSilva\nLima  ', undefined)).toBe('Ana Silva Lima')
+  expect(answerWho('a\u0007b\u009bc', undefined)).toBe('a b c')
+  const forty = 'x'.repeat(40)
+  expect(answerWho(forty, undefined)).toBe(forty)
+  expect(answerWho(`${forty}y`, undefined)).toBe(`${'x'.repeat(39)}…`)
+  // Characters are code points, as in askaway.py: an emoji counts as one.
+  expect([...answerWho('😀'.repeat(45), undefined)]).toHaveLength(40)
 })
 
 test('model: piecesOf draws a slash command as a name and leaves the rest of the text plain', () => {

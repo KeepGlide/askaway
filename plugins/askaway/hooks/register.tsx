@@ -13,6 +13,7 @@ import {
   EMPTY_BOARD,
   OTHER_KEY,
   ageLabel,
+  answerWho,
   footerText,
   groupBySession,
   isOpenIn,
@@ -345,10 +346,21 @@ async function writeAnswer($: EngineInterface, home: string, id: string, key: st
     if (existing !== undefined) await update($, board, prev => withAnswer(prev, existing))
     return false
   }
-  const answer: Answer = { id, key, by: 'panel', ts: pressedAt, text }
+  const answer: Answer = { id, key, by: 'panel', ts: pressedAt, text, who: await currentWho($) }
   await $.fs.write(path, `${JSON.stringify(answer)}\n`)
   await update($, board, prev => withAnswer(prev, answer))
   return true
+}
+
+// The who the panel stamps on its answers: ASKAWAY_WHO, else the OS user name as Python's getpass reads it (LOGNAME, USER,
+// LNAME, USERNAME: the first one set), else "unknown". The engine wants each env name as a literal, so they are read one by one.
+async function currentWho($: EngineInterface): Promise<string> {
+  const osUser =
+    (await $.env.get('LOGNAME')) ||
+    (await $.env.get('USER')) ||
+    (await $.env.get('LNAME')) ||
+    (await $.env.get('USERNAME'))
+  return answerWho(await $.env.get('ASKAWAY_WHO'), osUser)
 }
 
 // Marks the card as leaving and, FADE_MS later on the engine clock, lets it go.

@@ -96,15 +96,33 @@ export function parseQuestion(raw: unknown, id: string): Question | undefined {
   }
 }
 
-// An answer as askaway.py writes it: `session` is the session the answer is bound to (SPEC.md). Absent (undefined, like
-// `text`) when the file has none, so an answer this mod wrote itself compares equal to the file it wrote.
+// An answer as askaway.py writes it: `session` is the session the answer is bound to, `who` the person (SPEC.md). Absent
+// (undefined, like `text`) when the file has none, so an answer this mod wrote itself compares equal to the file it wrote.
 
 export function parseAnswer(raw: unknown, id: string): Answer | undefined {
   if (!isRecord(raw) || raw.id !== id || typeof raw.key !== 'string' || typeof raw.ts !== 'number') return undefined
   const by = ANSWER_BY.find(name => name === raw.by)
   if (by === undefined) return undefined
   const session = typeof raw.session === 'string' ? raw.session : undefined
-  return { id, key: raw.key, by, ts: raw.ts, text: raw.key === OTHER_KEY ? optionalText(raw.text) : undefined, session }
+  const who = typeof raw.who === 'string' && raw.who !== '' ? raw.who : undefined
+  return { id, key: raw.key, by, ts: raw.ts, text: raw.key === OTHER_KEY ? optionalText(raw.text) : undefined, session, who }
+}
+
+// The name an answer record carries (askaway.py's WHO_MAX and CONTROL_CHARS): at most WHO_MAX characters, the last one an
+// ellipsis, and control characters become spaces.
+const WHO_MAX = 40
+const UNKNOWN_WHO = 'unknown'
+
+function whoText(raw: string | undefined): string | undefined {
+  const flat = (raw ?? '').replace(/\p{Cc}/gu, ' ').trim().replace(/\s+/g, ' ')
+  if (flat === '') return undefined
+  const chars = [...flat]
+  return chars.length <= WHO_MAX ? flat : `${chars.slice(0, WHO_MAX - 1).join('')}…`
+}
+
+// The who of an answer (askaway.py's answerer_name): ASKAWAY_WHO when it holds a name, else the OS user name, else "unknown".
+export function answerWho(askawayWho: string | undefined, osUser: string | undefined): string {
+  return whoText(askawayWho) ?? whoText(osUser) ?? UNKNOWN_WHO
 }
 
 export function parseDelivery(raw: unknown, id: string): Delivery | undefined {
