@@ -41,7 +41,8 @@ Write each question in this order. The reader has not seen the conversation.
 6. **Recommendation** (`recommended`): the key of the option you continue with.
    Then `why` (the reasoning, one or two sentences), `how` (how it works), `gains`
    and `losses` (what the user gets and gives up), `urgency` (why now: when the
-   answer is due, or `Can wait`) and `undo` (what reversing costs).
+   answer is due, or `Can wait`), `urgency_level` (optional: `low`, `medium` or
+   `high`, the colour grade of the Urgency line) and `undo` (what reversing costs).
 
 ## Fields
 
@@ -58,6 +59,7 @@ The CLI refuses longer text as `too long (n/limit)` and names the field, so keep
 | `why`, `how` | yes | 300, 400 | One or two sentences each. |
 | `gains`, `losses` | yes | 300 | One or two sentences each. |
 | `urgency` | yes | 300 | `Blocks in ~8 min` or `Can wait`. |
+| `urgency_level` | no | | `low`, `medium` or `high`: the colour grade of the Urgency line (green, orange, red). When absent, the card grades `urgency` by keywords, so agents should set it. |
 | `undo` | yes | 300 | For example `changing later ≈ 10 min`. |
 | `recommended` | yes | | One of the option keys. |
 | `risk` | yes | | `low`, `medium` or `high`. |
@@ -126,6 +128,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{
   "gains": "The install works without admin rights, and the installer matches the spec again.",
   "losses": "Each Windows account gets its own copy, so an update has to reach every profile on a shared PC.",
   "urgency": "Can wait for the next release",
+  "urgency_level": "low",
   "undo": "changing later ≈ 2 h, installer and one test",
   "risk": "low",
   "options": [

@@ -1,6 +1,10 @@
 // The Askaway state folder contract (SPEC.md, "State folder"). The CLI writes questions and delivery
 // markers; this mod reads them and writes answers only. Field names follow the spec.
 
+// The urgency grade of a question's Urgency line: its colour (look.ts URGENCY_COLOR). Optional in q/<id>.json; absent, the
+// grade is read from the words of `urgency` (model.ts urgencyGradeOf).
+export type UrgencyGrade = 'low' | 'medium' | 'high'
+
 export type AnswerBy = 'panel' | 'accept_recommended' | 'accept_all' | 'cli' | 'agent'
 
 // `tradeoff` is the one-line cost of choosing this option; absent or blank means no tradeoff line. `does` (what happens
@@ -31,6 +35,7 @@ export type Question = {
   gains?: string
   losses?: string
   urgency?: string
+  urgency_level?: UrgencyGrade
   undo?: string
   project: string
   session: string | null
@@ -56,13 +61,15 @@ export type Answer = {
   who?: string
 }
 
-// d/<id>.json: the delivery marker. `expired` is true when no session can read the answer; `reason` says why.
+// d/<id>.json: the delivery marker. `expired` is true when no session can read the answer; `reason` says why. `ts` is when
+// the answer was delivered (the marker written by askaway.py's wait and answer paths); an expired marker carries a ts, which the History line does not show.
 export type DeliveryReason = 'session-ended' | 'ttl'
 
 export type Delivery = {
   id: string
   expired: boolean
   reason?: DeliveryReason
+  ts?: number
 }
 
 // d/<id>.json written by this mod when it hands the answer to its own session's prompt: `via` is "prompt".
@@ -90,7 +97,7 @@ declare module 'claude-code' {
       away: boolean
       tick: number
       seen: { isPrimed: boolean; ids: string[] }
-      // Ids of expired answers whose status line the person dismissed (the plugin's own store keeps them under "cleared").
+      // Ids of answers whose History line the person cleared (delivered, ended or expired lines; the plugin's store keeps them under "cleared").
       cleared: string[]
       // The poll time at which the pane first saw each delivery marker (0 when it was there before the session).
       deliveredAt: Record<string, number>
@@ -106,6 +113,10 @@ declare module 'claude-code' {
       quiet: boolean
       // The language in use: the stored choice, else the environment's. Set at session start and by /askaway lang.
       lang: 'en' | 'pt'
+      // The theme family the details block fills by (look.ts themeFamilyOf): "light" for a theme name starting with
+      // "light", "dark" for one starting with "dark" or no theme row, "unknown" for any other value (auto, custom:<slug>),
+      // which draws no fill. Read from the engine's theme row at session start, and written on each config.set of it.
+      theme: 'dark' | 'light' | 'unknown'
       // The question wizard: window key, step (0..total, total = review), picks by question id and the open "Other…"
       // field.
       wizard: {

@@ -6,24 +6,28 @@ import {
   ageLabel,
   counterText,
   deliveryLine,
+  escapeMarkdown,
   answerWho,
   footerText,
   groupBySession,
   leadOf,
   listText,
   parseAnswer,
+  parseDelivery,
   parseQuestion,
   piecesOf,
   projectLabel,
   riskLabel,
   sectionsOf,
   sessionLabelOf,
-  statusLines,
+  clearableIdsOf,
+  historyOf,
   titleCase,
-  windowOf,
+  urgencyGradeOf,
 } from '../hooks/model'
 import { heldButtons } from '../hooks/held'
-import { ACCENT_COLOR } from '../hooks/look'
+import { renderTreeQuestion } from '../hooks/pane'
+import { ACCENT_COLOR, DETAILS_FILL, LINK_MARK, URGENCY_COLOR, themeFamilyOf } from '../hooks/look'
 import type { Answer, Board } from '../types'
 
 const HOME = '/test-home'
@@ -122,6 +126,7 @@ function stubHost(
   stored: Record<string, unknown> = {},
   holds: Holds = {},
   env: Record<string, string> = {},
+  themeName: string | null = 'dark',
 ) {
   const toasts: string[] = []
   const writes: string[] = []
@@ -135,6 +140,9 @@ function stubHost(
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.id', () => ({ value: SELF }))
+  // A null theme name is an absent theme row: the list has no row at all.
+  on('config.list', () => ({ value: themeName === null ? [] : [{ key: 'theme', label: 'Theme', kind: 'choice', value: themeName }] }))
+  on('config.set', (_$, e) => ({ value: e.value }))
   on('prompt.submit', (_$, e) => {
     submits.push(e.text)
     return { text: e.text }
@@ -232,9 +240,33 @@ const mountPane = ($: Engine, surface: 'terminal' | 'desktop' = 'terminal') =>
 const mountBand = ($: Engine, surface: 'terminal' | 'desktop' = 'terminal') =>
   $.ui.mount({ plugin: 'askaway', surface, component: 'AbovePrompt', props: BAND_PROPS })
 
-// Every Text the pane draws, in order.
+// The text a tree link (a Markdown block) reads as: its markup gone, the link as its label, its escapes undone.
+const plainMarkdown = (markdown: string): string =>
+  markdown.replace(/\*\*/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\\(.)/g, '$1')
+
+// The text of a drawn Text node, its nested strings joined.
+const textOfNode = (node: unknown): string => {
+  if (typeof node === 'string') return node
+  if (typeof node !== 'object' || node === null) return ''
+  const children = (node as Record<string, unknown>).children
+  return Array.isArray(children) ? children.map(textOfNode).join('') : ''
+}
+
+// Every Text the pane draws, in order; a tree link (a Markdown block) reads as its label, with its mark.
 const textsOf = async (ui: Awaited<ReturnType<typeof mountPane>>): Promise<string[]> =>
-  (await ui.findAll({ type: 'Text' })).map(found => found.text)
+  nodesOf(await ui.drawn()).flatMap(node => {
+    if (node.type === 'Text') return [textOfNode(node)]
+    if (node.type === 'Markdown') return [plainMarkdown(String((node.props as Record<string, unknown>).text))]
+    return []
+  })
+
+// The Text the pane draws that contains the fragment. A History line carries its own times, so tests match its words.
+const textNodeWith = async (ui: Awaited<ReturnType<typeof mountPane>>, fragment: string) =>
+  nodesOf(await ui.drawn()).find(node => node.type === 'Text' && textOfNode(node).includes(fragment))
+
+// A tree link is pressed on its href, as a click on its Markdown link does: action is jump or submit, id the question.
+const pressTreeLink = (ui: Awaited<ReturnType<typeof mountPane>>, action: 'jump' | 'submit', id: string) =>
+  ui.press({ key: `tree-${action}-${id}`, link: { href: `file:///askaway/${action}/${id}` } })
 
 // The label a Button is drawn with, by its key; undefined when it is not drawn.
 const labelOf = async (ui: Awaited<ReturnType<typeof mountPane>>, key: string): Promise<unknown> =>
@@ -256,6 +288,38 @@ const parsedQuestion = (id: string, ts: number, extra: Record<string, unknown> =
 }
 const answerOf = (id: string, key: string, ts: number, text?: string): Answer => ({ id, key, by: 'panel', ts, text })
 const NO_STATUS = { cleared: [], shownAt: {}, now: 0, leaving: {} } as const
+
+test('look: themeFamilyOf reads a name starting with light as light, one starting with dark or no row as dark, and auto or custom as unknown', () => {
+  expect(themeFamilyOf('light')).toBe('light')
+  expect(themeFamilyOf('light-ansi')).toBe('light')
+  expect(themeFamilyOf('light-daltonized')).toBe('light')
+  expect(themeFamilyOf('dark')).toBe('dark')
+  expect(themeFamilyOf('dark-daltonized')).toBe('dark')
+  expect(themeFamilyOf(undefined)).toBe('dark')
+  expect(themeFamilyOf(null)).toBe('dark')
+  expect(themeFamilyOf('auto')).toBe('unknown')
+  expect(themeFamilyOf('custom:x')).toBe('unknown')
+})
+
+test('model: the urgency grade is the level the file names, else the one its words suggest in English or Portuguese, else low', () => {
+  const grade = (extra: Record<string, unknown>) => urgencyGradeOf(parsedQuestion('q-u-000001', 1000, extra))
+  expect(grade({ urgency: 'Blocks in ~8 min', urgency_level: 'high' })).toBe('high')
+  expect(grade({ urgency: 'Blocks right now', urgency_level: 'medium' })).toBe('medium')
+  expect(grade({ urgency: 'Can wait', urgency_level: 'low' })).toBe('low')
+  expect(grade({ urgency: 'Blocks right now' })).toBe('high')
+  expect(grade({ urgency: 'Blocks today' })).toBe('high')
+  expect(grade({ urgency: 'Needs an answer this week' })).toBe('medium')
+  expect(grade({ urgency: 'Soon, in a few days' })).toBe('medium')
+  expect(grade({ urgency: 'Bloqueia agora' })).toBe('high')
+  expect(grade({ urgency: 'Urgência imediata' })).toBe('high')
+  expect(grade({ urgency: 'Vence em dias' })).toBe('medium')
+  expect(grade({ urgency: 'Prazo na semana que vem' })).toBe('medium')
+  expect(grade({ urgency: 'Pode esperar' })).toBe('low')
+  expect(grade({})).toBe('low')
+  // A level that is not one of the three reads as absent, and the words decide.
+  expect(grade({ urgency: 'Blocks in ~8 min', urgency_level: 'critical' })).toBe('low')
+  expect(URGENCY_COLOR).toEqual({ low: 'success', medium: 'warning', high: 'error' })
+})
 
 test('model: parseQuestion keeps each option tradeoff, and a missing or blank one reads as absent', () => {
   const withTradeoff = parsedQuestion('q-m-000001', 10)
@@ -366,13 +430,6 @@ test('model: the session label is the title-cased session title, or the words fo
   expect(sessionLabelOf(parsedQuestion('q-m-000002', 10), 'pt')).toBe('a sessão')
 })
 
-test('model: the status-line window reads "<Project> · <Session Title>", and drops the session part when there is none', () => {
-  expect(windowOf(parsedQuestion('q-m-000001', 10, { project: '/work/my-sample_project', session_title: 'team decisions' }), 'en')).toBe(
-    'My Sample Project · Team Decisions',
-  )
-  expect(windowOf(parsedQuestion('q-m-000002', 10, { project: '/work/my-sample_project' }), 'en')).toBe('My Sample Project')
-})
-
 test('model: the risk label reads in each language, and an unknown risk keeps its name', () => {
   expect(riskLabel('pt', 'high')).toBe('🛑 risco alto')
   expect(riskLabel('en', 'medium')).toBe('⚠️ medium risk')
@@ -391,30 +448,106 @@ test('model: the age label reads now, minutes, hours and days in both languages'
   expect(ageLabel('pt', 0, 72 * HOUR)).toBe('há 3 d')
 })
 
-test('model: the status lines read in the chosen language, and a session that ended keeps its line', () => {
-  const q = parsedQuestion('q-m-000001', 10)
-  const board: Board = { questions: [q], answers: [answerOf('q-m-000001', 'B', 1)], delivered: [] }
-  expect(statusLines('pt', board, NO_STATUS).map(line => line.text)).toEqual(['Resposta B enviada para App'])
-  expect(statusLines('en', board, NO_STATUS).map(line => line.text)).toEqual(['Answer B sent to App'])
+// Local times, so the clock text reads the same wherever the tests run.
+const localMs = (month: number, day: number, hour: number, minute: number): number =>
+  new Date(2026, month - 1, day, hour, minute).getTime()
+const SAME_DAY_NOW = localMs(10, 17, 15, 0)
 
-  const orphan: Board = { questions: [], answers: [answerOf('q-m-000001', 'B', 1)], delivered: [] }
-  expect(statusLines('pt', orphan, NO_STATUS).map(line => line.text)).toEqual(['Resposta B enviada para a sessão'])
+test('model: the History tree groups answers by family, then session, newest first; an answer whose question is gone falls under "the session"', () => {
+  const first = parsedQuestion('q-h-000001', 10, { family: 'fam-1', family_title: 'app family', session: 's1', session_title: 'build app' })
+  const second = parsedQuestion('q-h-000002', 20, { family: 'fam-1', family_title: 'app family', session: 's2' })
+  const board: Board = {
+    questions: [first, second],
+    answers: [
+      answerOf('q-h-000001', 'A', localMs(10, 17, 14, 32)),
+      answerOf('q-h-000002', 'B', localMs(10, 17, 14, 35)),
+      answerOf('q-h-000009', 'A', localMs(10, 17, 13, 58)),
+    ],
+    delivered: [],
+  }
+  const tree = historyOf('en', board, { ...NO_STATUS, now: SAME_DAY_NOW })
+  expect(tree.map(group => group.label)).toEqual(['App Family', 'the session'])
+  expect(tree[0]?.sessions.map(session => session.label)).toEqual(['the session', 'Build App'])
+  expect(tree[0]?.sessions[0]?.entries.map(entry => entry.line)).toEqual(['Answer B · sent 14:35 · waiting to be read'])
+  expect(tree[0]?.sessions[1]?.entries.map(entry => entry.title)).toEqual(['Title q-h-000001'])
+  expect(tree[1]?.sessions[0]?.entries).toEqual([
+    { id: 'q-h-000009', mark: '⏳', title: 'q-h-000009', line: 'Answer A · sent 13:58 · waiting to be read', clearable: false },
+  ])
+})
 
+test('model: a delivered line reads its delivered time and "read by the session"; another day reads DD/MM HH:MM', () => {
+  const delivered: Board = {
+    questions: [parsedQuestion('q-h-000001', 10)],
+    answers: [answerOf('q-h-000001', 'A', localMs(10, 17, 14, 32))],
+    delivered: [{ id: 'q-h-000001', expired: false, ts: localMs(10, 17, 14, 33) }],
+  }
+  const lineOf = (lang: 'en' | 'pt', now: number, board: Board = delivered): string | undefined =>
+    historyOf(lang, board, { ...NO_STATUS, now })[0]?.sessions[0]?.entries[0]?.line
+  expect(lineOf('en', SAME_DAY_NOW)).toBe('Answer A · sent 14:32 · delivered 14:33 (read by the session)')
+  expect(lineOf('pt', SAME_DAY_NOW)).toBe('Resposta A · enviada 14:32 · entregue 14:33 (lida pela sessão)')
+  expect(lineOf('en', localMs(10, 18, 9, 0))).toBe('Answer A · sent 17/10 14:32 · delivered 17/10 14:33 (read by the session)')
+  const withoutTime: Board = { ...delivered, delivered: [{ id: 'q-h-000001', expired: false }] }
+  expect(lineOf('en', SAME_DAY_NOW, withoutTime)).toBe('Answer A · sent 14:32 · read by the session')
+})
+
+test('model: the Other answer names its letter and its text; an agent or a named CLI answer names who answered, a panel answer names no one', () => {
+  const at = localMs(10, 17, 14, 32)
+  const lineOf = (extra: Partial<Answer>): string | undefined =>
+    historyOf('en', { questions: [parsedQuestion('q-h-000001', 10)], answers: [{ ...answerOf('q-h-000001', 'other', at, '  lavanda  '), ...extra }], delivered: [] }, {
+      ...NO_STATUS,
+      now: SAME_DAY_NOW,
+    })[0]?.sessions[0]?.entries[0]?.line
+  expect(lineOf({})).toBe('Answer C (Other: "lavanda") · sent 14:32 · waiting to be read')
+  expect(lineOf({ key: 'A', by: 'agent' })).toBe('Answer A · answered by agent · sent 14:32 · waiting to be read')
+  expect(lineOf({ key: 'A', by: 'cli', who: 'Ana' })).toBe('Answer A · answered by Ana · sent 14:32 · waiting to be read')
+  expect(lineOf({ key: 'A', by: 'panel', who: 'Ana' })).toBe('Answer A · sent 14:32 · waiting to be read')
+})
+
+test('model: Clear removes only delivered, ended and expired lines; a pending line stays; a delivered line leaves 30 s after the pane first saw it', () => {
+  const board: Board = {
+    questions: [parsedQuestion('q-h-000001', 10), parsedQuestion('q-h-000002', 20), parsedQuestion('q-h-000003', 30)],
+    answers: [answerOf('q-h-000001', 'A', 100), answerOf('q-h-000002', 'B', 200), answerOf('q-h-000003', 'C', 300)],
+    delivered: [
+      { id: 'q-h-000001', expired: false, ts: 150 },
+      { id: 'q-h-000002', expired: true, reason: 'session-ended' },
+    ],
+  }
+  const idsOf = (context: Partial<typeof NO_STATUS>): string[] => {
+    const tree = historyOf('en', board, { ...NO_STATUS, now: 1000, ...context })
+    return tree.flatMap(group => group.sessions.flatMap(session => session.entries.map(entry => entry.id)))
+  }
+  expect(clearableIdsOf(historyOf('en', board, { ...NO_STATUS, now: 1000 }))).toEqual(['q-h-000002', 'q-h-000001'])
+  expect(clearableIdsOf(historyOf('en', board, { ...NO_STATUS, now: 1000, cleared: ['q-h-000002'] }))).toEqual(['q-h-000001'])
+  expect(idsOf({ now: 31_000, shownAt: { 'q-h-000001': 0 } })).toEqual(['q-h-000003', 'q-h-000002'])
+})
+
+test('model: a session that ended keeps its line, marked ⚠️ and clearable, under the family of its project', () => {
   const ended: Board = {
-    questions: [q],
+    questions: [parsedQuestion('q-m-000001', 10)],
     answers: [answerOf('q-m-000001', 'B', 1)],
     delivered: [{ id: 'q-m-000001', expired: true, reason: 'session-ended' }],
   }
-  const [line] = statusLines('en', ended, NO_STATUS)
-  expect(line).toEqual({ id: 'q-m-000001', mark: '⚠️', text: 'App ended before reading answer B', dismissable: true })
+  const [group] = historyOf('en', ended, NO_STATUS)
+  expect(group?.label).toBe('App')
+  expect(group?.sessions[0]?.entries[0]).toMatchObject({ id: 'q-m-000001', mark: '⚠️', title: 'Title q-m-000001', clearable: true })
+  expect(group?.sessions[0]?.entries[0]?.line).toContain('the session ended before reading it')
+  const orphan: Board = { questions: [], answers: [answerOf('q-m-000001', 'B', 1)], delivered: [] }
+  expect(historyOf('pt', orphan, NO_STATUS)[0]?.label).toBe('a sessão')
+  expect(historyOf('pt', orphan, NO_STATUS)[0]?.sessions[0]?.entries[0]?.line).toContain('Resposta B · enviada ')
 })
 
-test('model: an answer unread past the 7-day TTL reads as expired, and one inside the TTL still reads as pending', () => {
+test('model: an answer unread past the 7-day TTL reads as expired and clearable, and one inside the TTL still reads as pending', () => {
   const board: Board = { questions: [parsedQuestion('q-m-000001', 10)], answers: [answerOf('q-m-000001', 'B', 1000)], delivered: [] }
-  expect(statusLines('en', board, { ...NO_STATUS, now: 1000 + ANSWER_TTL_MS }).map(line => line.text)).toEqual(['Answer B sent to App'])
-  expect(statusLines('en', board, { ...NO_STATUS, now: 1000 + ANSWER_TTL_MS + 1 })).toEqual([
-    { id: 'q-m-000001', mark: '⚠️', text: 'Answer B expired unread', dismissable: true },
-  ])
+  const entriesAt = (now: number) =>
+    historyOf('en', board, { ...NO_STATUS, now }).flatMap(group => group.sessions.flatMap(session => session.entries))
+  expect(entriesAt(1000 + ANSWER_TTL_MS).map(entry => entry.mark)).toEqual(['⏳'])
+  expect(entriesAt(1000 + ANSWER_TTL_MS + 1)).toMatchObject([{ id: 'q-m-000001', mark: '⚠️', clearable: true }])
+  expect(entriesAt(1000 + ANSWER_TTL_MS + 1)[0]?.line).toContain('expired unread')
+})
+
+test('model: parseDelivery keeps the ts of a delivery marker, and a marker without one reads with no ts', () => {
+  expect(parseDelivery({ id: 'q-h-000001', session: 's', ts: 42 }, 'q-h-000001')?.ts).toBe(42)
+  expect(parseDelivery({ id: 'q-h-000001', expired: true, reason: 'ttl' }, 'q-h-000001')?.ts).toBeUndefined()
 })
 
 test('model: parseAnswer keeps the session an answer is bound to, and a file without one reads as no session', () => {
@@ -615,7 +748,7 @@ test('model: the due answers group by asking session, and a question with no ses
   expect(groupBySession({ ...board, delivered: [{ id: 'q-m-000002', expired: false }] }, 100_000).map(group => group.session)).toEqual(['s1'])
 })
 
-test('the card is the oldest open question; the other open ones are tree rows; answered, delivered and broken files draw nothing', async ($, on) => {
+test('the card is the oldest open question; the other open ones are tree rows; a broken file draws nothing', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
@@ -634,9 +767,17 @@ test('the card is the oldest open question; the other open ones are tree rows; a
     expect(texts).toContain('Title q-l1-aaaaaa')
     expect(texts).toContain('Which way for q-l1-aaaaaa?')
     // q-l2 is open but not on screen: it is an unpicked row of the tree, and its card is not drawn.
-    expect(texts).toContain('○ Title q-l2-bbbbbb')
+    expect(texts).toContain('○ ▪ Title q-l2-bbbbbb')
     expect(texts).not.toContain('Which way for q-l2-bbbbbb?')
-    expect(texts.some(text => text.includes('q-l3') || text.includes('q-l4') || text.includes('q-l9'))).toBe(false)
+    // The answered (q-l3) and delivered (q-l4) questions draw no card and no tree row: they show as History rows only.
+    expect(texts).not.toContain('Which way for q-l3-cccccc?')
+    expect(texts).not.toContain('Which way for q-l4-dddddd?')
+    expect(texts).not.toContain('○ ▪ Title q-l3-cccccc')
+    expect(texts).not.toContain('○ ▪ Title q-l4-dddddd')
+    const historyRow = nodesOf(await ui.drawn()).find(node => keyOfNode(node) === 'history-q-l3-cccccc')
+    expect(nodesOf(historyRow).some(node => node.type === 'Text' && textOfNode(node) === '⏳')).toBe(true)
+    // The broken file draws nothing.
+    expect(texts.some(text => text.includes('q-l9'))).toBe(false)
     await ui.unmount()
   }
 })
@@ -679,6 +820,19 @@ test('the KeepGlide mark is drawn 24px beside the counter and 28px beside Submit
     }
     await ui.unmount()
   }
+})
+
+test('the Urgency text takes the colour of its grade, its bold title stays in the default colour', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { urgency: 'Blocks in ~8 min', urgency_level: 'high' })]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  const nodes = nodesOf(await ui.drawn())
+  const bodyNode = nodes.find(node => node.type === 'Text' && Array.isArray(node.children) && node.children.includes('Blocks in ~8 min'))
+  expect((bodyNode?.props as Record<string, unknown>).color).toBe('error')
+  const titleNode = nodes.find(node => node.type === 'Text' && Array.isArray(node.children) && node.children.includes('⏱️ Urgency: '))
+  expect((titleNode?.props as Record<string, unknown> | undefined)?.color).toBeUndefined()
+  await ui.unmount()
 })
 
 test('the card draws the risk and age on the title row, and two blank lines before the options', async ($, on) => {
@@ -897,19 +1051,41 @@ test('no 🎯 and no tooltip: the recommended option says "(Recomendada)" in its
   await ui.unmount()
 })
 
-test('each option is one full-width column with its tradeoff under it, headed by its key letter, and Other… is the last one', async ($, on) => {
+test('each option is one full-width column with its tradeoff under it, headed by its key letter, and Other… is the last one, under the next letter', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
   expect(await labelOf(ui, 'opt-q-l1-aaaaaa-B')).toBe('B · Rewrite')
-  expect(await labelOf(ui, 'other-q-l1-aaaaaa')).toBe('3. Outra…')
+  expect(await labelOf(ui, 'other-q-l1-aaaaaa')).toBe('C · Outra…')
   for (const key of ['optrow-q-l1-aaaaaa-A', 'optrow-q-l1-aaaaaa-B']) {
     expect((await ui.find({ type: 'Box', key }))?.props.flexDirection).toBe('column')
   }
   expect(await ui.find({ type: 'Text', text: '└ Cheap · aderência 80' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '└ Slow · aderência 40' })).toBeDefined()
   await ui.unmount()
+})
+
+const startsWithBranch = (node: Record<string, unknown>): boolean => {
+  const [first] = Array.isArray(node.children) ? node.children : []
+  return typeof first === 'object' && first !== null && (first as Record<string, unknown>).type === 'Text' &&
+    Array.isArray((first as Record<string, unknown>).children) && ((first as Record<string, unknown>).children as unknown[])[0] === '└ '
+}
+
+test('the field under Other… starts with the └ branch glyph the option sub-rows draw, at the same one-cell indent, on both surfaces', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    const nodes = nodesOf(await ui.drawn())
+    const optionSubRow = nodes.find(node => node.type === 'Box' && (node.props as Record<string, unknown> | undefined)?.paddingLeft === 1 && nodesOf(node).some(inner => inner.type === 'Text' && Array.isArray(inner.children) && inner.children.includes('└ Cheap · aderência 80')))
+    const fieldRow = nodes.find(node => node.type === 'Box' && startsWithBranch(node) && nodesOf(node).some(inner => inner.type === 'Input'))
+    expect(fieldRow).toBeDefined()
+    expect((fieldRow?.props as Record<string, unknown>).paddingLeft).toBe(1)
+    expect((fieldRow?.props as Record<string, unknown>).paddingLeft).toBe((optionSubRow?.props as Record<string, unknown>).paddingLeft)
+    await ui.unmount()
+  }
 })
 
 test('the question card has one blank line under its nav row: paddingBottom 1, on both surfaces', async ($, on) => {
@@ -967,10 +1143,10 @@ test('a status row has no fill and no border: its mark alone takes the accent, a
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  const expired = 'Resposta A expirou sem ser lida'
-  const pending = 'Resposta B enviada para App'
-  expect((await ui.find({ type: 'Text', text: expired }))?.props).toMatchObject({ dimColor: true })
-  expect((await ui.find({ type: 'Text', text: pending }))?.props).toMatchObject({ dimColor: true })
+  const expired = 'expirou sem ser lida'
+  const pending = 'Resposta B · enviada'
+  expect((await textNodeWith(ui, expired))?.props).toMatchObject({ dimColor: true })
+  expect((await textNodeWith(ui, pending))?.props).toMatchObject({ dimColor: true })
   expect((await ui.find({ type: 'Text', text: '⏳' }))?.props.color).toBe(ACCENT_COLOR)
   expect((await ui.find({ type: 'Text', text: '⚠️' }))?.props.color).toBe(ACCENT_COLOR)
   // No node of the pane is filled: the status rows and the explanation sections sit on the card's own background. The only box is the details block's round border.
@@ -1102,9 +1278,9 @@ test('the card draws the details right after the explanation before the question
   expect(undoLine).toBeGreaterThan(whyLine)
   expect(gainsLine).toBeGreaterThan(undoLine)
   expect(lossesLine).toBeGreaterThan(gainsLine)
-  // The details sit before the question, and Urgency comes after it.
+  // The details sit before the question; Urgency sits above the explanation, under the title.
+  expect(urgencyLine).toBeLessThan(questionLine)
   expect(questionLine).toBeGreaterThan(lossesLine)
-  expect(urgencyLine).toBeGreaterThan(questionLine)
   await ui.unmount()
 })
 
@@ -1360,12 +1536,12 @@ test('a pending answer shows "enviada", then "entregue" for 30 seconds after the
   const { clock } = stubHost(on, files)
   await $.session.start(SESSION)
   let ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: 'Resposta B enviada para App' })).toBeDefined()
+  expect(await textNodeWith(ui, 'Resposta B · enviada')).toBeDefined()
   await ui.unmount()
   files.set(path('d', 'q-l1-aaaaaa'), delivery('q-l1-aaaaaa'))
   await clock.advance(5000)
   ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: 'Resposta B entregue para App (lida pela sessão)' })).toBeDefined()
+  expect(await textNodeWith(ui, 'lida pela sessão')).toBeDefined()
   await ui.unmount()
   // This 36 s advance runs a poll every 5 s; the last one lands 35 s after the first sighting, past the 30 s the line stays for.
   await clock.advance(36_000)
@@ -1385,7 +1561,7 @@ test('a delivered line is still drawn about 25 seconds after the first sighting,
   await clock.advance(5000) // the poll at 5 s is the first sighting
   await clock.advance(25_000) // the poll at 30 s: 25 s on screen
   let ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: 'Resposta B entregue para App (lida pela sessão)' })).toBeDefined()
+  expect(await textNodeWith(ui, 'lida pela sessão')).toBeDefined()
   await ui.unmount()
   await clock.advance(10_000) // the poll at 40 s: 35 s on screen
   ui = await mountPane($)
@@ -1416,11 +1592,11 @@ test('an expired answer with no reason reads as expired unread', async ($, on) =
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: 'Resposta B expirou sem ser lida' })).toBeDefined()
+  expect(await textNodeWith(ui, 'expirou sem ser lida')).toBeDefined()
   await ui.unmount()
 })
 
-test('an answer unread past the 7-day TTL expires with no marker, and its line is dismissable', async ($, on) => {
+test('an answer unread past the 7-day TTL expires with no marker, and its line can be cleared', async ($, on) => {
   // Stamped more than the TTL before the clock's start, so the pane sees it expired at once (no long clock advance).
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
@@ -1429,8 +1605,8 @@ test('an answer unread past the 7-day TTL expires with no marker, and its line i
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: 'Resposta B expirou sem ser lida' })).toBeDefined()
-  expect(await ui.find({ type: 'Button', key: 'dismiss-q-l1-aaaaaa' })).toBeDefined()
+  expect(await textNodeWith(ui, 'expirou sem ser lida')).toBeDefined()
+  expect(await ui.find({ type: 'Markdown', key: 'history-clear' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -1502,10 +1678,11 @@ test('the card has no details toggle and no e hotkey: every section is drawn at 
   expect(at('Analogy N')).toBeLessThan(at('Reason R'))
   expect(at('Reason R')).toBeLessThan(at('Context C'))
   expect(at('Context C')).toBeLessThan(at('Which way for q-f1-aaaaaa?'))
-  expect(at('Which way for q-f1-aaaaaa?')).toBeLessThan(at('Blocks soon'))
-  // The details block's border is the theme key "subtle", so it follows light and dark; no other node sets a border colour.
+  expect(at('Blocks soon')).toBeLessThan(at('What W'))
+  expect(at('Which way for q-f1-aaaaaa?')).toBeGreaterThan(at('Context C'))
+  // The details block has no border: its fill alone sets it apart, so no node draws a border colour.
   const bordered = nodesOf(await ui.drawn()).filter(node => (node.props as Record<string, unknown> | undefined)?.borderColor !== undefined)
-  expect(bordered.map(node => (node.props as Record<string, unknown>).borderColor)).toEqual(['subtle'])
+  expect(bordered).toEqual([])
   // The second question draws the same sections, reached by Next.
   await ui.press({ key: 'nav-next' })
   texts = await textsOf(ui)
@@ -1516,6 +1693,62 @@ test('the card has no details toggle and no e hotkey: every section is drawn at 
 
 
 
+const detailsFillOf = async (ui: Awaited<ReturnType<typeof mountPane>>): Promise<unknown> =>
+  (await ui.find({ type: 'Box', key: 'details-q-l1-aaaaaa' }))?.props.backgroundColor
+
+test('the details fill follows the theme family: #EEEDE9 under a light theme, #282828 under a dark one, and a theme change redraws it', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, FULL_CARD)]])
+  stubHost(on, files, true, {}, {}, {}, 'light-ansi')
+  await $.session.start(SESSION)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    expect(await detailsFillOf(ui)).toBe(DETAILS_FILL.light)
+    await ui.unmount()
+  }
+  const ui = await mountPane($)
+  await $.config.set({ key: 'theme', value: 'dark-daltonized' })
+  expect(await detailsFillOf(ui)).toBe(DETAILS_FILL.dark)
+  await $.config.set({ key: 'theme', value: 'light' })
+  expect(await detailsFillOf(ui)).toBe(DETAILS_FILL.light)
+  await ui.unmount()
+})
+
+const detailsPropsOf = async (ui: Awaited<ReturnType<typeof mountPane>>) =>
+  (await ui.find({ type: 'Box', key: 'details-q-l1-aaaaaa' }))?.props
+
+test('the details block carries no backgroundColor under auto, so the engine theme shows through', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, FULL_CARD)]])
+  stubHost(on, files, true, {}, {}, {}, 'auto')
+  await $.session.start(SESSION)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    expect(await detailsPropsOf(ui)).not.toHaveProperty('backgroundColor')
+    await ui.unmount()
+  }
+})
+
+test('the details fill is the dark one when the theme row is absent', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, FULL_CARD)]])
+  stubHost(on, files, true, {}, {}, {}, null)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(await detailsFillOf(ui)).toBe(DETAILS_FILL.dark)
+  await ui.unmount()
+})
+
+test('a config.set to a custom theme drops the details fill, and a dark theme brings it back', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, FULL_CARD)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(await detailsFillOf(ui)).toBe(DETAILS_FILL.dark)
+  await $.config.set({ key: 'theme', value: 'custom:x' })
+  expect(await detailsPropsOf(ui)).not.toHaveProperty('backgroundColor')
+  await $.config.set({ key: 'theme', value: 'dark' })
+  expect(await detailsFillOf(ui)).toBe(DETAILS_FILL.dark)
+  await ui.unmount()
+})
+
 test('a legacy answer written by accept_recommended reads as a normal status line', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
@@ -1524,12 +1757,12 @@ test('a legacy answer written by accept_recommended reads as a normal status lin
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: 'Resposta A enviada para App' })).toBeDefined()
+  expect(await textNodeWith(ui, 'Resposta A · enviada')).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Which way for q-l1-aaaaaa?' })).toBeUndefined()
   await ui.unmount()
 })
 
-test('an expired answer whose session ended stays until the person dismisses it, and the dismiss writes no state file', async ($, on) => {
+test('an expired answer whose session ended stays until the person clears it, and the clear writes no state file', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session_title: 'Spec-49 follow-ups' })],
     [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B')],
@@ -1537,17 +1770,17 @@ test('an expired answer whose session ended stays until the person dismisses it,
   ])
   const { writes, clock } = stubHost(on, files)
   await $.session.start(SESSION)
-  const warning = 'App · Spec-49 Follow-ups encerrou antes de ler a resposta B'
+  const warning = 'a sessão encerrou antes de ler'
   await clock.advance(60_000)
   const ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: warning })).toBeDefined()
-  await ui.press({ key: 'dismiss-q-l1-aaaaaa' })
-  expect(await ui.find({ type: 'Text', text: warning })).toBeUndefined()
+  expect(await textNodeWith(ui, warning)).toBeDefined()
+  await ui.press({ key: 'history-clear', link: { href: 'file:///askaway/clear' } })
+  expect(await textNodeWith(ui, warning)).toBeUndefined()
   expect(writes).toEqual([])
   await ui.unmount()
 })
 
-test('a line dismissed before a restart stays hidden after it', async ($, on) => {
+test('a line cleared before a restart stays hidden after it', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B')],
@@ -1556,7 +1789,7 @@ test('a line dismissed before a restart stays hidden after it', async ($, on) =>
   stubHost(on, files, true, { cleared: ['q-l1-aaaaaa'] })
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: 'Resposta B expirou sem ser lida' })).toBeUndefined()
+  expect(await textNodeWith(ui, 'expirou sem ser lida')).toBeUndefined()
   await ui.unmount()
 })
 
@@ -1601,7 +1834,7 @@ test('a legacy answer with key other and its free text still gives a status line
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: 'Resposta other enviada para App' })).toBeDefined()
+  expect(await textNodeWith(ui, 'Resposta C (Outra: "Use a fork")')).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Which way for q-l1-aaaaaa?' })).toBeUndefined()
   await ui.unmount()
 })
@@ -1770,7 +2003,7 @@ test('a poll that read the answer folder before a press keeps the press answer',
   await clock.advance(1000)
   const texts = await textsOf(ui)
   expect(texts).not.toContain('Which way for q-l1-aaaaaa?')
-  expect(texts).toContain('Resposta B enviada para App')
+  expect(texts).toContainEqual(expect.stringContaining('Resposta B · enviada'))
   await ui.unmount()
 })
 
@@ -1786,7 +2019,7 @@ test('Submit all on a question another writer already answered takes that answer
   await clock.advance(250)
   const texts = await textsOf(ui)
   expect(texts).not.toContain('Which way for q-l1-aaaaaa?')
-  expect(texts).toContain('Resposta A enviada para App')
+  expect(texts).toContainEqual(expect.stringContaining('Resposta A · enviada'))
   await ui.unmount()
 })
 
@@ -1800,6 +2033,8 @@ test('Other… takes a free-text answer through the same answer path, and blank 
   const field = await ui.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa' })
   expect(field?.props).not.toHaveProperty('autoFocus')
   expect(field?.props).not.toHaveProperty('value')
+  // No label in front of the field: only its placeholder is drawn.
+  expect(field?.props).not.toHaveProperty('label')
   // The Other link only focuses that field and records nothing. The harness grants no ui.focus, so the focus request itself
   // is not observable here: the press is checked by what it leaves in place.
   await ui.press({ key: 'other-q-l1-aaaaaa' })
@@ -1814,7 +2049,7 @@ test('Other… takes a free-text answer through the same answer path, and blank 
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa')])
   expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ id: 'q-l1-aaaaaa', key: 'other', by: 'panel', text: 'Use a fork' })
   await clock.advance(250)
-  expect(await textsOf(ui)).toContain('Resposta other enviada para App')
+  expect(await textsOf(ui)).toContainEqual(expect.stringContaining('Resposta C (Outra: "Use a fork")'))
   await ui.unmount()
 })
 
@@ -1865,7 +2100,7 @@ test('a question with no title is named in the tree and on the card by its text,
   const ui = await mountPane($)
   // 25 characters: the first 23 and an ellipsis, 24 in all. The tree row carries the mark in front of it.
   expect(await textsOf(ui)).toContain('Cache it on the disk no…')
-  expect(await textsOf(ui)).toContain('● Cache it on the disk no…')
+  expect(await textsOf(ui)).toContain('● ▪ Cache it on the disk no…')
   await ui.press({ key: 'nav-next' })
   // 24 characters and a blank title: the text is whole.
   expect(await textsOf(ui)).toContain('Cache it on the disk now')
@@ -1896,7 +2131,7 @@ test('three polls with nothing new write no atom the pane draws from, so the pan
   await ui.unmount()
 })
 
-test('an Other… answer stays on its button: primary, with its text drawn under it, also after going back', async ($, on) => {
+test('an Other… answer keeps its link bold, with no echo of the typed text under it, also after going back', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
@@ -1911,7 +2146,7 @@ test('an Other… answer stays on its button: primary, with its text drawn under
   expect(await textsOf(ui)).toContain('Title q-l1-aaaaaa')
   expect(await ui.find({ type: 'Button', key: 'other-q-l1-aaaaaa' })).toMatchObject({ props: { plain: true } })
   expect(JSON.stringify(await ui.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).toContain('"underline":true')
-  expect(await textsOf(ui)).toContain('Use a fork')
+  expect(await textsOf(ui)).not.toContain('Use a fork')
   await ui.unmount()
 })
 
@@ -2143,7 +2378,7 @@ test('a group answered from outside while another is open: the pane shows the fi
   await ui.unmount()
 })
 
-test('hotkeys: each option its key letter, Other the next digit, then z, x and w on the terminal and p, f and w on the desktop; none once the Other field holds typed text', async ($, on) => {
+test('hotkeys: each option its key letter, Other the next letter c, then z, x and w on the terminal and p, f and w on the desktop; none once the Other field holds typed text', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
@@ -2154,7 +2389,7 @@ test('hotkeys: each option its key letter, Other the next digit, then z, x and w
   const hotkeyOf = async (key: string): Promise<unknown> => (await ui.find({ type: 'Button', key }))?.props.hotkey
   expect(await hotkeyOf('opt-q-l1-aaaaaa-A')).toBe('a')
   expect(await hotkeyOf('opt-q-l1-aaaaaa-B')).toBe('b')
-  expect(await hotkeyOf('other-q-l1-aaaaaa')).toBe('3')
+  expect(await hotkeyOf('other-q-l1-aaaaaa')).toBe('c')
   expect(await hotkeyOf('nav-back')).toBe('z')
   expect(await hotkeyOf('nav-next')).toBe('x')
   await ui.press({ key: 'nav-next' })
@@ -2175,7 +2410,7 @@ test('hotkeys: each option its key letter, Other the next digit, then z, x and w
   const desk = await mountPane($, 'desktop')
   const deskHotkey = async (key: string): Promise<unknown> => (await desk.find({ type: 'Button', key }))?.props.hotkey
   expect(await deskHotkey('opt-q-l1-aaaaaa-A')).toBe('a')
-  expect(await deskHotkey('other-q-l1-aaaaaa')).toBe('3')
+  expect(await deskHotkey('other-q-l1-aaaaaa')).toBe('c')
   expect(await deskHotkey('nav-back')).toBe('p')
   expect(await deskHotkey('nav-next')).toBe('f')
   await desk.press({ key: 'nav-next' })
@@ -2183,6 +2418,20 @@ test('hotkeys: each option its key letter, Other the next digit, then z, x and w
   await desk.press({ key: 'nav-back' })
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'o', kind: 'change' })
   for (const button of await desk.findAll({ type: 'Button' })) expect(button.props.hotkey).toBeUndefined()
+  await desk.unmount()
+})
+
+test('Other… takes the letter after the last option, and the desktop keys skip the letters options and Other use: with options A to O, Other is P, F and P are skipped, Back takes w and Submit all x', async ($, on) => {
+  const options = Array.from({ length: 15 }, (_, index) => ({ key: String.fromCharCode(65 + index), label: `Option ${index}`, tradeoff: 'cheap', fit: 50 }))
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { options })]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const desk = await mountPane($, 'desktop')
+  const deskHotkey = async (key: string): Promise<unknown> => (await desk.find({ type: 'Button', key }))?.props.hotkey
+  expect(await labelOf(desk, 'other-q-l1-aaaaaa')).toBe('P · Outra…')
+  expect(await deskHotkey('other-q-l1-aaaaaa')).toBe('p')
+  expect(await deskHotkey('nav-back')).toBe('w')
+  expect(await deskHotkey('submit-all')).toBe('x')
   await desk.unmount()
 })
 
@@ -2312,9 +2561,9 @@ test('the tree draws the group row in bold, each session with ├ or └, and on
   expect(texts).toContain('├ Monta a Consulta')
   expect(texts).toContain('└ a sessão')
   // The question on screen is ● and bold; the others are ○.
-  expect(await ui.find({ type: 'Text', text: '│  ● Title q-l1-aaaaaa' })).toMatchObject({ props: { bold: true } })
-  expect(texts).toContain('│  ○ Title q-l2-bbbbbb')
-  expect(texts).toContain('○ Title q-l3-cccccc')
+  expect((await ui.find({ type: 'Markdown', key: 'tree-jump-q-l1-aaaaaa' }))?.props.text).toBe('│  ● ▪ **[Title q-l1-aaaaaa](file:///askaway/jump/q-l1-aaaaaa)**')
+  expect(texts).toContain('│  ○ ▪ Title q-l2-bbbbbb')
+  expect(texts).toContain('○ ▪ Title q-l3-cccccc')
   await ui.unmount()
 })
 
@@ -2324,17 +2573,18 @@ test('after a pick the ● moves to the next question, and the picked row shows 
   const ui = await mountPane($)
   await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
   const texts = await textsOf(ui)
-  expect(texts).toContain('│  ○ Title q-l1-aaaaaa')
+  expect(texts).toContain('│  ○ ▪ Title q-l1-aaaaaa')
   expect(texts).toContain(' ✓ - ')
-  expect(texts.indexOf(' ✓ - ')).toBeGreaterThan(texts.indexOf('│  ○ Title q-l1-aaaaaa'))
-  expect(texts).toContain('│  ● Title q-l2-bbbbbb')
-  expect(texts).not.toContain('│  ○ Title q-l2-bbbbbb')
-  expect(await ui.find({ type: 'Text', text: '│  ● Title q-l2-bbbbbb' })).toMatchObject({ props: { bold: true } })
+  expect(texts.indexOf(' ✓ - ')).toBeGreaterThan(texts.indexOf('│  ○ ▪ Title q-l1-aaaaaa'))
+  expect(texts).toContain('│  ● ▪ Title q-l2-bbbbbb')
+  expect(texts).not.toContain('│  ○ ▪ Title q-l2-bbbbbb')
+  expect((await ui.find({ type: 'Markdown', key: 'tree-jump-q-l2-bbbbbb' }))?.props.text).toBe('│  ● ▪ **[Title q-l2-bbbbbb](file:///askaway/jump/q-l2-bbbbbb)**')
   // Only the picked row has its own Submit.
-  expect(await ui.find({ type: 'Button', key: 'tree-submit-q-l1-aaaaaa' })).toMatchObject({ props: { plain: true } })
-  expect(await ui.find({ type: 'Button', key: 'tree-submit-q-l2-bbbbbb' })).toBeUndefined()
+  // The question row and its Submit are links the plugin answers, and only their own hrefs.
+  expect(await ui.find({ type: 'Markdown', key: 'tree-jump-q-l1-aaaaaa' })).toMatchObject({ props: { pressableLinks: ['file:///askaway/jump/q-l1-aaaaaa'] } })
+  expect(await ui.find({ type: 'Markdown', key: 'tree-submit-q-l2-bbbbbb' })).toBeUndefined()
   // The row's own Submit reads "Enviar resposta" in pt-BR ("Submit Answer" in English), never a bare Submit.
-  expect(await labelOf(ui, 'tree-submit-q-l1-aaaaaa')).toBe('Enviar resposta')
+  expect((await ui.find({ type: 'Markdown', key: 'tree-submit-q-l1-aaaaaa' }))?.props.text).toBe('▪ [Enviar resposta](file:///askaway/submit/q-l1-aaaaaa)')
   await ui.unmount()
 })
 
@@ -2345,14 +2595,14 @@ test('a row Submit answers that question alone and removes its row; the other pi
   await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
   await ui.press({ key: 'opt-q-l2-bbbbbb-A' })
   expect(writes).toEqual([])
-  await ui.press({ key: 'tree-submit-q-l1-aaaaaa' })
+  await pressTreeLink(ui, 'submit', 'q-l1-aaaaaa')
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa')])
   await clock.advance(250)
-  expect((await textsOf(ui)).some(text => text.includes('q-l1-aaaaaa'))).toBe(false)
+  expect(await ui.find({ type: 'Markdown', key: 'tree-jump-q-l1-aaaaaa' })).toBeUndefined()
   // The second question keeps its pick and its own Submit.
-  expect(await ui.find({ type: 'Button', key: 'tree-submit-q-l2-bbbbbb' })).toBeDefined()
+  expect(await ui.find({ type: 'Markdown', key: 'tree-submit-q-l2-bbbbbb' })).toBeDefined()
   // Submit all still answers the rest of the group.
-  await ui.press({ key: 'tree-jump-q-l3-cccccc' })
+  await pressTreeLink(ui, 'jump', 'q-l3-cccccc')
   await ui.press({ key: 'opt-q-l3-cccccc-A' })
   await ui.press({ key: 'submit-all' })
   // Each answer is written once; the order of the rest follows the group, so the three are compared as a set.
@@ -2370,22 +2620,92 @@ test('a question row under the last session is indented 4, and one under another
   await ui.unmount()
 })
 
-test('a question row of the tree is a plain Button: its press puts that question on the card, with no details toggle', async ($, on) => {
+test('a question row of the tree is a link: its press puts that question on the card, with no details toggle', async ($, on) => {
   // q-l3 has its details block drawn (Why) and no toggle; its row press puts the card on screen.
   const files = treeFiles()
   files.set(path('q', 'q-l3-cccccc'), question('q-l3-cccccc', 2000, { session: 's2', why: 'Reason R' }))
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await ui.find({ type: 'Button', key: 'tree-jump-q-l3-cccccc' })).toMatchObject({ props: { plain: true } })
-  await ui.press({ key: 'tree-jump-q-l3-cccccc' })
+  expect(await ui.find({ type: 'Markdown', key: 'tree-jump-q-l3-cccccc' })).toMatchObject({ props: { pressableLinks: ['file:///askaway/jump/q-l3-cccccc'] } })
+  await pressTreeLink(ui, 'jump', 'q-l3-cccccc')
   // The card is now the question of the row, bold in the tree, and the first question's card is gone.
   const texts = await textsOf(ui)
   expect(texts).toContain('Which way for q-l3-cccccc?')
   expect(texts).not.toContain('Which way for q-l1-aaaaaa?')
-  expect(await ui.find({ type: 'Text', text: '● Title q-l3-cccccc' })).toMatchObject({ props: { bold: true } })
+  expect((await ui.find({ type: 'Markdown', key: 'tree-jump-q-l3-cccccc' }))?.props.text).toBe('● ▪ **[Title q-l3-cccccc](file:///askaway/jump/q-l3-cccccc)**')
   expect(await ui.find({ type: 'Button', key: 'details-q-l3-cccccc' })).toBeUndefined()
   await ui.unmount()
+})
+
+// A stand-in for an engine constructor: the element it draws is its tag and its props, children among them.
+type FakeElement = { tag: string; props: Record<string, unknown> }
+const fakeElement = (tag: string) => (props: Record<string, unknown>): FakeElement => ({ tag, props })
+const childrenOf = (element: FakeElement | undefined): FakeElement[] => (element?.props.children as FakeElement[] | undefined) ?? []
+
+// One question row of the tree, drawn with the fake constructors: with Markdown, or on a surface without it.
+function fakeRow(options: {
+  markdown: boolean
+  isFinal: boolean
+  question?: ReturnType<typeof parsedQuestion>
+  onJump?: (id: string) => void
+}): FakeElement {
+  const ui = {
+    Box: fakeElement('Box'),
+    Text: fakeElement('Text'),
+    Button: fakeElement('Button'),
+    ...(options.markdown ? { Markdown: fakeElement('Markdown') } : {}),
+  }
+  const tree = {
+    ui,
+    lang: 'en',
+    view: { screen: undefined, wizard: { picks: {} } },
+    actions: { jump: (id: string) => options.onJump?.(id), submitOne: () => undefined },
+    held: heldButtons(),
+  }
+  const question = options.question ?? parsedQuestion('q-l1-aaaaaa', 1000)
+  return renderTreeQuestion(tree as never, question, options.isFinal) as unknown as FakeElement
+}
+
+test('on a surface that draws Markdown, a tree row is a Markdown link: its lead, the link mark and the file: link, and its press runs the jump', () => {
+  const jumped: string[] = []
+  const [link] = childrenOf(fakeRow({ markdown: true, isFinal: false, onJump: id => jumped.push(id) }))
+  expect(link?.tag).toBe('Markdown')
+  expect(link?.props.key).toBe('tree-jump-q-l1-aaaaaa')
+  expect(link?.props.text).toBe(`│  ○ ${LINK_MARK} [Title q-l1-aaaaaa](file:///askaway/jump/q-l1-aaaaaa)`)
+  expect(link?.props.pressableLinks).toEqual(['file:///askaway/jump/q-l1-aaaaaa'])
+  const press = link?.props.onLinkPress as () => void
+  press()
+  expect(jumped).toEqual(['q-l1-aaaaaa'])
+})
+
+test('a title that writes markdown is escaped in its link, so it draws no link or autolink of its own', () => {
+  const question = parsedQuestion('q-l1-aaaaaa', 1000, { title: 'See [docs](https://evil.example)' })
+  const [link] = childrenOf(fakeRow({ markdown: true, isFinal: true, question }))
+  expect(link?.props.text).toBe(`○ ${LINK_MARK} [See \\[docs\\]\\(https\\://evil\\.example\\)](file:///askaway/jump/q-l1-aaaaaa)`)
+  expect(escapeMarkdown('a\tb\nc *d*')).toBe('a b c \\*d\\*')
+})
+
+test('on a surface with no Markdown, a tree row is the underlined Button it was: no link mark and no Markdown', () => {
+  const row = fakeRow({ markdown: false, isFinal: false })
+  const [button] = childrenOf(row)
+  expect(button?.tag).toBe('Button')
+  expect(button?.props.key).toBe('tree-jump-q-l1-aaaaaa')
+  expect(button?.props.label).toBe('│  ○ Title q-l1-aaaaaa')
+  expect(childrenOf(button)[0]?.props.underline).toBe(true)
+  expect(JSON.stringify(row)).not.toContain('Markdown')
+})
+
+test('on the terminal and the desktop, a tree row is a Markdown link, and Other… keeps its Button with the mark', async ($, on) => {
+  stubHost(on, treeFiles())
+  await $.session.start(SESSION)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    expect(await ui.find({ type: 'Markdown', key: 'tree-jump-q-l1-aaaaaa' })).toMatchObject({ props: { pressableLinks: ['file:///askaway/jump/q-l1-aaaaaa'] } })
+    expect(await ui.find({ type: 'Button', key: 'other-q-l1-aaaaaa' })).toBeDefined()
+    expect(nodesOf(await ui.drawn()).some(node => node.type === 'Text' && Array.isArray(node.children) && node.children.includes(`${LINK_MARK} `))).toBe(true)
+    await ui.unmount()
+  }
 })
 
 test('a question of another project is pressable too: its press switches the group on screen and its card', async ($, on) => {
@@ -2395,7 +2715,7 @@ test('a question of another project is pressable too: its press switches the gro
   await $.session.start(SESSION)
   const ui = await mountPane($)
   expect(await textsOf(ui)).toContain('Which way for q-l1-aaaaaa?')
-  await ui.press({ key: 'tree-jump-q-o1-eeeeee' })
+  await pressTreeLink(ui, 'jump', 'q-o1-eeeeee')
   const texts = await textsOf(ui)
   expect(texts).toContain('Which way for q-o1-eeeeee?')
   expect(texts).not.toContain('Which way for q-l1-aaaaaa?')
@@ -2484,9 +2804,9 @@ test('every open group is drawn in turn, one under the other, with its label as 
   expect(nodes.filter(node => node.type === 'Button' && String(keyOfNode(node) ?? '').startsWith('group-'))).toHaveLength(0)
   const texts = await textsOf(ui)
   // The app group's last question comes before the web label, and the web group's question comes after it.
-  expect(texts.indexOf('○ Title q-l3-cccccc')).toBeLessThan(texts.indexOf('Web'))
+  expect(texts.indexOf('○ ▪ Title q-l3-cccccc')).toBeLessThan(texts.indexOf('Web'))
   expect(texts.indexOf('App')).toBeLessThan(texts.indexOf('Web'))
-  expect(texts).toContain('○ Title q-l4-dddddd')
+  expect(texts).toContain('○ ▪ Title q-l4-dddddd')
   await ui.unmount()
 })
 
@@ -2705,9 +3025,11 @@ test('the details block sits between What it is and the question; the Urgency bo
   expect(whatAt).toBeGreaterThan(-1)
   expect(detailsAt).toBeGreaterThan(whatAt)
   expect(questionAt).toBeGreaterThan(detailsAt)
-  expect(urgencyAt).toBeGreaterThan(questionAt)
-  expect(firstOptionAt).toBeGreaterThan(urgencyAt)
-  // No explanation box after the options: Urgency is the only one below the question.
+  // Urgency sits right under the title row: before the lead line, the explanation and the details, and not after the question.
+  expect(urgencyAt).toBeGreaterThan(-1)
+  expect(urgencyAt).toBeLessThan(whatAt)
+  expect(firstOptionAt).toBeGreaterThan(questionAt)
+  // No explanation box after the options: Urgency is drawn only once, under the title.
   expect(keyAt('explanation-after-options')).toBe(-1)
   const column = nodes.find(
     node =>
@@ -2748,6 +3070,7 @@ test('the card draws What, The problem, then the details block (title, Analogy, 
   await $.session.start(SESSION)
   const ui = await mountPane($)
   expectInOrder(await textsOf(ui), [
+    '⏱️ Urgência: Soon',
     'O que é: W',
     'O problema: P',
     'Detalhes do Askaway:',
@@ -2759,7 +3082,6 @@ test('the card draws What, The problem, then the details block (title, Analogy, 
     '⚖️ O que perdemos: L',
     '🧭 Contexto e origem: C',
     'Which way for q-l1-aaaaaa?',
-    '⏱️ Urgência: Soon',
     '└ Cheap · aderência 80',
     'O que acontece: It stays.',
     'Prós: No risk.',
@@ -2770,7 +3092,7 @@ test('the card draws What, The problem, then the details block (title, Analogy, 
   await ui.unmount()
 })
 
-test('the section titles are bold and their bodies regular; the details block is one round-bordered box with no fill, its title bold beside the mark', async ($, on) => {
+test('the section titles are bold and their bodies regular; the details block has no border, a theme fill, and its title first, bold beside the mark', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, FULL_CARD)]])
   stubHost(on, files)
   await $.session.start(SESSION)
@@ -2783,12 +3105,14 @@ test('the section titles are bold and their bodies regular; the details block is
     const nodes = nodesOf(await ui.drawn())
     const block = nodes.find(node => keyOfNode(node) === 'details-q-l1-aaaaaa')
     const inBlock = nodesOf(block)
-    expect(block?.props).toMatchObject({ borderStyle: 'round' })
-    expect(block?.props).not.toHaveProperty('backgroundColor')
+    expect(block?.props).not.toHaveProperty('borderStyle')
+    expect(block?.props).toMatchObject({ backgroundColor: DETAILS_FILL.dark })
     expect(inBlock.some(node => isBoldText(node) && childrenOf(node).includes('Detalhes do Askaway:'))).toBe(true)
-    if (surface === 'desktop') {
-      expect(inBlock.some(node => node.type === 'Svg' && (node.props as Record<string, unknown>).alt === 'Askaway')).toBe(true)
-    }
+    // The title row is the block's first child; its mark is the Askaway SVG on the desktop and the glyph on the terminal.
+    const firstChild = Array.isArray(block?.children) ? block.children[0] : undefined
+    expect(keyOfNode(firstChild as Record<string, unknown>)).toBe('details-title')
+    expect(inBlock.some(node => node.type === 'Svg' && (node.props as Record<string, unknown>).alt === 'Askaway')).toBe(surface === 'desktop')
+    expect(inBlock.some(node => node.type === 'Text' && childrenOf(node).includes('?'))).toBe(surface === 'terminal')
     // Each section title is a bold run; its body, drawn in the same line, is not bold.
     const boldRuns = nodes.filter(isBoldText).flatMap(childrenOf)
     for (const heading of ['O que é', 'O problema', '🔁 Analogia', '💡 Por que A', '↩️ Como desfazer', '🛠️ Como', '🎁 O que ganhamos', '⚖️ O que perdemos', '🧭 Contexto e origem', '⏱️ Urgência']) {
@@ -2806,6 +3130,7 @@ test('the card draws the same order in English: the details block with its title
   await $.session.start(SESSION)
   const ui = await mountPane($)
   expectInOrder(await textsOf(ui), [
+    '⏱️ Urgency: Soon',
     'What it is: W',
     'The problem: P',
     'Askaway Details:',
@@ -2817,7 +3142,6 @@ test('the card draws the same order in English: the details block with its title
     '⚖️ What we lose: L',
     '🧭 Context and origin: C',
     'Which way for q-l1-aaaaaa?',
-    '⏱️ Urgency: Soon',
     '└ Cheap · fit 80',
     'What happens: It stays.',
     'Pros: No risk.',
@@ -2850,7 +3174,7 @@ test('the card labels read in pt-BR: Outra…, ← Voltar and Próxima →', asy
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await labelOf(ui, 'other-q-l1-aaaaaa')).toBe('3. Outra…')
+  expect(await labelOf(ui, 'other-q-l1-aaaaaa')).toBe('C · Outra…')
   expect(await labelOf(ui, 'nav-next')).toBe('Próxima →')
   await ui.press({ key: 'nav-next' })
   expect(await labelOf(ui, 'nav-back')).toBe('← Voltar')
@@ -2865,7 +3189,7 @@ test('the card labels read in English under LANG=en_US: Other…, ← Back and N
   stubHost(on, files, true, {}, {}, { LANG: 'en_US.UTF-8' })
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await labelOf(ui, 'other-q-l1-aaaaaa')).toBe('3. Other…')
+  expect(await labelOf(ui, 'other-q-l1-aaaaaa')).toBe('C · Other…')
   expect(await labelOf(ui, 'nav-next')).toBe('Next →')
   await ui.press({ key: 'nav-next' })
   expect(await labelOf(ui, 'nav-back')).toBe('← Back')
@@ -2911,7 +3235,7 @@ test('a minute turning while only an answered question is open writes only the c
   await clock.advance(60_000)
   // The footer draws while no question is open, and its age label ("now", then "1 min") turns with the minute.
   expect(stateWrites.slice(writesBefore)).toEqual(['tick'])
-  expect(await ui.find({ type: 'Text', text: 'Resposta A enviada para App' })).toBeDefined()
+  expect(await textNodeWith(ui, 'Resposta A · enviada')).toBeDefined()
   await ui.unmount()
 })
 
@@ -2963,7 +3287,7 @@ test('the poll right after the last answer writes no atom the pane draws from, s
   const writesBefore = stateWrites.length
   await clock.advance(5000)
   expect(stateWrites.slice(writesBefore)).toEqual([])
-  expect(await textsOf(ui)).toContain('Resposta B enviada para App')
+  expect(await textsOf(ui)).toContainEqual(expect.stringContaining('Resposta B · enviada'))
   await ui.unmount()
 })
 
@@ -3127,4 +3451,60 @@ test('quiet off keeps the toast and the fade', async ($, on) => {
   files.set(path('q', 'q-l5-eeeeee'), question('q-l5-eeeeee', 3000, { title: 'Pick a parser' }))
   await clock.advance(5000)
   expect(toasts).toEqual(['Nova pergunta: Pick a parser'])
+})
+
+test('History: Clear counts the rows it removes, keeps a pending row, and is gone once nothing can go', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B')],
+    [path('d', 'q-l1-aaaaaa'), delivery('q-l1-aaaaaa', { expired: true, reason: 'ttl' })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+    [path('a', 'q-l2-bbbbbb'), answer('q-l2-bbbbbb', 'A')],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  // The Clear link counts the one expired row; no per-line dismiss button is drawn any more.
+  expect(String((await ui.find({ type: 'Markdown', key: 'history-clear' }))?.props.text)).toContain('(1')
+  expect(await ui.find({ type: 'Button', key: 'dismiss-q-l1-aaaaaa' })).toBeUndefined()
+  await ui.press({ key: 'history-clear', link: { href: 'file:///askaway/clear' } })
+  expect(await ui.find({ type: 'Markdown', key: 'history-clear' })).toBeUndefined()
+  const drawn = JSON.stringify(await ui.drawn())
+  expect(drawn).not.toMatch(/expirou sem ser lida/)
+  expect(drawn).toMatch(/Resposta A · /)
+  await ui.unmount()
+})
+
+test('History: Clear drops a cleared id whose answer is gone from the board, and stores only the ids still on it', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B')],
+    [path('d', 'q-l1-aaaaaa'), delivery('q-l1-aaaaaa', { expired: true, reason: 'ttl' })],
+  ])
+  // q-gone-eeeeee was cleared earlier; its answer has since left the board.
+  stubHost(on, files, true, { cleared: ['q-gone-eeeeee'] })
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'history-clear', link: { href: 'file:///askaway/clear' } })
+  await ui.unmount()
+  // The stored list is read again at the next session start. The pruned id is no longer in it, so its answer, back on
+  // the board, shows; the id still on the board stays hidden.
+  files.set(path('q', 'q-gone-eeeeee'), question('q-gone-eeeeee', 500))
+  files.set(path('a', 'q-gone-eeeeee'), answer('q-gone-eeeeee', 'A'))
+  files.set(path('d', 'q-gone-eeeeee'), delivery('q-gone-eeeeee', { expired: true, reason: 'ttl' }))
+  await $.session.start(SESSION)
+  const restarted = await mountPane($)
+  const restartedTexts = await textsOf(restarted)
+  expect(restartedTexts).toContain(' Title q-gone-eeeeee')
+  expect(restartedTexts).not.toContain(' Title q-l1-aaaaaa')
+  await restarted.unmount()
+})
+
+
+test('model: "multimedia" does not grade medium urgency; an Other answer whose question is gone names no letter', () => {
+  const grade = (extra: Record<string, unknown>) => urgencyGradeOf(parsedQuestion('q-u-000002', 1000, extra))
+  expect(grade({ urgency: 'multimedia assets' })).toBe('low')
+  expect(grade({ urgency: 'media team' })).toBe('medium')
+  const orphan: Board = { questions: [], answers: [answerOf('q-m-000001', 'other', 1, 'lavanda')], delivered: [] }
+  expect(historyOf('en', orphan, NO_STATUS)[0]?.sessions[0]?.entries[0]?.line).toContain('Answer (Other: "lavanda")')
 })

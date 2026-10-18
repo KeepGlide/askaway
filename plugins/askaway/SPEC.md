@@ -42,6 +42,7 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
    "risk":"low|medium|high","pause":false,"source":"cli"}
   ```
   `fit` is an int 0-100 (older questions may hold null; the panel then draws no fit for that option).
+  `urgency_level` is optional: `low`, `medium` or `high` (any case, stored lower-case), the grade the pane colours Urgency by; without it the pane grades the urgency text by keywords. Any other value is refiled, naming `urgency_level`.
   `session_title` is filled by `ask`, not by the caller: it is the window title of the asking
   session, read from its transcript `~/.claude/projects/<dir>/<session>.jsonl`. The folder is
   derived from `project`: every char outside `[A-Za-z0-9]` becomes `-`; all folders are globbed
@@ -308,7 +309,7 @@ Brazilian Portuguese, with identical key sets). The model-facing lines are alway
 
 Pane id `askaway`, title "Askaway" (`hooks/pane.tsx`, `hooks/register.tsx`). Colors are in `hooks/look.ts`.
 
-Draw order, top to bottom: header, tree of the open questions, question card, status lines. The status lines come
+Draw order, top to bottom: header, tree of the open questions, question card, History, footer, Clear link. The History block and the Clear link come
 last because they change height as answers are delivered. On the desktop a Button drawn below a block that grows lost
 its presses (the first click was dropped); this is the same finding as another mod's (comment above its
 status list). `hooks/pane.tsx`, `renderPane`.
@@ -338,7 +339,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
     of the last session are indented with `paddingLeft={4}` (`renderSession`, `renderTreeQuestion`, `hooks/pane.tsx`).
   - The card shows the questions of one group at a time (the group on screen); the other groups stay in the tree only,
     and the picks of every group are kept.
-  - **Pressing a question row**: each question row is a plain Button (key `tree-jump-<question id>`, `renderTreeQuestion`,
+  - **Pressing a question row**: each question row is a link. Where the surface draws Markdown it is a Markdown block, `<mark> <title>` with the link mark `▪` (`LINK_MARK`, `hooks/look.ts`) before the link `[<title>](file:///askaway/jump/<question id>)`, the title in `**…**` while the card on screen is that question; `pressableLinks` names only that href, and `onLinkPress` runs the jump. The Desktop draws the link dotted and underlined, as its own links. Where Markdown is not drawn it is the underlined plain Button it was (key `tree-jump-<question id>`, `treeLink`, `renderTreeQuestion`,
     `hooks/pane.tsx`). Its press puts that question on the card, the same move as walking there with Next or Back
     (`jumpToQuestion`, `hooks/register.tsx`; `jumpTo`, `hooks/wizard.ts`): the question's group becomes the group on screen
     and its step is the question's place in that group. The card
@@ -353,6 +354,12 @@ status list). `hooks/pane.tsx`, `renderPane`.
     (`riskLabel`, `ageLabel`); the row wraps the risk under the title when it does not fit. The risk label (low, medium,
     high) is the risk of accepting the recommended option, as the filing agent judged it. A question with no title is
     named by its text, cut to 24 characters with "…";
+  - the Urgency line, directly under the title row and before the lead line, when `urgency` is set: "⏱️ Urgency" (pt
+    "⏱️ Urgência"), its title bold and its text coloured by grade (`urgencyGradeOf`, `URGENCY_COLOR`, `hooks/look.ts`): low
+    `success`, medium `warning`, high `error`, the engine's theme keys, so it follows light and dark. The grade is the optional
+    `urgency_level` ("low", "medium", "high") of the question; when it is absent, the words of `urgency` decide (high: now,
+    today, immediately, urgent, agora, hoje, imediat-, urgente, alta; medium: this week, soon, days, semana, breve, dias,
+    moderad-, média), else low;
   - the question text, bold;
   - the lead line, bold: "Working on <key> since <HH:MM> while it waits for you. Your answer still counts: pick another option and it switches; with no answer it stays on <key>.", or "Paused since <HH:MM>: it waits for your answer before going on." for a `high` risk question (`leadOf`,
     `hooks/model.ts`; pt: "Trabalhando na <key> desde <HH:MM> enquanto espera você. Sua resposta ainda vale: escolha outra opção e ele muda; sem resposta, segue na <key>.", "Pausado desde <HH:MM>: espera a sua resposta para seguir.");
@@ -361,7 +368,6 @@ status list). `hooks/pane.tsx`, `renderPane`.
     drawn only when its field is set: "What it is" (`what`; pt "O que é"), "The problem" (`problem`; pt "O problema"),
     (Analogy moves to the details block below);
   - the question text, bold;
-  - the explanation box before the options, when `urgency` is set: "⏱️ Urgency" (pt "⏱️ Urgência");
   - the options, one full-width Button each, "<key> · Label" (for example "A · Label"), with "(Recommended)" (pt
     "(Recomendada)") after the label of the recommended one. The recommended option is bold while not picked; the picked
     option is the primary button. Under each option, its own lines, indented one cell (`paddingLeft={1}`), dim only while
@@ -370,13 +376,16 @@ status list). `hooks/pane.tsx`, `renderPane`.
     "Cons: <cons>" (pt "O que acontece", "Prós", "Contras"). The options are in a column with `gap={2}` and
     `marginTop={1}`, so two blank lines part them from the explanation box (`renderQuestion`, `renderOption`,
     `hooks/pane.tsx`);
-  - "N. Other…" is the last option (Portuguese: "Outra…"), a plain Button with underlined text,
-    bold while its pick holds text. The text field under it is always open (no press needed, no autofocus, so the keys
-    stay with the card until the person clicks in). Pressing the link only focuses that field (`$.ui.focus`, key
-    `other-input-<id>`). Typing in the field records Other as the pick with the text typed so far, without moving on
-    (`typeOther`, the Input's `onInput`, `flow.typedOther`); a blank field takes that pick away. Enter ("Done" /
-    "Pronto") records the text and moves on (`submitOther`). Once recorded, the text shows under the link. A surface
-    with no Input draws no Other option (`renderOther`);
+  - "<L> · Other…", where <L> is the letter after the last option's key ("C · Other…" with options A and B; Portuguese:
+    "C · Outra…"), a plain Button, its text underlined after a dim link mark `▪ ` (`LINK_MARK`), bold while its pick is Other. Its field is on the row under it,
+    prefixed with the same "└ " branch glyph the option sub-rows draw (`BRANCH_PREFIX`), indented one cell and dim only
+    while the card fades, with no label: its placeholder is the only text. The field is always open (no press needed, no
+    autofocus, so the keys stay with the card until the person clicks in). Pressing the link only focuses that field
+    (`$.ui.focus`, key `other-input-<id>`). Typing in the field records Other as the pick with the text typed so far,
+    without moving on (`typeOther`, the Input's `onInput`, `flow.typedOther`); a blank field takes that pick away. Enter
+    ("Done" / "Pronto") records the text and moves on (`submitOther`). The typed text is not drawn again under the link. A
+    surface with no Input draws no Other option (`renderOther`);
+
   - the details block, drawn when one of its sections is set (`renderDetailsBlock`, key `details-<id>`), under a divider rule
     (`renderDivider`, key `divider-details`). It is always open: there is no toggle and no `e` hotkey. Its first line is the
     title: the Askaway mark (`renderLogo`: the SVG on the desktop, the glyph on the terminal), then "Askaway Details:" (pt
@@ -386,17 +395,17 @@ status list). `hooks/pane.tsx`, `renderPane`.
     "⚖️ What we lose" (`losses`; pt "⚖️ O que perdemos") and "🧭 Context and origin" (`context`; pt "🧭 Contexto e origem")
     last. Each section is one line, "heading: text": the heading in bold, the text regular, wrapping as one paragraph; every
     name in the text (a slash command, or anything the agent wrote between backticks) is drawn in bold ink (`piecesOf`,
-    `renderSection`). The sections come from `sectionsOf` (slot `details`). The block is the card's one boxed part: a round
-    border and no fill. Its background is not set, because the option buttons' background comes from the engine's variant,
-    which the mod cannot read (`hooks/pane.tsx`).
+    `renderSection`). The sections come from `sectionsOf` (slot `details`). The block has no border. Its background is the fill of its theme family (`DETAILS_FILL`,
+    `hooks/look.ts`): `#282828` for a dark theme, `#EEEDE9` for a light one (provisional). A theme the plugin does not resolve (`auto`, `custom:<slug>`) gets no fill: the block carries no background, and the engine's own theme shows through. Its padding is one cell across
+    and one row above and below, so the text does not touch the fill's edge (`renderDetailsBlock`, `hooks/pane.tsx`).
   - a separator: a 1px rule on the desktop, a row of "─" on the terminal (`renderDivider`);
   - the nav row: [← Back] (Portuguese: "← Voltar") on every question, dim on the first; [Next →] (Portuguese:
     "Próxima →") on every question but the last; on the last one, [Submit all (n)] (Portuguese: "Enviar tudo (n)"),
     where n is the number of questions of the group, dim until every question of the group has a pick.
 - **Hotkeys**: each option button draws its key letter in lower case as its hotkey (`optionHotkey`, `hooks/pane.tsx`), on
-  every surface. "Other…" keeps its digit, the position after the options (none after nine). Back, Next and Submit all
+  every surface. "Other…" takes the letter after the last option (`otherLetterOf`), drawn in lower case as its hotkey. Back, Next and Submit all
   take the first free letters of their surface's pool (`letterFor`, `NAV_POOLS`, `hooks/pane.tsx`): `z`, `x`, `w` on the
-  terminal; `p`, `f` and then `w`, `z`, `x` on the desktop. A letter that an option of the card uses is skipped. No
+  terminal; `p`, `f` and then `w`, `z`, `x` on the desktop. A letter that an option of the card uses, or the letter of Other…, is skipped. No
   hotkey is drawn while the Other field holds typed text, so typed text presses no button. The Input reports typing
   (`onInput`) but no focus change, so a bare focus on the field keeps the hotkeys (a known limit of the API).
 - **Choosing**: an option, or "Other…" with its text, records the pick and moves on: to the first question without a
@@ -406,7 +415,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
 - **Next** moves to the next question whether or not it has a pick; **Back** moves to the previous one. Next does
   nothing on the last question.
 - **Per-question Submit**: a tree row whose question holds a pick not yet submitted draws, after its text, " ✓ - " and a
-  plain "Submit Answer" button (key `tree-submit-<id>`, pt "Enviar resposta"; `renderTreeQuestion`, `renderTreeSubmit`). Its press
+  "Submit Answer" link, after the mark `▪` (Markdown `▪ [Submit Answer](file:///askaway/submit/<id>)` where Markdown is drawn, else the plain underlined Button; key `tree-submit-<id>`, pt "Enviar resposta"; `renderTreeSubmit`, `treeLink`). Its press
   answers that question alone, through the answer path (`submitOne`), at once, and the row leaves the tree and the round
   as Submit all's questions do. The other picks stay for Submit all. The leading mark of a row is only ● (on screen) or ○.
 - **Submit all (n)** writes every answer of the group's round at once. On each press the card dims at once; each
@@ -414,17 +423,24 @@ status list). `hooks/pane.tsx`, `renderPane`.
   picks of those questions are cleared and the step goes back to the first question. When other groups stay open, the
   card then shows the first question of the first group still open.
 - **Picks** survive a re-poll. Picks, and an open Other field, of questions that are no longer open are dropped.
-- **Status lines** (bottom of the pane, newest first): plain text in the dim style, with no fill and no border. Only the
-  mark is drawn in the accent (`ACCENT_COLOR`, a non-text mark, 3:1); the text is dim (`renderStatusLine`):
-  - mark "⏳", text "Answer <key> sent to <window>" while the answer has no d/ marker;
-  - mark "✓" (it replaces the hourglass once delivered), text "Answer <key> delivered to <window> (read by the session)", hidden 30 s after it is first seen
-    (`DELIVERED_SHOWN_MS`, `hooks/model.ts`);
-  - "⚠️ <window> ended before reading answer <key>" and "⚠️ Answer <key> expired unread". The two ⚠️
-    lines stay until their ✕ is pressed; the press records the id in `$.store` key `cleared`
-    (non-destructive: no q/, a/ or d/ file changes).
-  `<window>` is "<project name> · <session title>" (the project's last path segment, then the session title; the
-  part that is missing is left out), the same label that the tree uses for a session.
-- **Footer** (`footerText`, `hooks/model.ts`; pt "Nada aguardando" first): drawn under the status lines only while no
+- **History** (under the card, above the footer; `historyOf`, `hooks/model.ts`; `renderHistory`, `hooks/pane.tsx`): the answers
+  of the last while, as a tree like the open one. Each family is a bold row, its sessions are "├" or "└" rows under it, and each
+  answer is a row with its mark and its question's title, with its answer line under it, dim. Marks: "⏳" sent, not yet
+  delivered; "✓" delivered (read by the session); "⚠️" the session ended before reading it, or expired unread. The line reads
+  "Answer <key> · sent <time> · delivered <time> (read by the session)" ("Resposta <key> · enviada <time> · entregue <time> (lida
+  pela sessão)"); a pending line ends "waiting to be read" ("aguardando leitura"), an ended one "the session ended before reading
+  it" ("a sessão encerrou antes de ler"), an expired one "expired unread" ("expirou sem ser lida"). An Other answer names its
+  letter and its text (`Answer C (Other: "…")`). "answered by agent" or "answered by <name>" (a CLI answer) appears only when the
+  answer was not given by the person. Times are local: "14:32" on the day of the pane, "17/10 14:32" on another day. The delivered
+  time is the `ts` of the delivery marker (`d/<id>.json`); an expired marker carries a ts, which the History line does not show.
+  A question's title is plain text: an answered question is no longer open, so no card can be jumped to.
+  A delivered line leaves DELIVERED_SHOWN_MS (30 s) after the pane first saw it (`deliveredAt`). A pending line never leaves; an
+  ended or expired line stays until it is cleared.
+- **Clear history** (the last row of the pane, after a divider, right-aligned; `renderHistoryClear`): "▪ Clear history (N)",
+  where N counts the rows it would remove (the delivered, ended and expired rows drawn now); hidden when N is 0. Its press
+  (`clearHistory`, `hooks/register.tsx`) records those answers' ids in `$.store` key `cleared` (non-destructive: no q/, a/ or d/
+  file changes). A pending row stays. It replaces the per-line ✕ of earlier versions.
+- **Footer** (`footerText`, `hooks/model.ts`; pt "Nada aguardando" first): drawn under the History block, above the Clear link, only while no
   question is open. It counts the answers given in the last 24 h, names the last answer (its question's title cut to 40
   characters, its key and its age), and counts the answers not yet read and the expired ones. Absent while a question is open. Its counts are read on the pane's clock (the tick, `tickClock`), which the poll rewrites
   whenever the footer text changes, so the 24 h window and the 7-day TTL move the counts with no status line change.
@@ -433,7 +449,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
 
 Decision: every Button of the pane and of the band keeps its press handle across redraws, on the desktop and on the
 terminal alike. The plugin does not hold the focus ring any more (there is no `ui.focus` hook); the engine moves the
-ring as it does for any plugin, and the pane's hotkeys (the option letters on both surfaces, the digit of "Other…", and `z`, `x`, `w` or `p`, `f`, `w` for Back, Next and Submit all) are its keyboard path.
+ring as it does for any plugin, and the pane's hotkeys (the option letters on both surfaces, the letter of "Other…", and `z`, `x`, `w` or `p`, `f`, `w` for Back, Next and Submit all) are its keyboard path.
 
 Why: the engine hands a Button a new press handle on every redraw, unless the very same element object comes back. On
 the desktop a click moves the focus onto the Button, and that move redraws the site just before the press arrives. The
@@ -449,7 +465,7 @@ How (`hooks/held.ts`, `heldButtons()`):
   (a new pick, a new question) still runs its current handler.
 - One table per site: `heldFor(surface, requestId)` (`hooks/register.tsx`). The pane's table goes to
   `renderPane` (`hooks/pane.tsx`) and the band's to `renderBand` (`hooks/band.tsx`). Every Button goes
-  through `hold`: each option, Other…, Back, Next, Submit all, the band's Answer and each status ✕.
+  through `hold`: each option, Other…, each tree link (`treeLink`), Back, Next, Submit all, the band's Answer and the Clear link.
 - The Other field is an Input. The engine matches an Input by its key, so the field is not held.
 
 Verification: `tests/askaway.test.ts` tests the table on its own (`heldButtons`), and the engine tests
@@ -468,9 +484,9 @@ Two guards keep the drawn state from changing for nothing:
   card, so that write would only redraw the pane. A group that opens later still starts at step 0.
 
 Colour: the accent `#3566C8` (`ACCENT_COLOR`, `hooks/look.ts`) is never used for text (since 0.4.0-beta.7, commit 0a01eb5):
-text is bold ink, or the theme's own foreground, and the pane draws no fill of its own: the explanation and the status rows sit on the card's background. Measured WCAG 2.x
+text is bold ink, or the theme's own foreground, and the pane draws no fill of its own, except the details block (below): the explanation and the status rows sit on the card's background. Measured WCAG 2.x
 contrast of the accent, for the record: 5.40:1 on `#FFFFFF` and 3.28:1 on `#111827` (`#1E40AF` measured 8.72:1 and 2.03:1).
-The engine gives the mod no theme signal, so the colours cannot switch with the theme. The details block's border is the theme key `subtle` (`borderColor="subtle"`, `renderDetailsBlock`, `hooks/pane.tsx`), which the engine resolves per theme, so it follows light and dark.
+The details block's fill follows the theme. The engine's theme row (`$.config.list`, key `theme`) names the theme: it is read at session start and again on each `config.set` of that row (`hooks/register.tsx`), and stored as `askaway.theme`. A name starting with `light` is the light family, a name starting with `dark` (or no theme row at all) the dark one, and any other value is not resolved: `auto`, `custom:<slug>` and other names give the family `unknown`, and the details block draws no fill for them (`themeFamilyOf`, `hooks/look.ts`). `DETAILS_FILL` gives each resolved family's fill.
 
 ## Polling
 

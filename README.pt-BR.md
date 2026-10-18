@@ -21,7 +21,7 @@ Um cartão de pergunta aparece no painel do Askaway para cada decisão que um ag
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Acesso antecipado (0.4.0-beta.13):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável. As mudanças desta versão estão listadas no [CHANGELOG.md](CHANGELOG.md).
+> ⚠️ **Acesso antecipado (0.4.0-beta.14):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável. As mudanças desta versão estão listadas no [CHANGELOG.md](CHANGELOG.md).
 
 ## 💡 O que é
 
@@ -184,28 +184,28 @@ Enquanto há perguntas abertas, uma faixa fica acima do prompt: `2 perguntas agu
 ### Responder uma pergunta
 
 1. Aperte `1` com o prompt vazio, ou clique em **Responder** na faixa, para abrir o painel. O cabeçalho mostra o logo do Askaway, o título **Perguntas aguardando** e o contador, como `2 pendentes · 1 grupo`.
-2. A árvore lista cada família de sessões com perguntas abertas, uma abaixo da outra, com o título da sessão raiz em negrito. Embaixo de cada família, as sessões (`├` ou `└`) guardam as suas perguntas. Uma marca mostra em que ponto está cada pergunta: `●` a que está na tela, `○` aguardando. Uma pergunta com opção escolhida mostra depois do texto `✓ - Enviar resposta`: esse **Enviar resposta** manda só a resposta dela, na hora; as demais escolhas esperam o **Enviar tudo**. Nada é enviado antes de um dos dois. Os nomes de família e de sessão são texto, não botões; cada linha de pergunta é um botão, e apertar uma leva ao cartão dela.
+2. A árvore lista cada família de sessões com perguntas abertas, uma abaixo da outra, com o título da sessão raiz em negrito. Embaixo de cada família, as sessões (`├` ou `└`) guardam as suas perguntas. Uma marca mostra em que ponto está cada pergunta: `●` a que está na tela, `○` aguardando. Uma pergunta com opção escolhida mostra depois do texto `✓ - ▪ Enviar resposta`: esse **Enviar resposta** manda só a resposta dela, na hora; as demais escolhas esperam o **Enviar tudo**. Nada é enviado antes de um dos dois. Os nomes de família e de sessão são texto, não botões; cada linha de pergunta é um link marcado com `▪`, desenhado pontilhado e sublinhado no Desktop, e apertar uma leva ao cartão dela.
 3. Clique numa opção para registrá-la. O painel avança para a próxima pergunta sem resposta, voltando ao início se preciso, ou para a última pergunta quando todas já têm resposta. Nada é enviado ainda.
 4. Para responder com as suas palavras, o campo embaixo de **Outra…** fica sempre aberto: clique nele e digite. O texto vira a resposta enquanto você digita, e as teclas ficam desligadas enquanto o campo tiver texto. Aperte Enter (o botão do campo diz **Pronto**) para registrar e avançar; o link **Outra…** só leva o foco ao campo.
 5. **← Voltar** vai para a pergunta anterior. **Próxima →** vai para a seguinte, com ou sem resposta. Ele aparece em todas as perguntas, menos na última.
 6. Na última pergunta do grupo, o botão de avançar é **Enviar tudo (N)**, em que N é o número de perguntas do grupo na tela. Ele só fica disponível quando todas as perguntas têm resposta. Ao apertá-lo, todas as respostas do grupo vão para as sessões que perguntaram. Nada é enviado antes desse botão.
 
-As linhas de estado no fim do painel mostram onde está cada resposta: `⏳` enviada, `✓` lida pela sessão (o visto troca a ampulheta; o texto é simples, só a marca tem cor), `⚠️` a sessão encerrou antes de ler, ou a resposta expirou sem ser lida (`expired`: nenhuma sessão a leu em 7 dias). As duas últimas podem ser dispensadas com `✕`.
+Embaixo do cartão, o **Histórico** lista as respostas do último tempo, agrupadas por família e sessão, cada uma com a sua marca e o título da pergunta: `⏳` enviada e ainda não lida, `✓` lida pela sessão (com a hora em que foi entregue), `⚠️` a sessão encerrou antes de ler, ou a resposta expirou sem ser lida (`expired`: nenhuma sessão a leu em 7 dias). Uma linha `✓` sai 30 segundos depois que o painel a mostra; as linhas `⚠️` ficam. **Limpar histórico (N)** no fim do painel remove as linhas `✓` e `⚠️`; uma linha `⏳` fica até ser lida.
 
-Quando nenhuma pergunta está aberta, o painel mostra uma linha de rodapé sob as linhas de estado, com as contagens: `Nada aguardando · 1 respondida nas últimas 24 h · última: <título> → A, <idade> · 1 ainda não lida · 1 expirada`. Ela some enquanto uma pergunta está aberta.
+Quando nenhuma pergunta está aberta, o painel mostra uma linha de rodapé sob o Histórico, com as contagens: `Nada aguardando · 1 respondida nas últimas 24 h · última: <título> → A, <idade> · 1 ainda não lida · 1 expirada`. Ela some enquanto uma pergunta está aberta.
 
 ### Anatomia de um cartão
 
 O cartão desenha estas partes de cima para baixo. Os rótulos são os do painel em português (pt-BR).
 
-O cartão abre com o título, a linha de estado, a explicação antes da pergunta (**O que é** e **O problema**), um separador, o bloco **Detalhes do Askaway:** (o logo e o título, depois **Analogia**, **💡 Por que A**, **↩️ Como desfazer**, **🛠️ Como**, **🎁 O que ganhamos**, **⚖️ O que perdemos** e **🧭 Contexto e origem**), a pergunta, a Urgência, as opções com a troca, a aderência, as linhas **O que acontece**, **Prós** e **Contras**, e a linha de navegação. Os detalhes ficam sempre abertos: não há link nem tecla para abri-los.
+O cartão abre com o título, a Urgência (na cor do seu grau), a linha de estado, a explicação antes da pergunta (**O que é** e **O problema**), um separador, o bloco **Detalhes do Askaway:** (o logo e o título, depois **Analogia**, **💡 Por que A**, **↩️ Como desfazer**, **🛠️ Como**, **🎁 O que ganhamos**, **⚖️ O que perdemos** e **🧭 Contexto e origem**), a pergunta, a Urgência, as opções com a troca, a aderência, as linhas **O que acontece**, **Prós** e **Contras**, e a linha de navegação. Os detalhes ficam sempre abertos: não há link nem tecla para abri-los.
 
 1. **Linha do título:** o título em negrito, seguido do rótulo de risco e da idade, por exemplo `⚠️ risco médio · há 12 min`. Uma pergunta registrada sem `title` recebe a pergunta cortada em 60 caracteres como título (a CLI faz isso). O painel corta em 24 caracteres só um título armazenado vazio. O risco quebra para baixo do título quando não cabe na linha.
 2. **Linha de estado:** em negrito, o que o agente faz agora e o que acontece se ninguém responder: `Trabalhando na A desde 14:05 enquanto espera você. Sua resposta ainda vale: escolha outra opção e ele muda; sem resposta, segue na A.`, ou `Pausado desde 14:05: espera a sua resposta para seguir.` para uma pergunta de risco `high`.
-3. **Explicação antes da pergunta:** uma caixa com as seções preenchidas, uma linha cada, `título: texto`: **O que é** (`what`) e **O problema** (`problem`). Depois, um separador e o bloco **Detalhes do Askaway:** (com o logo): **🔁 Analogia** (`analogy`), **💡 Por que A** (`why`; a letra é a chave recomendada), **↩️ Como desfazer** (`undo`), **🛠️ Como** (`how`), **🎁 O que ganhamos** (`gains`), **⚖️ O que perdemos** (`losses`) e **🧭 Contexto e origem** (`context`) por último. O bloco tem borda arredondada e nenhum fundo próprio. Os títulos das seções vão em negrito.
+3. **Explicação antes da pergunta:** uma caixa com as seções preenchidas, uma linha cada, `título: texto`: **O que é** (`what`) e **O problema** (`problem`). Depois, um separador e o bloco **Detalhes do Askaway:** (com o logo): **🔁 Analogia** (`analogy`), **💡 Por que A** (`why`; a letra é a chave recomendada), **↩️ Como desfazer** (`undo`), **🛠️ Como** (`how`), **🎁 O que ganhamos** (`gains`), **⚖️ O que perdemos** (`losses`) e **🧭 Contexto e origem** (`context`) por último. O bloco não tem borda: fica sobre um fundo que segue o tema (escuro `#282828`, claro `#EEEDE9`). Os títulos das seções vão em negrito.
 4. **A pergunta:** o texto da pergunta, em negrito. Sempre presente.
-5. **Explicação antes das opções:** uma caixa com **⏱️ Urgência** (`urgency`), quando estiver preenchida.
-6. **As opções:** cada uma é um botão de largura total, `A · Rótulo`, com `(Recomendada)` depois do rótulo da recomendada. Embaixo, uma linha `└ troca · aderência 88` (a aderência é a estimativa do agente), depois **O que acontece** (`does`), **Prós** (`pros`) e **Contras** (`cons`), que aparecem logo. A opção escolhida é o botão preenchido; a recomendada fica em negrito até ser escolhida. A última é **Outra…**, numerada com a posição depois das opções (`3. Outra…` com duas opções).
+5. **Urgência:** logo abaixo do título, uma linha **⏱️ Urgência** (`urgency`), quando estiver preenchida, com o texto na cor do seu grau: `urgency_level` (`low`, `medium`, `high`), ou as palavras do texto quando o grau não vier.
+6. **As opções:** cada uma é um botão de largura total, `A · Rótulo`, com `(Recomendada)` depois do rótulo da recomendada. Embaixo, uma linha `└ troca · aderência 88` (a aderência é a estimativa do agente), depois **O que acontece** (`does`), **Prós** (`pros`) e **Contras** (`cons`), que aparecem logo. A opção escolhida é o botão preenchido; a recomendada fica em negrito até ser escolhida. A última é **Outra…**, com a letra depois da última opção (`C · Outra…` com duas opções).
 7. **A linha de navegação:** um separador, depois **← Voltar** (apagado na primeira pergunta), **Próxima →** (em todas, menos na última), ou na última **Enviar tudo (N)** (veja o passo 6 acima).
 
    A CLI exige `what`, `problem`, `analogy`, `context`, `why`, `how`, `gains`, `losses`, `urgency`, `undo` e `risk`, e para cada opção `tradeoff`, `does`, `pros` e `cons`, então todo cartão registrado por ela traz todos. Nomes que o agente escreveu como comandos de barra ou entre crases ficam em negrito. A cor de destaque não é usada para texto: a seções de explicação ficam no fundo do próprio cartão, sem preenchimento.
@@ -221,7 +221,7 @@ O rótulo de risco é o risco de aceitar a opção recomendada, como o agente av
 ### Teclas
 
 - Cada botão de opção mostra a sua letra e responde a ela em minúscula: `a` escolhe A, `b` escolhe B, e assim por diante, no terminal e no desktop.
-- **Outra…** mantém o seu dígito, a posição depois das opções (`3` com duas opções; os dígitos param em 9).
+- **Outra…** usa a letra depois da última opção (`c` com duas opções, mostrada como `C · Outra…`).
 - Voltar, Próxima e Enviar tudo usam `z`, `x` e `w` no terminal, e `p`, `f` e `w` no desktop.
 - Não há tecla `e`: o cartão mostra os detalhes sempre. Uma letra que uma das opções do cartão usa é pulada, e as teclas passam para as próximas letras livres da mesma lista.
 - Para ditado, diga uma tecla de navegação pela sua letra: `p` (Voltar), `f` (Próxima) ou `w` (Enviar tudo) no desktop.

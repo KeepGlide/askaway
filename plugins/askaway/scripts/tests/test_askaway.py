@@ -209,6 +209,25 @@ def test_ask_never_pauses_a_low_or_medium_question_even_when_asked_to(risk, home
     assert stored(home, "q", out["id"])["pause"] is False
 
 
+@pytest.mark.parametrize("level", ["low", "Medium", "HIGH"])
+def test_ask_stores_urgency_level_lower_case_when_given(level, home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(urgency_level=level)))
+    assert stored(home, "q", out["id"])["urgency_level"] == level.lower()
+
+
+@pytest.mark.parametrize("level", ["extreme", "", " high", 3, True])
+def test_ask_refiles_an_unknown_urgency_level_naming_the_field(level, home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(urgency_level=level)))
+    assert out == refile_reply("urgency_level: must be one of: high, low, medium", missing=["urgency_level"])
+    assert not (home / "q").exists() or list((home / "q").glob("*.json")) == []
+
+
+@pytest.mark.parametrize("over", [{}, {"urgency_level": None}])
+def test_ask_without_urgency_level_stores_no_such_key(over, home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(**over)))
+    assert "urgency_level" not in stored(home, "q", out["id"])
+
+
 def test_ask_defaults_to_codex_run_kind_without_session(home, capsys, monkeypatch):
     monkeypatch.setenv("CODEX_THREAD_ID", "thread-1")
     out = cli(capsys, "ask", "--json", json.dumps(base_entry()))

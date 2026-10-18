@@ -21,7 +21,7 @@ A question card appears in the Askaway panel for each decision an agent filed wh
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Early access (0.4.0-beta.13):** the mod API moves between Claude Code releases, so expect changes until a stable release. The changes of this version are listed in [CHANGELOG.md](CHANGELOG.md).
+> ⚠️ **Early access (0.4.0-beta.14):** the mod API moves between Claude Code releases, so expect changes until a stable release. The changes of this version are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## 💡 What it is
 
@@ -184,28 +184,28 @@ While questions are open, a band sits above the prompt: `2 questions waiting · 
 ### Answering a question
 
 1. Press `1` from an empty prompt, or click **Answer** on the band, to open the pane. The header shows the Askaway logo, the heading **Questions waiting** and the counter, such as `2 pending · 1 group`.
-2. The tree lists every session family with open questions, one under the other, each family's root title in bold. Under each family, its sessions (`├` or `└`) hold their questions. A mark shows where each question stands: `●` the one on screen, `○` waiting. A question with a picked option shows `✓ - Submit Answer` after its text: that **Submit Answer** sends only that question's answer, at once; the other picks wait for **Submit all**. Nothing is sent until one of them is pressed. Family and session names are text, not buttons; each question row is a button, and pressing one jumps to its card.
+2. The tree lists every session family with open questions, one under the other, each family's root title in bold. Under each family, its sessions (`├` or `└`) hold their questions. A mark shows where each question stands: `●` the one on screen, `○` waiting. A question with a picked option shows `✓ - ▪ Submit Answer` after its text: that **Submit Answer** sends only that question's answer, at once; the other picks wait for **Submit all**. Nothing is sent until one of them is pressed. Family and session names are text, not buttons; each question row is a link marked `▪`, drawn dotted and underlined on the Desktop, and pressing one jumps to its card.
 3. Click an option to record it. The pane moves to the next question without an answer, wrapping to the start if needed, or to the last question once every question has one. Nothing is sent yet.
 4. For your own answer, the field under **Other…** is always open: click into it and type. The text is recorded as your answer as you type, and the hotkeys stay off while the field holds text. Press Enter (the field's button reads **Done**) to record it and move on. The **Other…** link only moves the focus to the field.
 5. **← Back** goes to the previous question. **Next →** goes to the next one, with or without an answer. It is on every question but the last.
 6. On the group's last question, the forward button is **Submit all (N)**, where N is the number of questions of the group on screen. It is pressable only once every question has an answer. Pressing it sends every answer of the group to the sessions that asked. Nothing is sent before this button.
 
-Status lines at the bottom of the pane show where each answer is: `⏳` sent, `✓` read by the session (the check replaces the hourglass; the text is plain, only the mark is coloured), `⚠️` the session ended before reading it, or the answer expired unread (`expired`: no session read it within 7 days). The last two can be dismissed with `✕`.
+Under the card, the **History** tree lists the answers of the last while, grouped by session family and session, each answer with its mark and its question's title: `⏳` sent and not yet read, `✓` read by the session (with the time it was delivered), `⚠️` the session ended before reading it, or the answer expired unread (`expired`: no session read it within 7 days). A `✓` line leaves 30 seconds after the pane first shows it; `⚠️` lines stay. **Clear history (N)** at the very bottom removes the `✓` and `⚠️` lines; a `⏳` line stays until it is read.
 
-When no question is open, the pane shows one footer line under the status lines, with the counts: `Nothing waiting · 1 answered in the last 24 h · last: <title> → A, <age> · 1 not yet read · 1 expired`. It is absent while a question is open.
+When no question is open, the pane shows one footer line under the History tree, with the counts: `Nothing waiting · 1 answered in the last 24 h · last: <title> → A, <age> · 1 not yet read · 1 expired`. It is absent while a question is open.
 
 ### Anatomy of a card
 
 The card draws these parts from top to bottom. The labels are the English ones; the panel shows them in Portuguese when the language is `pt-BR`.
 
-The card opens with the title, the lead line, the explanation before the question (**What it is** and **The problem**), a divider, the **Askaway Details:** block (the mark and the title, then **Analogy**, **💡 Why A**, **↩️ Undo**, **🛠️ How**, **🎁 What we gain**, **⚖️ What we lose** and **🧭 Context and origin**), the question, Urgency, the options with their tradeoff, fit, the **What happens**, **Pros** and **Cons** lines, and the nav row. The details are always open: there is no link or key to open them.
+The card opens with the title, the Urgency line (coloured by its grade), the lead line, the explanation before the question (**What it is** and **The problem**), a divider, the **Askaway Details:** block (the mark and the title, then **Analogy**, **💡 Why A**, **↩️ Undo**, **🛠️ How**, **🎁 What we gain**, **⚖️ What we lose** and **🧭 Context and origin**), the question, Urgency, the options with their tradeoff, fit, the **What happens**, **Pros** and **Cons** lines, and the nav row. The details are always open: there is no link or key to open them.
 
 1. **Title row:** the title in bold, then the risk label and the age, for example `⚠️ medium risk · 12 min ago`. A question filed without `title` gets its question clipped to 60 characters as its title (the CLI does it). The pane cuts a stored empty title to 24 characters. The risk wraps under the title when there is no room.
 2. **Lead line:** in bold, what the agent does now and what happens if nobody answers: `Working on A since 14:05 while it waits for you. Your answer still counts: pick another option and it switches; with no answer it stays on A.`, or `Paused since 14:05: it waits for your answer before going on.` for a `high` risk question.
-3. **Explanation before the question:** a box with the sections that are set, one line each, `heading: text`: **What it is** (`what`) and **The problem** (`problem`). Then a divider and the **Askaway Details:** block (with the mark): **🔁 Analogy** (`analogy`), **💡 Why A** (`why`; the letter is the recommended key), **↩️ Undo** (`undo`), **🛠️ How** (`how`), **🎁 What we gain** (`gains`), **⚖️ What we lose** (`losses`) and **🧭 Context and origin** (`context`) last. The block has a rounded border and no fill of its own. Section titles are bold.
+3. **Explanation before the question:** a box with the sections that are set, one line each, `heading: text`: **What it is** (`what`) and **The problem** (`problem`). Then a divider and the **Askaway Details:** block (with the mark): **🔁 Analogy** (`analogy`), **💡 Why A** (`why`; the letter is the recommended key), **↩️ Undo** (`undo`), **🛠️ How** (`how`), **🎁 What we gain** (`gains`), **⚖️ What we lose** (`losses`) and **🧭 Context and origin** (`context`) last. The block has no border: it sits on a fill that follows the theme (dark `#282828`, light `#EEEDE9`). Section titles are bold.
 4. **The question:** the question text, in bold. Always present.
-5. **Explanation before the options:** a box with **⏱️ Urgency** (`urgency`), when it is set.
-6. **The options:** each one a full-width button, `A · Label`, with `(Recommended)` after the label of the recommended one. Under it, a line `└ trade-off · fit 88` (the fit is the agent's estimate), then **What happens** (`does`), **Pros** (`pros`) and **Cons** (`cons`), which show at once. The picked option is the filled button; the recommended one is bold until it is picked. The last one is **Other…**, numbered with the position after the options (`3. Other…` with two options).
+5. **Urgency:** under the title, a line **⏱️ Urgency** (`urgency`) when it is set, its text coloured by grade: `urgency_level` (`low`, `medium`, `high`), or the words of the text when the level is absent.
+6. **The options:** each one a full-width button, `A · Label`, with `(Recommended)` after the label of the recommended one. Under it, a line `└ trade-off · fit 88` (the fit is the agent's estimate), then **What happens** (`does`), **Pros** (`pros`) and **Cons** (`cons`), which show at once. The picked option is the filled button; the recommended one is bold until it is picked. The last one is **Other…**, shown with the letter after the last option (`C · Other…` with two options).
 7. **The nav row:** a separator, then **← Back** (dim on the first question), **Next →** (every question but the last), or on the last question **Submit all (N)** (see step 6 above).
 
    The CLI requires `what`, `problem`, `analogy`, `context`, `why`, `how`, `gains`, `losses`, `urgency`, `undo` and `risk`, and each option's `tradeoff`, `does`, `pros` and `cons`, so every card filed through it carries them all. Names the agent wrote as slash commands or in backticks are drawn in bold. The accent colour is not used for text: the explanation sections sit on the card's own background, with no fill.
@@ -221,7 +221,7 @@ The risk label is the risk of accepting the recommended option, as the agent jud
 ### Hotkeys
 
 - Each option button shows its key letter and answers to it in lower case: `a` picks A, `b` picks B, and so on, on the terminal and on the desktop.
-- **Other…** keeps its digit, the position after the options (`3` with two options; the digits stop at 9).
+- **Other…** takes the letter after the last option (`c` with two options, drawn as `C · Other…`).
 - Back, Next and Submit all take `z`, `x` and `w` on the terminal, and `p`, `f` and `w` on the desktop.
 - There is no `e` key: the card always shows its details. A letter that one of the card's options uses is skipped, and the keys shift to the next free letters of the same list.
 - For dictation, say a nav key by its letter: `p` (Back), `f` (Next) or `w` (Submit all) on the desktop.

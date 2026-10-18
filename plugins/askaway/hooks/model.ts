@@ -1,6 +1,6 @@
-// Pure rules of Askaway: validation of the state files, the open questions, the status lines, the counter and the
+// Pure rules of Askaway: validation of the state files, the open questions, the History tree, the counter and the
 // text. Nothing here touches $; the store and the drawing both depend on it, never the other way round.
-import type { Answer, AnswerBy, Board, Delivery, DeliveryReason, Question, QuestionOption } from '../types'
+import type { Answer, AnswerBy, Board, Delivery, DeliveryReason, Question, QuestionOption, UrgencyGrade } from '../types'
 import { plural, t, type Lang, type MessageKey } from './i18n'
 
 // The id shape askaway.py mints (q-<base36 ms>-<6 hex>). Checked before an id becomes part of a path.
@@ -30,8 +30,12 @@ const RISK_KEYS: ReadonlyMap<string, MessageKey> = new Map<string, MessageKey>([
 export type Section = { heading: string; body: string }
 // The cards answered a moment ago that are still drawn dim before they leave: question id → press time (ms).
 export type Leaving = Readonly<Partial<Record<string, number>>>
-// A status row: its mark (drawn alone, in the accent) and its text (drawn plain and dim).
-export type StatusLine = { id: string; mark: string; text: string; dismissable: boolean }
+// One answer's row of the History tree: its mark, its question's title, and the line that says how the answer stands.
+export type HistoryEntry = { id: string; mark: string; title: string; line: string; clearable: boolean }
+// The answers of one session of a family, newest first.
+export type HistorySession = { key: string; label: string; entries: HistoryEntry[] }
+// A family (or the fallback group of answers whose question is gone) with its sessions, in the order of its newest answer.
+export type HistoryGroup = { key: string; label: string; sessions: HistorySession[] }
 export type StatusContext = {
   cleared: readonly string[]
   shownAt: Readonly<Partial<Record<string, number>>>
@@ -45,6 +49,23 @@ export const EMPTY_BOARD: Board = { questions: [], answers: [], delivered: [] }
 
 const isRecord = (raw: unknown): raw is Record<string, unknown> =>
   typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+
+// The grade the file names, when it names one of the three; anything else reads as absent.
+const urgencyLevelOf = (raw: unknown): UrgencyGrade | undefined =>
+  raw === 'low' || raw === 'medium' || raw === 'high' ? raw : undefined
+
+// The keyword fallback: the words of the Urgency text in English and Portuguese, high first.
+const HIGH_URGENCY_WORDS = /\b(now|today|immediately|urgent|urgente|agora|hoje|imediat\w*|alta)\b/
+const MEDIUM_URGENCY_WORDS = /\b(this week|soon|days?|semana|breve|dias|moderad\w*|\bm[ée]dia)\b/
+
+// The grade of a question's Urgency line: the grade the file names, else the one the words of `urgency` suggest, else low.
+export function urgencyGradeOf(question: Question): UrgencyGrade {
+  if (question.urgency_level !== undefined) return question.urgency_level
+  const words = (question.urgency ?? '').toLowerCase()
+  if (HIGH_URGENCY_WORDS.test(words)) return 'high'
+  if (MEDIUM_URGENCY_WORDS.test(words)) return 'medium'
+  return 'low'
+}
 
 const optionalText = (raw: unknown): string | undefined =>
   typeof raw === 'string' && raw.trim() !== '' ? raw : undefined
@@ -97,6 +118,7 @@ export function parseQuestion(raw: unknown, id: string): Question | undefined {
     gains: optionalText(raw.gains),
     losses: optionalText(raw.losses),
     urgency: optionalText(raw.urgency),
+    urgency_level: urgencyLevelOf(raw.urgency_level),
     undo: optionalText(raw.undo),
     project: typeof raw.project === 'string' ? raw.project : '',
     session: typeof raw.session === 'string' ? raw.session : null,
@@ -168,7 +190,8 @@ export function answerWho(askawayWho: string | undefined, osUser: string | undef
 export function parseDelivery(raw: unknown, id: string): Delivery | undefined {
   if (!isRecord(raw) || raw.id !== id) return undefined
   const reason = DELIVERY_REASONS.find(name => name === raw.reason)
-  return { id, expired: raw.expired === true, reason }
+  const timestamp = typeof raw.ts === 'number' ? raw.ts : undefined
+  return { id, expired: raw.expired === true, reason, ts: timestamp }
 }
 
 export function parseAway(raw: unknown): boolean {
@@ -289,6 +312,12 @@ export function titleCase(text: string, lang: Lang): string {
 
 // The key of a question's group: its session family (the Claude Desktop root session) when it has one, else its project.
 // Old questions carry no family and keep the project grouping. The tree and the counter both use this one rule.
+// Escapes the markdown punctuation of a label (a question title is text the agent wrote), so it cannot draw a link,
+// an autolink, emphasis or HTML of its own. Tabs and newlines become spaces: a Markdown drawing has no others.
+const MARKDOWN_PUNCTUATION = /[\\`*_[\]()<>!|~&:.@]/g
+export const escapeMarkdown = (text: string): string =>
+  text.replace(/[\t\n\r]+/g, ' ').replace(MARKDOWN_PUNCTUATION, '\\$&')
+
 export function groupKeyOf(question: Pick<Question, 'project' | 'family'>): string {
   return question.family ?? question.project
 }
@@ -301,12 +330,6 @@ export function projectLabel(project: string, lang: Lang): string {
 // The name of a question's session: its title, title-cased, else the words for "the session".
 export function sessionLabelOf(question: Pick<Question, 'session_title'>, lang: Lang): string {
   return question.session_title === undefined ? t(lang, 'status.target.session') : titleCase(question.session_title, lang)
-}
-
-// The window a question came from, as the status lines name it: "<project> · <session title>", each part only when known.
-export function windowOf(question: Pick<Question, 'project' | 'session_title'>, lang: Lang): string {
-  const session = question.session_title === undefined ? undefined : titleCase(question.session_title, lang)
-  return [projectLabel(question.project, lang), session].filter(part => part !== undefined && part !== '').join(' · ')
 }
 
 function basename(project: string): string {
@@ -323,48 +346,148 @@ function answerStatusOf(answer: Answer, delivery: Delivery | undefined, now: num
   return now - answer.ts > ANSWER_TTL_MS ? 'expired' : 'answered'
 }
 
-// The status line of one answer: pending until its delivery marker appears, then delivered, or expired.
-function statusOf(
+const padTwoDigits = (value: number): string => String(value).padStart(2, '0')
+
+// The title line names a question by its title; a question with no title is named by its text, cut short.
+const TITLE_MAX = 24
+
+// The title of a question for the card and the tree: its title, else its text cut to TITLE_MAX characters.
+export function questionLabel(question: Question): string {
+  const title = question.title.trim()
+  if (title !== '') return title
+  const text = question.question.trim()
+  return text.length > TITLE_MAX ? `${text.slice(0, TITLE_MAX - 1)}…` : text
+}
+
+// The name of a group: the title of its session family's root, title-cased, when its oldest question has one. Else the
+// project's name, or the words for "the session" when the project is unknown (questions with no family, or no question).
+export function groupLabelOf(question: Question | undefined, lang: Lang): string {
+  if (question?.family_title !== undefined) return titleCase(question.family_title, lang)
+  return projectLabel(question?.project ?? '', lang) || t(lang, 'status.target.session')
+}
+
+// The key letter of "Other…": the first letter after the last option key, so no option's letter is reused. It is drawn in
+// upper case, as the options draw theirs ("C · Other…"), and answers to its lower case. Undefined past "z".
+const LETTERS = 'abcdefghijklmnopqrstuvwxyz'
+export const otherLetterOf = (options: readonly QuestionOption[]): string | undefined => {
+  const last = Math.max(-1, ...options.map(option => LETTERS.indexOf(option.key.toLowerCase())))
+  return LETTERS.charAt(last + 1) || undefined
+}
+
+// The clock time of a timestamp, local: HH:MM on the day of `now`, else DD/MM HH:MM.
+function timeOf(timestamp: number, now: number): string {
+  const date = new Date(timestamp)
+  if (date.toDateString() === new Date(now).toDateString()) return clockOf(timestamp)
+  return `${padTwoDigits(date.getDate())}/${padTwoDigits(date.getMonth() + 1)} ${clockOf(timestamp)}`
+}
+
+// The answer as its History line names it: its key (Other… by its letter, with its free text when it has one).
+function answerLabelOf(lang: Lang, answer: Answer, question: Question | undefined): string {
+  if (answer.key !== OTHER_KEY) return t(lang, 'history.answer', { key: answer.key })
+  const letter = question === undefined ? undefined : otherLetterOf(question.options)?.toUpperCase()
+  const text = otherTextOf(answer)
+  if (letter === undefined) {
+    return text === undefined ? t(lang, 'history.answer', { key: OTHER_KEY }) : t(lang, 'history.answerOtherOnly', { text })
+  }
+  return text === undefined ? t(lang, 'history.answer', { key: letter }) : t(lang, 'history.answerOther', { key: letter, text })
+}
+
+// Who answered, when it was not the person: the agent itself, or the name a CLI answer carries (ANSWER_WORDING).
+function answeredByOf(lang: Lang, answer: Answer): string | undefined {
+  if (answer.by === 'agent') return t(lang, 'history.byAgent')
+  if (answer.by === 'cli' && answer.who !== undefined) return t(lang, 'history.byWho', { who: answer.who })
+  return undefined
+}
+
+// The delivery as its line says it: the delivered time, then "(read by the session)". The time is left out for a marker
+// written without one.
+function deliveredNoteOf(lang: Lang, delivery: Delivery | undefined, now: number): string {
+  const readBy = `(${t(lang, 'history.readBySession')})`
+  if (delivery?.ts === undefined) return t(lang, 'history.readBySession')
+  return `${t(lang, 'history.delivered', { time: timeOf(delivery.ts, now) })} ${readBy}`
+}
+
+type LineState = { mark: string; note: string; clearable: boolean }
+
+// The mark, the note and whether Clear removes the line, by where the answer stands (SPEC.md, Status): pending (⏳) until its
+// delivery marker appears, then delivered (✓), or ended or expired (⚠️). Only a pending line stays through a Clear.
+function lineStateOf(lang: Lang, answer: Answer, delivery: Delivery | undefined, now: number): LineState {
+  const status = answerStatusOf(answer, delivery, now)
+  if (status === 'answered') return { mark: '⏳', note: t(lang, 'history.waiting'), clearable: false }
+  if (status === 'delivered') return { mark: '✓', note: deliveredNoteOf(lang, delivery, now), clearable: true }
+  const isEnded = delivery?.reason === 'session-ended'
+  return { mark: '⚠️', note: t(lang, isEnded ? 'history.sessionEnded' : 'history.expired'), clearable: true }
+}
+
+// One answer's row: its question's title (its id when the question is gone), its mark, and its line, for example
+// "Answer A · sent 14:32 · delivered 14:33 (read by the session)".
+function historyEntryOf(
   lang: Lang,
   answer: Answer,
   question: Question | undefined,
   delivery: Delivery | undefined,
   now: number,
-): StatusLine {
-  const { id, key } = answer
-  const target = (question ? windowOf(question, lang) : '') || t(lang, 'status.target.session')
-  const status = answerStatusOf(answer, delivery, now)
-  if (status === 'answered') {
-    return { id, mark: '⏳', text: t(lang, 'status.pending', { key, target }), dismissable: false }
+): HistoryEntry {
+  const state = lineStateOf(lang, answer, delivery, now)
+  const parts = [
+    answerLabelOf(lang, answer, question),
+    answeredByOf(lang, answer),
+    t(lang, 'history.sent', { time: timeOf(answer.ts, now) }),
+    state.note,
+  ]
+  return {
+    id: answer.id,
+    mark: state.mark,
+    title: question === undefined ? answer.id : questionLabel(question),
+    line: parts.filter((part): part is string => part !== undefined).join(' · '),
+    clearable: state.clearable,
   }
-  if (status === 'delivered') {
-    return { id, mark: '✓', text: t(lang, 'status.delivered', { key, target }), dismissable: false }
-  }
-  if (delivery?.reason === 'session-ended') {
-    return { id, mark: '⚠️', text: t(lang, 'status.sessionEnded', { key, target }), dismissable: true }
-  }
-  return { id, mark: '⚠️', text: t(lang, 'status.expired', { key }), dismissable: true }
 }
 
-// The status lines above the list, newest answer first: pending answers, delivered ones for DELIVERED_SHOWN_MS after
-// the pane first saw them, and expired ones until the user dismisses them. An answer whose card is still fading shows
-// no line yet: its line follows the card out of the list.
-export function statusLines(lang: Lang, board: Board, context: StatusContext): StatusLine[] {
+type HistoryBuild = { key: string; label: string; sessions: Map<string, HistorySession> }
+
+// Places one row under its family and session. The family is the question's group key; an answer whose question is gone
+// goes to the fallback group ("the session"), and a question with no session title is named the same way.
+function placeEntry(groups: Map<string, HistoryBuild>, lang: Lang, question: Question | undefined, entry: HistoryEntry): void {
+  const groupKey = question === undefined ? '' : groupKeyOf(question)
+  const group = groups.get(groupKey) ?? { key: groupKey, label: groupLabelOf(question, lang), sessions: new Map() }
+  groups.set(groupKey, group)
+  const sessionKey = question?.session ?? ''
+  const session = group.sessions.get(sessionKey) ?? {
+    key: sessionKey,
+    label: sessionLabelOf({ session_title: question?.session_title }, lang),
+    entries: [],
+  }
+  group.sessions.set(sessionKey, session)
+  session.entries.push(entry)
+}
+
+// The History tree, newest answer first: family, then session, then the answer's row. An answer is left out while its card
+// is still fading, when it is a delivered line past DELIVERED_SHOWN_MS on the pane, or when it is a cleared line that can
+// be cleared (`cleared`: the ids a Clear recorded).
+export function historyOf(lang: Lang, board: Board, context: StatusContext): HistoryGroup[] {
   const questions = new Map(board.questions.map(question => [question.id, question] as const))
   const deliveries = new Map(board.delivered.map(delivery => [delivery.id, delivery] as const))
   const hidden = new Set(context.cleared)
-  const lines: StatusLine[] = []
+  const groups = new Map<string, HistoryBuild>()
   for (const answer of [...board.answers].sort((a, b) => b.ts - a.ts)) {
     if (context.leaving[answer.id] !== undefined) continue
     const delivery = deliveries.get(answer.id)
-    const line = statusOf(lang, answer, questions.get(answer.id), delivery, context.now)
+    const question = questions.get(answer.id)
+    const entry = historyEntryOf(lang, answer, question, delivery, context.now)
     const isPastShowTime =
       delivery?.expired === false && context.now - (context.shownAt[answer.id] ?? context.now) > DELIVERED_SHOWN_MS
-    if (isPastShowTime || (line.dismissable && hidden.has(answer.id))) continue
-    lines.push(line)
+    if (isPastShowTime || (entry.clearable && hidden.has(answer.id))) continue
+    placeEntry(groups, lang, question, entry)
   }
-  return lines
+  return [...groups.values()].map(group => ({ key: group.key, label: group.label, sessions: [...group.sessions.values()] }))
 }
+
+// The ids a Clear removes: every row drawn that can be cleared (delivered, ended or expired). Pending rows stay.
+export const clearableIdsOf = (history: readonly HistoryGroup[]): string[] =>
+  history.flatMap(group =>
+    group.sessions.flatMap(session => session.entries.filter(entry => entry.clearable).map(entry => entry.id)),
+  )
 
 // The header counter: the open questions and the distinct groups (session families, or projects for old questions).
 export function counterText(lang: Lang, questions: readonly Question[]): string {
@@ -453,7 +576,7 @@ export function sectionsOf(lang: Lang, question: Question, slot: CardSlot): Sect
 // The local clock time of a question's timestamp, HH:MM.
 function clockOf(ts: number): string {
   const date = new Date(ts)
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+  return `${padTwoDigits(date.getHours())}:${padTwoDigits(date.getMinutes())}`
 }
 
 // The bold line under the card title: the recommended key the agent already follows, or "paused" for a high-risk question.

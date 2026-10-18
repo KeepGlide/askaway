@@ -74,6 +74,7 @@ ID_PATTERN: Final = re.compile(r"q-[0-9a-z]+-[0-9a-f]{6}")
 BASE36: Final = string.digits + string.ascii_lowercase
 RUN_KINDS: Final = frozenset({"main", "subagent", "goal", "loop", "bash", "codex"})
 RISKS: Final = frozenset({"low", "medium", "high"})
+URGENCY_LEVELS: Final = frozenset({"low", "medium", "high"})  # the optional grade the pane colours Urgency by
 ANSWER_SOURCES: Final = frozenset({"panel", "accept_recommended", "accept_all", "cli"})
 # Who answered, in the words the model reads ({who} is the answerer). "agent" is stamped by the CLI, never typed.
 ANSWER_WORDING: Final = {
@@ -471,6 +472,17 @@ def _risk(raw: Mapping[str, Any], gaps: Gaps) -> str | None:
     return risk if isinstance(risk, str) else None
 
 
+def _urgency_level(raw: Mapping[str, Any], gaps: Gaps) -> dict[str, str]:
+    """The optional urgency grade, stored lower-case; absent when not given, a refile when not a grade."""
+    level = raw.get("urgency_level")
+    if level is None:
+        return {}
+    if not isinstance(level, str) or level.lower() not in URGENCY_LEVELS:
+        gaps.top["urgency_level"] = f"must be one of: {', '.join(sorted(URGENCY_LEVELS))}"
+        return {}
+    return {"urgency_level": level.lower()}
+
+
 def _run_kind(raw: Mapping[str, Any], origin: Origin, gaps: Gaps) -> str:
     run_kind = raw.get("run_kind") or origin.run_kind
     if not isinstance(run_kind, str) or run_kind not in RUN_KINDS:
@@ -519,6 +531,7 @@ def _options(raw_options: object, gaps: Gaps) -> list[dict[str, Any]]:
 def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
     gaps = Gaps()
     risk = _risk(raw, gaps)
+    urgency = _urgency_level(raw, gaps)
     run_kind = _run_kind(raw, origin, gaps)
     _pause_gap(raw, gaps)
     texts = _top_texts(raw, gaps)
@@ -541,7 +554,7 @@ def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
         **_family_fields(desktop),
         "title": title, "options": options, "recommended": recommended,
         **texts,
-        "risk": risk, "pause": risk == "high",
+        "risk": risk, "pause": risk == "high", **urgency,
         "source": origin.source,
     }
 

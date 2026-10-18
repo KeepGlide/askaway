@@ -2,12 +2,13 @@
 // the toast and the /askaway command. $ stays in this file: the engine follows $ only inside the module that holds
 // the hook, so the calls on $ live here. Pure rules live in model.ts, the wizard's in wizard.ts, the text in i18n.ts.
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderSurface } from 'claude-code'
+import type { ConfigRow, EngineInterface, Register, RenderSurface } from 'claude-code'
 
 import type { Answer, Board, Delivery, PromptMarker, Question } from '../types'
 import { renderBand } from './band'
 import { heldButtons, type HeldButtons } from './held'
 import { detectLang, langName, resolveLang, t, type Lang } from './i18n'
+import { themeFamilyOf, type ThemeFamily } from './look'
 import { renderPane, type PaneActions, type PaneView } from './pane'
 import {
   EMPTY_BOARD,
@@ -27,7 +28,8 @@ import {
   parseDelivery,
   parseQuestion,
   sameBoard,
-  statusLines,
+  clearableIdsOf,
+  historyOf,
   withAnswer,
   withLocalAnswers,
 } from './model'
@@ -40,13 +42,15 @@ const TITLE = 'Askaway'
 const POLL_MS = 5000
 // An answered card stays listed, dimmed, for this long after the press; then it leaves and its status line shows.
 const FADE_MS = 250
-// The plugin's own store keys: the ids of the expired status lines the person dismissed, and the chosen language.
+// The plugin's own store keys: the ids of the History lines the person cleared, and the chosen language.
 const CLEARED_KEY = 'cleared'
 const LANG_KEY = 'lang'
 // The name the person signs answers with: a name, '' once they skipped the question, absent before it was asked.
 const WHO_KEY = 'who'
 // Quiet mode (/askaway quiet on|off): true stops the toast per new question and the fade after an answer.
 const QUIET_KEY = 'quiet'
+// The engine's theme row (`$.config.list`, `config.set`): its value names the theme, whose family fills the details block.
+const THEME_KEY = 'theme'
 // The choices of /askaway lang, as typed (case does not matter; `pt` and `pt_br` still work); `pt-BR` is stored as
 // the dictionary's `pt`, and `auto` follows the environment. A Map, so `constructor` and the like are not choices.
 const LANG_CHOICES: ReadonlyMap<string, string> = new Map([
@@ -75,6 +79,8 @@ const leaving = atom({ plugin: 'askaway', key: 'leaving' } as const, {} as Recor
 const turn = atom({ plugin: 'askaway', key: 'turn' } as const, { isBusy: false })
 // The language in use, and the question wizard (group, step, picks, Other…).
 const langAtom = atom({ plugin: 'askaway', key: 'lang' } as const, DEFAULT_LANG)
+// The theme family of the engine's theme row: the details block's fill (look.ts DETAILS_FILL). Dark until the row is read.
+const themeAtom = atom({ plugin: 'askaway', key: 'theme' } as const, 'dark' as ThemeFamily)
 // The open questions whose asking session has ended (`list --open` marks them): the card shows a notice for them.
 const endedAtom = atom({ plugin: 'askaway', key: 'ended' } as const, [] as string[])
 // The stored answerer name: null before the question was asked, '' after a skip, else the name.
@@ -234,7 +240,7 @@ async function tickClock($: EngineInterface, now: number, shownAt: Record<string
   const drawnAt = (at: number): string =>
     JSON.stringify([
       onCard === undefined ? null : ageLabel(lang, onCard.ts, at),
-      statusLines(lang, current, { cleared: [], shownAt, now: at, leaving: {} }).map(line => line.text),
+      historyOf(lang, current, { cleared: [], shownAt, now: at, leaving: {} }),
       footerText(lang, current, at) ?? null,
     ])
   if (drawnAt(last) !== drawnAt(now)) await update($, clockTick, () => now)
@@ -426,9 +432,18 @@ async function endFade($: EngineInterface, id: string): Promise<void> {
   await update($, leaving, prev => Object.fromEntries(Object.entries(prev).filter(([key]) => key !== id)))
 }
 
-// Dismisses one expired status line. Only its id is recorded, in the plugin's store; no state file is touched.
-async function dismissStatus($: EngineInterface, id: string): Promise<void> {
-  const ids = [...new Set([...(await read($, cleared)), id])]
+// Clears the History lines that can go as the pane draws them now (delivered, ended or expired): their ids go into the
+// plugin's store, no state file is touched. A pending line (⏳) stays.
+async function clearHistory($: EngineInterface): Promise<void> {
+  const lang = await read($, langAtom)
+  const drawn = historyOf(lang, await read($, board), {
+    cleared: await read($, cleared),
+    shownAt: await read($, deliveredAt),
+    now: await read($, clockTick),
+    leaving: await read($, leaving),
+  })
+  const known = new Set((await read($, board)).answers.map(answer => answer.id))
+  const ids = [...new Set([...(await read($, cleared)), ...clearableIdsOf(drawn)])].filter(id => known.has(id))
   await $.store.set(CLEARED_KEY, ids)
   await update($, cleared, () => ids)
 }
@@ -626,7 +641,7 @@ async function awayText($: EngineInterface, lang: Lang): Promise<string> {
 }
 
 const actionsFor = ($: EngineInterface): PaneActions => ({
-  dismiss: id => report($, dismissStatus($, id)),
+  clearHistory: () => report($, clearHistory($)),
   dismissEnded: id => report($, withFolder($, folder => dismissEnded($, folder, id))),
   pick: (id, key) => report($, pickOption($, id, { key })),
   focusOther: id => report($, focusOther($, id)),
@@ -647,6 +662,12 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const current = await currentLang($)
     await update($, langAtom, () => current)
+    // A failed read keeps the dark fill, as the rest of the start keeps going past a failure.
+    const themeRows = await $.config.list().catch((error: unknown): ConfigRow[] => {
+      logFailure($, error)
+      return []
+    })
+    await update($, themeAtom, () => themeFamilyOf(themeRows.find(row => row.key === THEME_KEY)?.value))
     // A failed registration (a name already taken, say) must not stop the poll below: the band and the pane draw
     // from the board, and the folder is read only while the poller runs.
     await $.command.register({ name: 'askaway', description: t(current, 'command.describeOpen') }).catch((error: unknown) =>
@@ -673,6 +694,14 @@ export const register: Register = on => {
       poller = $.clock.every(POLL_MS, () => report($, pollInbox($, folder, ownSession)))
     }
     return next(e)
+  })
+
+  // The person changed the theme in /config: the details fill follows the new family, so the pane redraws. A denied change
+  // keeps the family the row had, since the engine keeps the old value.
+  on('config.set', { key: THEME_KEY }, async ($, e, next) => {
+    const result = await next(e)
+    if (result.deny === undefined) await update($, themeAtom, () => themeFamilyOf(result.value))
+    return result
   })
 
   // The main loop's turns. A subagent's turn.complete carries its agentId and leaves the main turn alone.
@@ -714,7 +743,7 @@ export const register: Register = on => {
     const screen = active === undefined ? undefined : flow.screenOf(active, wizard)
     const view: PaneView = {
       questions: open,
-      lines: statusLines(lang, current, {
+      history: historyOf(lang, current, {
         cleared: await read($, cleared),
         shownAt: await read($, deliveredAt),
         now,
@@ -730,6 +759,7 @@ export const register: Register = on => {
       wizard,
       screen,
       surface: e.surface,
+      theme: await read($, themeAtom),
     }
     return renderPane($.ui.resolve(e), view, actionsFor($), lang, heldFor(e.surface, e.requestId))
   })
