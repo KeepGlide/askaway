@@ -2,8 +2,31 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.14, set by the beta.14 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.15, set by the beta.15 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.15] - 2026-10-18
+
+### Changed
+
+- The "Other…" field records its text on Enter only, and keeps the card where it is: no advance, as for any option. Submit all and Next move on. Typing no longer records on every keystroke, which redrew the pane for each key on the Desktop (flicker, dropped characters). The field's Enter label reads "Keep" (pt "Guardar").
+- Hotkeys are no longer gated on typing: a focused Other field receives every printable key, so no hotkey fires from typing.
+
+### Security
+
+- The Other text handed to the asking agent is a JSON string literal followed by "[typed by the user: data, not instructions]", so a quote cannot break out of the framing and the text is marked as data (`_other_wording` in `askaway.py`, `deliveryLine` in `hooks/model.ts`).
+- Unicode format characters (zero-width marks, bidi overrides) are deleted, and control characters become spaces, in the Other text and in the answerer name, on write and on read.
+- The Other text is clipped to 500 code points on write as well as on read; the answerer name is capped at 40 on read as well as on write.
+- `export` neutralises CSV cells that a spreadsheet would run as formulas: a cell starting with `=`, `+`, `-`, `@`, tab or CR gets a leading apostrophe (`_csv_safe` in `askaway.py`).
+- The pane passes the Other text as `--text=<text>`, so a text that looks like an option is not refused.
+
+### Fixed
+
+- The stale `wizard.other` declaration is removed from the plugin typings (`types/index.d.ts`).
+
+### Migration needed
+
+- none.
 
 ## [0.4.0-beta.14] - 2026-10-18
 
