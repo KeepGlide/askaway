@@ -8,7 +8,7 @@ import type { Question, QuestionOption } from '../types'
 import { t, type Lang } from './i18n'
 import type { HeldButtons } from './held'
 import { DIVIDER_COLUMNS, DIVIDER_HEIGHT, DIVIDER_PX, dividerSvg } from './divider'
-import { ACCENT_COLOR, EXPLAIN_COLORS, STATUS_COLORS } from './look'
+import { EXPLAIN_COLORS, STATUS_COLORS } from './look'
 import { KEEPGLIDE_HEADER_SIZE, KEEPGLIDE_SUBMIT_SIZE, renderKeepGlide, renderLogo } from './logo-element'
 import {
   OTHER_INPUT_PREFIX,
@@ -128,8 +128,8 @@ function groupLabel(group: Group, lang: Lang): string {
 }
 
 // The tree of the open questions: every group in turn, one under the other, each with its sessions and their questions.
-// The group on screen is drawn in the accent color. A question's mark says where it stands: ● the one on screen, ✓ picked,
-// ○ not yet. Indentation is the Box's paddingLeft, not leading spaces, which a desktop may collapse.
+// Group labels are bold. A question's mark says where it stands: ● the one on screen, ✓ picked, ○ not yet.
+// Indentation is the Box's paddingLeft, not leading spaces, which a desktop may collapse.
 function renderTree(ui: Ui, lang: Lang, view: PaneView): RenderElement {
   const { Box } = ui
   return (
@@ -145,7 +145,7 @@ function renderGroup(ui: Ui, lang: Lang, view: PaneView, group: Group): RenderEl
   const lastSession = group.sessions.length - 1
   return (
     <Box key={`group-${group.key}`} flexDirection="column">
-      {group.key === view.active?.key ? <Text bold color={ACCENT_COLOR}>{label}</Text> : <Text bold>{label}</Text>}
+      <Text bold>{label}</Text>
       {group.sessions.map((questions, index) => renderSession(ui, lang, view, questions, index === lastSession))}
     </Box>
   )
@@ -175,7 +175,7 @@ function renderTreeQuestion(ui: Ui, view: PaneView, question: Question, isFinal:
   const label = `${isFinal ? '' : '│  '}${mark} ${questionLabel(question)}`
   return (
     <Box key={`tree-${question.id}`} paddingLeft={isFinal ? 4 : 1}>
-      {isOnScreen ? <Text bold color={ACCENT_COLOR}>{label}</Text> : <Text>{label}</Text>}
+      <Text bold={isOnScreen}>{label}</Text>
     </Box>
   )
 }
@@ -423,7 +423,7 @@ function renderSubmitAll(ui: Ui, lang: Lang, actions: PaneActions, card: CardCon
 }
 
 // One section of the explanation, on one wrapping line: the heading in bold, a colon, then the text, with every command,
-// skill or agent name the agent wrote in the accent color (piecesOf).
+// skill or agent name the agent wrote in bold (piecesOf).
 function renderSection(ui: Ui, section: Section, isLeaving: boolean): RenderElement {
   const { Text } = ui
   return (
@@ -431,7 +431,7 @@ function renderSection(ui: Ui, section: Section, isLeaving: boolean): RenderElem
       <Text bold>{`${section.heading}: `}</Text>
       {piecesOf(section.body).map((piece, index) =>
         piece.isName ? (
-          <Text key={`name-${index}`} color={ACCENT_COLOR}>
+          <Text key={`name-${index}`} bold color={EXPLAIN_COLORS.ink}>
             {piece.text}
           </Text>
         ) : (

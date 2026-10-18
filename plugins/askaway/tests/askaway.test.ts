@@ -22,7 +22,7 @@ import {
   windowOf,
 } from '../hooks/model'
 import { heldButtons } from '../hooks/held'
-import { ACCENT_COLOR } from '../hooks/look'
+import { ACCENT_COLOR, EXPLAIN_COLORS } from '../hooks/look'
 import type { Answer, Board } from '../types'
 
 const HOME = '/test-home'
@@ -1051,7 +1051,7 @@ test('a legacy question with tradeoff and no how, gains, losses or session title
   await ui.unmount()
 })
 
-test('a name in an explanation is drawn in the accent color, a slash command bare and a backticked one without its backticks', async ($, on) => {
+test('a name in an explanation is drawn bold in the explanation ink, a slash command bare and a backticked one without its backticks', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { how: 'Run /reload-plugins, then open `frontend-code-engineer`.' })],
   ])
@@ -1060,11 +1060,12 @@ test('a name in an explanation is drawn in the accent color, a slash command bar
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface)
     const nodes = nodesOf(await ui.drawn())
-    const accentChildren = nodes
-      .filter(node => node.type === 'Text' && (node.props as Record<string, unknown> | undefined)?.color === ACCENT_COLOR)
+    const nameChildren = nodes
+      .filter(node => node.type === 'Text' && (node.props as Record<string, unknown> | undefined)?.bold === true
+        && (node.props as Record<string, unknown> | undefined)?.color === EXPLAIN_COLORS.ink)
       .map(node => node.children)
-    expect(accentChildren).toContainEqual(['/reload-plugins'])
-    expect(accentChildren).toContainEqual(['frontend-code-engineer'])
+    expect(nameChildren).toContainEqual(['/reload-plugins'])
+    expect(nameChildren).toContainEqual(['frontend-code-engineer'])
     // The section is still one line for a reader, with no backtick drawn anywhere.
     expect(await textsOf(ui)).toContain('🛠️ Como: Run /reload-plugins, then open frontend-code-engineer.')
     const drawnText = nodes.flatMap(node => (Array.isArray(node.children) ? node.children : [])).filter((child): child is string => typeof child === 'string')
@@ -2013,20 +2014,20 @@ const treeFiles = (): Map<string, string> =>
     [path('q', 'q-l3-cccccc'), question('q-l3-cccccc', 2000, { session: 's2' })],
   ])
 
-test('the tree draws the group row in bold accent, each session with ├ or └, and one mark per question', async ($, on) => {
+test('the tree draws the group row in bold, each session with ├ or └, and one mark per question', async ($, on) => {
   stubHost(on, treeFiles())
   await $.session.start(SESSION)
   const ui = await mountPane($)
   const texts = await textsOf(ui)
   // Two sessions of one project are one group: one group row, and no Button for a group.
   expect(texts.filter(text => text === 'App')).toHaveLength(1)
-  expect(await ui.find({ type: 'Text', text: 'App' })).toMatchObject({ props: { bold: true, color: ACCENT_COLOR } })
+  expect(await ui.find({ type: 'Text', text: 'App' })).toMatchObject({ props: { bold: true } })
   expect(nodesOf(await ui.drawn()).filter(node => node.type === 'Button' && String(keyOfNode(node) ?? '').startsWith('group-'))).toHaveLength(0)
   // pt-BR minor words stay lowercase after the first word: "a" is one.
   expect(texts).toContain('├ Monta a Consulta')
   expect(texts).toContain('└ a sessão')
-  // The question on screen is ●, in the accent colour; the others are ○.
-  expect(await ui.find({ type: 'Text', text: '│  ● Title q-l1-aaaaaa' })).toMatchObject({ props: { bold: true, color: ACCENT_COLOR } })
+  // The question on screen is ● and bold; the others are ○.
+  expect(await ui.find({ type: 'Text', text: '│  ● Title q-l1-aaaaaa' })).toMatchObject({ props: { bold: true } })
   expect(texts).toContain('│  ○ Title q-l2-bbbbbb')
   expect(texts).toContain('○ Title q-l3-cccccc')
   await ui.unmount()
@@ -2041,7 +2042,7 @@ test('after a pick the ● moves to the next question, and the picked one shows 
   expect(texts).toContain('│  ✓ Title q-l1-aaaaaa')
   expect(texts).toContain('│  ● Title q-l2-bbbbbb')
   expect(texts).not.toContain('│  ○ Title q-l2-bbbbbb')
-  expect(await ui.find({ type: 'Text', text: '│  ● Title q-l2-bbbbbb' })).toMatchObject({ props: { color: ACCENT_COLOR } })
+  expect(await ui.find({ type: 'Text', text: '│  ● Title q-l2-bbbbbb' })).toMatchObject({ props: { bold: true } })
   await ui.unmount()
 })
 
@@ -2141,20 +2142,22 @@ test('every open group is drawn in turn, one under the other, with its label as 
   await ui.unmount()
 })
 
-test('the group on screen has its label in the accent colour, and the other group label is bold with no colour', async ($, on) => {
+test('the group on screen and the other group label are both bold, with no colour', async ($, on) => {
   const files = treeFiles()
   files.set(path('q', 'q-l4-dddddd'), question('q-l4-dddddd', 4000, { project: '/work/web' }))
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: 'App' })).toMatchObject({ props: { bold: true, color: ACCENT_COLOR } })
+  const app = await ui.find({ type: 'Text', text: 'App' })
+  expect(app).toMatchObject({ props: { bold: true } })
+  expect(app?.props.color).toBeUndefined()
   const web = await ui.find({ type: 'Text', text: 'Web' })
   expect(web).toMatchObject({ props: { bold: true } })
   expect(web?.props.color).toBeUndefined()
   await ui.unmount()
 })
 
-test('two projects with the same folder name stay apart: two groups in turn, each labelled App, the first in the accent colour', async ($, on) => {
+test('two projects with the same folder name stay apart: two groups in turn, each labelled App, both bold with no colour', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { project: '/a/app' })],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { project: '/b/app' })],
@@ -2163,9 +2166,43 @@ test('two projects with the same folder name stay apart: two groups in turn, eac
   await $.session.start(SESSION)
   const ui = await mountPane($)
   const labels = nodesOf(await ui.drawn()).filter(node => node.type === 'Text' && Array.isArray(node.children) && node.children.includes('App'))
-  expect(labels.map(node => (node.props as Record<string, unknown>).color)).toEqual([ACCENT_COLOR, undefined])
+  expect(labels.map(node => (node.props as Record<string, unknown>).color)).toEqual([undefined, undefined])
+  expect(labels.map(node => (node.props as Record<string, unknown>).bold)).toEqual([true, true])
   expect(await textsOf(ui)).toContain('Which way for q-l1-aaaaaa?')
   await ui.unmount()
+})
+
+// WCAG 2.x relative luminance and contrast ratio, for the accent check below.
+const luminance = (hex: string): number => {
+  const [r, g, b] = [1, 3, 5].map(index => {
+    const channel = parseInt(hex.slice(index, index + 2), 16) / 255
+    return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+const contrast = (a: string, b: string): number => {
+  const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (light + 0.05) / (dark + 0.05)
+}
+
+test('the accent is a non-text colour: 3:1 or better on white and on the dark theme background', () => {
+  expect(contrast(ACCENT_COLOR, '#FFFFFF')).toBeGreaterThanOrEqual(3)
+  expect(contrast(ACCENT_COLOR, '#111827')).toBeGreaterThanOrEqual(3)
+})
+
+test('no text node uses the accent colour, on either surface, in a question with an explanation and a tree', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { how: 'Run /reload-plugins, then open `frontend-code-engineer`.' })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { project: '/work/web' })],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    const accentText = nodesOf(await ui.drawn()).filter(node => node.type === 'Text' && (node.props as Record<string, unknown> | undefined)?.color === ACCENT_COLOR)
+    expect(accentText.map(node => node.children)).toEqual([])
+    await ui.unmount()
+  }
 })
 
 // ---- Held buttons: a Button keeps its press handle across redraws (hooks/held.ts) ----

@@ -3,9 +3,13 @@
 // theme's own text colours.
 // #166534 on #DCFCE7 is 6.49:1: the mock's one green.
 export const STATUS_COLORS = { bg: '#DCFCE7', ink: '#166534' } as const
-// The accent: the tree's group row, the mark of the question on screen and the terminal logo glyph. #1E40AF is 8.72:1
-// on #FFFFFF (AA for text). It is 2.03:1 on a dark background, so on a dark theme the accent is below the floor.
-export const ACCENT_COLOR = '#1E40AF' as const
+// The accent is never a text colour: text that used it is bold ink (the theme's own foreground, or EXPLAIN_COLORS.ink
+// inside the explanation box), which clears 4.5:1 on each theme. The accent stays on non-text marks, which need 3:1
+// (WCAG 2.2 1.4.11). The terminal logo glyph (logo-element.tsx) still draws it as text.
+// Measured WCAG 2.x contrast, before (#1E40AF) and after (#3566C8):
+//   on #FFFFFF: 8.72:1 before, 5.40:1 after
+//   on #111827: 2.03:1 before, 3.28:1 after
+export const ACCENT_COLOR = '#3566C8' as const
 // The explanation box: #1F2937 on #F9FAFB is 14.05:1 (AA for text), a fixed ink that keeps the text colour on any theme.
 export const EXPLAIN_COLORS = { bg: '#F9FAFB', ink: '#1F2937' } as const
 // The rule above the nav row of a question card. It is a decorative line, not text, so the 3:1 non-text floor does not

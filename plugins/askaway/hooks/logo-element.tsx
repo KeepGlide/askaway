@@ -2,7 +2,6 @@
 // text glyph elsewhere. The surface decides, not `'Svg' in ui`: the terminal's elements carry an Svg too, drawn empty.
 import type { Elements, RenderElement, RenderSurface } from 'claude-code'
 
-import { ACCENT_COLOR } from './look'
 import { KEEPGLIDE_ALT, keepglideSvg } from './keepglide'
 import { LOGO_GLYPH, askawaySvg } from './logo'
 
@@ -20,7 +19,7 @@ export function renderLogo(ui: Ui, surface: RenderSurface): RenderElement {
   }
   const { Text } = ui
   return (
-    <Text key="logo" bold color={ACCENT_COLOR}>
+    <Text key="logo" bold>
       {LOGO_GLYPH}
     </Text>
   )
