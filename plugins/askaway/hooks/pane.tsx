@@ -21,6 +21,7 @@ import {
   riskLabel,
   sectionsOf,
   sessionLabelOf,
+  type CardSlot,
   type Leaving,
   type Section,
   type StatusLine,
@@ -200,6 +201,17 @@ const tradeoffLineOf = (lang: Lang, option: QuestionOption): string | undefined 
   return parts.length > 0 ? `└ ${parts.join(' · ')}` : undefined
 }
 
+// The lines under an option's link line, as [label, text]: what happens if it is chosen, its pros, its cons. A missing
+// one draws no line; an entry from before these fields existed draws none.
+const optionDetailsOf = (lang: Lang, option: QuestionOption): [string, string][] => {
+  const details: [string, string | undefined][] = [
+    [t(lang, 'option.does'), option.does],
+    [t(lang, 'option.pros'), option.pros],
+    [t(lang, 'option.cons'), option.cons],
+  ]
+  return details.filter((detail): detail is [string, string] => detail[1] !== undefined)
+}
+
 // An option answers to its digit: 1 to 9 for the first nine positions, none after.
 const digitOf = (position: number): string | undefined => (position <= 8 ? String(position + 1) : undefined)
 
@@ -220,8 +232,9 @@ const letterFor = (card: CardContext, key: NavKey): string | undefined => {
 }
 
 // One question on screen: the title in bold with the risk and age beside it, the bold lead line under it (what the agent
-// does about the question), the question, the explanation box, two blank lines, the numbered options with "Other…", a
-// separator, and the Back / Next or Submit all row. One blank line sits under the nav row.
+// does about the question), the box of What and Problem and Analogy, the question, the Urgency box, two blank lines, the
+// numbered options with "Other…", the box of Why to Context, a separator, and the Back / Next or Submit all row. One
+// blank line sits under the nav row.
 function renderQuestion(
   ui: Ui,
   lang: Lang,
@@ -241,7 +254,6 @@ function renderQuestion(
     surface: view.surface,
   }
   const { isLeaving } = card
-  const sections = sectionsOf(lang, question)
   return (
     <Box key={`card-${question.id}`} flexDirection="column" gap={1} borderStyle="round" borderDimColor={isLeaving} paddingX={1} paddingBottom={1}>
       <Box flexDirection="row" flexWrap="wrap" gap={2}>
@@ -249,12 +261,14 @@ function renderQuestion(
         <Text dimColor>{`${riskLabel(lang, question.risk)} · ${ageLabel(lang, question.ts, view.now)}`}</Text>
       </Box>
       <Text bold dimColor={isLeaving}>{leadOf(lang, question)}</Text>
+      {renderExplanation(ui, 'before-question', sectionsOf(lang, question, 'before-question'), isLeaving)}
       <Text bold dimColor={isLeaving}>{question.question}</Text>
-      {sections.length > 0 && renderExplanation(ui, sections, isLeaving)}
+      {renderExplanation(ui, 'before-options', sectionsOf(lang, question, 'before-options'), isLeaving)}
       <Box flexDirection="column" gap={2} marginTop={1}>
         {question.options.map((option, position) => renderOption(ui, lang, actions, card, option, position))}
         {renderOther(ui, lang, actions, card)}
       </Box>
+      {renderExplanation(ui, 'after-options', sectionsOf(lang, question, 'after-options'), isLeaving)}
       {renderDivider(ui, view.surface)}
       {renderNav(ui, lang, actions, card, screen)}
     </Box>
@@ -272,18 +286,19 @@ function renderDivider(ui: Ui, surface: RenderSurface): RenderElement {
   return <Text key="divider" dimColor>{'─'.repeat(DIVIDER_COLUMNS)}</Text>
 }
 
-// The explanations of the question, in one box under its text: every section that the card used to hide behind More.
-function renderExplanation(ui: Ui, sections: Section[], isLeaving: boolean): RenderElement {
+// The explanations of one slot of the card, in one box at that place on the card. Nothing is drawn for a slot with no section.
+function renderExplanation(ui: Ui, slot: CardSlot, sections: Section[], isLeaving: boolean): RenderElement | false {
+  if (sections.length === 0) return false
   const { Box } = ui
   return (
-    <Box key="explanation" flexDirection="column" gap={1} backgroundColor={EXPLAIN_COLORS.bg} paddingX={1} paddingY={1}>
+    <Box key={`explanation-${slot}`} flexDirection="column" gap={1} backgroundColor={EXPLAIN_COLORS.bg} paddingX={1} paddingY={1}>
       {sections.map(section => renderSection(ui, section, isLeaving))}
     </Box>
   )
 }
 
-// A full-width numbered option, its tradeoff and fit under it. The picked one is the primary button; the recommended
-// one, when not picked, is bold and says "(Recommended)" in its text.
+// A full-width numbered option, its tradeoff and fit under it, then what happens, its pros and its cons. The picked one is
+// the primary button; the recommended one, when not picked, is bold and says "(Recommended)" in its text.
 function renderOption(
   ui: Ui,
   lang: Lang,
@@ -301,6 +316,7 @@ function renderOption(
   const key = `opt-${question.id}-${option.key}`
   const hotkey = hotkeyFor(card, digitOf(position))
   const tradeoffLine = tradeoffLineOf(lang, option)
+  const details = optionDetailsOf(lang, option)
   const onPress = () => {
     if (isLeaving) return
     actions.pick(question.id, option.key)
@@ -319,9 +335,15 @@ function renderOption(
           {isBold ? <Text bold dimColor={isLeaving}>{text}</Text> : text}
         </Button>
       ))}
-      {tradeoffLine !== undefined && (
-        <Box paddingLeft={1}>
-          <Text dimColor={isLeaving}>{tradeoffLine}</Text>
+      {(tradeoffLine !== undefined || details.length > 0) && (
+        <Box flexDirection="column" paddingLeft={1}>
+          {tradeoffLine !== undefined && <Text dimColor={isLeaving}>{tradeoffLine}</Text>}
+          {details.map(([label, text]) => (
+            <Text key={label} dimColor={isLeaving}>
+              <Text bold>{`${label}: `}</Text>
+              {text}
+            </Text>
+          ))}
         </Box>
       )}
     </Box>

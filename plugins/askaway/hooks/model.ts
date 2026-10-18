@@ -53,7 +53,15 @@ const fitOf = (raw: unknown): number | null =>
 
 function parseOption(raw: unknown): QuestionOption | undefined {
   if (!isRecord(raw) || typeof raw.key !== 'string' || typeof raw.label !== 'string') return undefined
-  return { key: raw.key, label: raw.label, fit: fitOf(raw.fit), tradeoff: optionalText(raw.tradeoff) }
+  return {
+    key: raw.key,
+    label: raw.label,
+    fit: fitOf(raw.fit),
+    tradeoff: optionalText(raw.tradeoff),
+    does: optionalText(raw.does),
+    pros: optionalText(raw.pros),
+    cons: optionalText(raw.cons),
+  }
 }
 
 // Usable only with at least two options, every one of them valid, unique keys, and the recommended key among them.
@@ -79,6 +87,8 @@ export function parseQuestion(raw: unknown, id: string): Question | undefined {
     ts: Number(raw.ts),
     title: String(raw.title),
     question: String(raw.question),
+    what: optionalText(raw.what),
+    problem: optionalText(raw.problem),
     context: optionalText(raw.context),
     analogy: optionalText(raw.analogy),
     why: optionalText(raw.why),
@@ -364,20 +374,30 @@ export function ageLabel(lang: Lang, ts: number, now: number): string {
   return t(lang, 'age.days', { n: Math.round(hours / 24) })
 }
 
-// The explanation sections, in the approved order; each one only when its field is set.
-export function sectionsOf(lang: Lang, question: Question): Section[] {
+// Where an explanation box sits on the card: above the question text, between the question and the options, or below
+// the options. The three boxes hold the sections in the card order.
+export type CardSlot = 'before-question' | 'before-options' | 'after-options'
+
+// The explanation sections of one slot, in the approved order; each one only when its field is set.
+export function sectionsOf(lang: Lang, question: Question, slot: CardSlot): Section[] {
   const sections: Section[] = []
   const add = (heading: string, body: string | undefined): void => {
     if (body !== undefined) sections.push({ heading, body })
   }
-  add(t(lang, 'section.urgency'), question.urgency)
-  add(t(lang, 'section.context'), question.context)
-  add(t(lang, 'section.analogy'), question.analogy)
-  add(t(lang, 'section.why', { key: question.recommended }), question.why)
-  add(t(lang, 'section.undo'), question.undo)
-  add(t(lang, 'section.how'), question.how)
-  add(t(lang, 'section.gains'), question.gains)
-  add(t(lang, 'section.losses'), question.losses)
+  if (slot === 'before-question') {
+    add(t(lang, 'section.what'), question.what)
+    add(t(lang, 'section.problem'), question.problem)
+    add(t(lang, 'section.analogy'), question.analogy)
+  } else if (slot === 'before-options') {
+    add(t(lang, 'section.urgency'), question.urgency)
+  } else {
+    add(t(lang, 'section.why', { key: question.recommended }), question.why)
+    add(t(lang, 'section.undo'), question.undo)
+    add(t(lang, 'section.how'), question.how)
+    add(t(lang, 'section.gains'), question.gains)
+    add(t(lang, 'section.losses'), question.losses)
+    add(t(lang, 'section.context'), question.context)
+  }
   return sections
 }
 

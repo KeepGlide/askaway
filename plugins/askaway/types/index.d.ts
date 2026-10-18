@@ -3,12 +3,16 @@
 
 export type AnswerBy = 'panel' | 'accept_recommended' | 'accept_all' | 'cli'
 
-// `tradeoff` is the one-line cost of choosing this option; absent or blank means no tradeoff line.
+// `tradeoff` is the one-line cost of choosing this option; absent or blank means no tradeoff line. `does` (what happens
+// if it is chosen), `pros` and `cons` are the three lines under the option; an entry from before they existed has none.
 export type QuestionOption = {
   key: string
   label: string
   fit: number | null
   tradeoff?: string
+  does?: string
+  pros?: string
+  cons?: string
 }
 
 // q/<id>.json, as this mod reads it after validation (see hooks/model.ts parseQuestion). An optional text field
@@ -18,6 +22,8 @@ export type Question = {
   ts: number
   title: string
   question: string
+  what?: string
+  problem?: string
   context?: string
   analogy?: string
   why?: string
