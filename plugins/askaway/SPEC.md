@@ -48,10 +48,14 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   `context`, `why`, `how` (how the option works), `gains`, `losses`, `analogy`, `urgency` and `undo` are
   required explanation fields for the panel: `ask` refuses an entry with any of them blank (see `ask`).
   Questions filed before they were required load unchanged (missing keys read as null).
-  `pause` is true when the caller says so or `risk` is `high`.
+  `pause` is true only when `risk` is `high`: pause applies to risk high only, and it ends when the
+  answer is delivered to the asking session, not when it is written. A `pause` value the caller sends
+  for `low` or `medium` is type-checked (a non-boolean is refiled) and then ignored.
   id = `q-` + base36(ms) + `-` + 6 hex chars from os.urandom.
-- `a/<id>.json` — the answer: `{"id":"...","key":"B","by":"panel|accept_recommended|accept_all|cli","ts":<ms>}`.
-  Free text carries key `"other"` and the text in `text`: `{"id":"...","key":"other","text":"Use a fork","by":"panel","ts":<ms>}`.
+- `a/<id>.json` — the answer: `{"id":"...","key":"B","by":"panel|accept_recommended|accept_all|cli","session":<session or null>,"ts":<ms>}`.
+  `session` is the session the answer is bound to: for `by: cli` the caller's `CLAUDE_CODE_SESSION_ID`
+  (or the question's session when the caller has none); for a panel answer the question's own session.
+  Free text carries key `"other"` and the text in `text`: `{"id":"...","key":"other","text":"Use a fork","by":"panel","session":"<session>","ts":<ms>}`.
   `text` is absent for lettered keys. First writer wins: a writer checks that the file does not
   exist first and never overwrites it. Delivery accepts key `other` only when `text` is non-empty.
   Earlier versions wrote `other` answers too; the panel reads them like any other answer.
@@ -62,11 +66,14 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   `{"id":"...","session":null,"expired":true,"reason":"session-ended|ttl","ts":<ms>}`.
   `expired` (bool) and `reason` appear only on lapsed markers; a normal delivery carries neither.
   `session-ended`: the asking session has a `~/.claude/projects/<dir>/<session>.desktop-released.json`
-  marker (Claude Desktop released it). `ttl`: the answer is older than 7 days and no session could
-  receive it.
+  marker (Claude Desktop released it). `ttl`: the answer has been unread for more than 7 days (measured
+  from the answer's `ts`); it expires for every session, the asking one included.
 - `away.json` — `{"on":true,"ts":<ms>}` (missing = off).
 
-Status (derived, never stored): `open` (no a/), `answered` (a/ but no d/), `delivered` (d/).
+Status (derived, never stored): `open` (no a/), `answered` (a/ but no d/, and the answer is not yet
+past the 7-day TTL), `delivered` (a d/ marker without `expired`), `expired` (an answer unread past the
+7-day TTL, with or without a lapsed d/ marker; a d/ marker with `expired: true` always reads `expired`).
+`delivered` and `expired` are closed; `open` and `answered` are not.
 Readers skip unreadable or invalid JSON files silently (a file may be mid-write).
 
 ## Away rule
@@ -89,12 +96,19 @@ The user counts as away when ANY of: hook input `permission_mode == "bypassPermi
   `{"id","recommended","action":"continue|pause"}`. An incomplete or invalid entry files nothing and
   prints `{"action":"refile","recommended":<given or null>,"error":"..."}`: the caller completes the
   fields named in `error` and files again. An internal error prints
-  `{"action":"continue","recommended":<given or null>,"error":"internal error"}`.
+  `{"action":"continue","recommended":<given or null>,"error":"internal error"}`, or
+  `{"action":"pause",...}` when the entry asked for `risk` `high` (nothing was filed in either case).
 - `answer <id> <key> [--by cli]` — writes a/ if absent; prints `{"id","key","written":bool}`.
+  Session rule: a `cli` answer to a question with a session is refused unless the caller's
+  `CLAUDE_CODE_SESSION_ID` equals that session (a shell with no session is refused too); the refusal
+  prints `{"error":"answer refused: ..."}`, exit 0, and writes nothing, so the slot stays free. Panel
+  answers (`--by panel|accept_recommended|accept_all`) are not bound to a shell session.
 - `status <id>` — prints `{"id","status","key"|null}`.
 - `list [--open]` — prints `{"items":[{"id","title","status","recommended","key"}...]}`, newest first.
 - `away on|off|status` — writes or reads away.json; prints `{"away":bool}`.
-- `prune [--days 30]` — deletes q/a/d files of delivered items older than N days; prints `{"removed":n}`.
+- `prune [--days 30]` — deletes q/a/d files of closed items (`delivered` or `expired`) whose closing
+  time is older than N days: the delivery marker's `ts` for `delivered`, the answer's `ts` for
+  `expired`; never the question's `ts`. Prints `{"removed":n}`.
 
 ## Hook modes
 
@@ -112,12 +126,21 @@ It fails open: any error exits 0 with no output. The command hooks are declared 
   where the reason says the questions are NOT in the inbox yet, and that the agent must fill every empty
   field of each skeleton and file it with `python3 "<this script>" ask --json '<skeleton>'` (one command
   per question) before continuing on the recommended option unless the reply says pause. The script
-  path comes from `Path(__file__)`. Not away, or any error → no output (the real question shows).
-- `pause-guard` — PreToolUse, matcher `Edit|Write|NotebookEdit|Bash`. If an `open` entry with
-  `pause:true` has `session == input.session_id`, it denies with the reason "Paused: Askaway question
+  path comes from `Path(__file__)`. The JSON after `--json` is shell-quoted with `shlex.quote`, so a
+  quote or `$(...)` inside a question or label is data, never a shell token. The recommended marker
+  is "(Recommended)" or "(Recomendado)" or "(Recomendada)", case-insensitive. Not away, or any error
+  → no output (the real question shows).
+- `pause-guard` — PreToolUse, matcher `Edit|Write|NotebookEdit|Bash|Agent|mcp__.*`. If an entry with
+  `pause:true` (risk `high` only) whose status is not closed (`open` or `answered`, that is, not yet
+  delivered nor expired) has `session == input.session_id`, it denies with the reason "Paused: Askaway question
   <id> (<title>) needs the user's answer. Do read-only work or end the turn; check with
   `askaway.py status <id>`." Exception: one simple Bash command running `askaway.py ask|status|list`
-  (no `;&|`$<>`) passes. `answer` never passes, so only the user lifts a pause.
+  (no `;&|`$<>`) passes. `answer` never passes, so only the user lifts a pause; an answer that is
+  written but not yet delivered still holds it, and the next deliver run (the `status` call's
+  PostToolUse, for one) ends it. Read-only MCP tools pass: `mcp__<server>__<tool>` whose tool name
+  has a read word (`get`, `list`, `read`, `search`, `query`, `find`, `describe`, `show`) and no write
+  word (`create`, `update`, `delete`, `keep`, `save`, `send`, `run`, and similar); every other tool
+  of the matcher is denied, `Agent` included.
 - `deliver` — UserPromptSubmit, SessionStart (matcher `startup|resume|clear|compact`) and PostToolUse
   (no matcher). It picks `answered` items with `session == input.session_id`, or with session null
   and `project == input.cwd`, and prints
@@ -131,7 +154,10 @@ It fails open: any error exits 0 with no output. The command hooks are declared 
   than 7 days, it gets `expired: true, reason: "ttl"`. Only undelivered ids are checked, with the
   folder-first lookup. The slow path prunes at most once a day. A session that Claude Desktop
   released never runs hooks again, so its answers are closed here (`session-ended`) instead of
-  waiting for the 7-day TTL.
+  waiting for the 7-day TTL. A lapsed answer closes for every session: an unread answer older than
+  7 days is marked `ttl` even when the running session is its asking session.
+  The folder-wide scan for released sessions runs at most once per deliver run (`ReleasedScan`),
+  however many answers the run checks.
 
 ## Commands
 
@@ -307,6 +333,9 @@ joined by "\n". The d/ markers (`via:"prompt"`) are written first, only where ab
   again in the session."). No retry.
 
 ## Model-facing lines (English, never translated; `askaway.py` `_delivery_line` and `model.ts` `deliveryLine` stay identical)
+
+`_delivery_line` is one line: control characters and line breaks in the title, the labels and an
+Other text become spaces, so a title cannot start a second line of the delivery.
 
 - Answer: `The user answered Askaway question <id> (<title>): <key> · <label>.`, plus
   ` (you were using <rec key> · <rec label>)` when the answer differs from the recommendation.

@@ -9,6 +9,10 @@ Hook modes fail open: any error exits 0 with no output.
 import os
 import sys
 
+if sys.version_info < (3, 12):  # runs before any statement that could fail on an older Python
+    print('{"error": "askaway needs Python 3.12 or newer"}')
+    sys.exit(0)
+
 
 def _json_names(folder: str) -> set[str]:
     return {name for name in os.listdir(folder) if name.endswith(".json")}
@@ -45,14 +49,16 @@ import argparse
 import contextlib
 import json
 import re
+import shlex
 import stat
 import string
 import time
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final, NamedTuple, NoReturn
 
-type HookOutput = dict[str, Any] | None
+HookOutput = dict[str, Any] | None
 
 DEFAULT_HOME: Final = Path.home() / ".claude" / "state" / "askaway"
 SCRIPT_PATH: Final = Path(__file__).resolve()
@@ -69,7 +75,7 @@ HOW_MAX: Final = 400
 TEXT_MAX: Final = 300
 TEXT_CAPS: Final = {"context": CONTEXT_MAX, "how": HOW_MAX}
 REQUIRED_TEXT: Final = ("context", "why", "how", "gains", "losses", "analogy", "urgency", "undo")
-RECOMMENDED_MARKER: Final = re.compile(r"\s*\((?:recommended|recomendado)\)\s*$", re.IGNORECASE)
+RECOMMENDED_MARKER: Final = re.compile(r"\s*\((?:recommended|recomendad[oa])\)\s*$", re.IGNORECASE)
 SESSION_TITLE_MAX: Final = 80
 SESSION_PATTERN: Final = re.compile(r"[A-Za-z0-9_-]{1,128}")
 # Title entry types in precedence order: the last custom title wins, then agent name, then AI title.
@@ -81,7 +87,15 @@ DAY_MS: Final = 86_400_000
 DEFAULT_PRUNE_DAYS: Final = 30
 UNDELIVERED_TTL_MS: Final = 7 * DAY_MS
 PRUNE_INTERVAL_S: Final = 86_400
+RELEASED_SUFFIX: Final = ".desktop-released.json"
 TEMP_STALE_S: Final = 86_400
+CLOSED_STATUSES: Final = frozenset({"delivered", "expired"})
+# Read-only MCP tools (mcp__<server>__<tool>): one read verb in the tool name and no write verb.
+READ_ONLY_WORDS: Final = frozenset({"get", "list", "read", "search", "query", "find", "describe", "show"})
+WRITE_WORDS: Final = frozenset({
+    "add", "apply", "create", "delete", "edit", "exec", "execute", "insert", "keep", "kill", "move",
+    "patch", "post", "purge", "push", "put", "register", "remove", "reset", "run", "save", "send",
+    "set", "start", "stop", "update", "write"})
 # One simple `askaway.py ask|status|list` call. The path token excludes shell metacharacters,
 # so a command substitution in the path never matches. The path may be quoted, and a quoted path
 # may start with the literal ${CLAUDE_PLUGIN_ROOT} (the form the Askaway skill teaches).
@@ -198,13 +212,20 @@ def load_questions() -> list[dict[str, Any]]:
     return sorted(loaded, key=lambda entry: (entry["ts"], entry["id"]), reverse=True)
 
 
+def answer_lapsed(answer: Mapping[str, Any]) -> bool:
+    """Is the answer older than the TTL, so it expires unread instead of waiting for a session?"""
+    ts = answer.get("ts")
+    return isinstance(ts, int) and ts < now_ms() - UNDELIVERED_TTL_MS
+
+
 def item_status(item_id: str) -> tuple[str, str | None]:
     answer = read_json(item_path("a", item_id))
     key = answer.get("key") if answer else None
     if item_path("d", item_id).exists():
-        return "delivered", key
+        marker = read_json(item_path("d", item_id)) or {}
+        return ("expired" if marker.get("expired") is True else "delivered"), key
     if item_path("a", item_id).exists():
-        return "answered", key
+        return ("expired" if answer and answer_lapsed(answer) else "answered"), key
     return "open", None
 
 
@@ -320,6 +341,7 @@ def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
     gaps = _entry_gaps(texts, options)
     if gaps:
         raise ValueError("; ".join(gaps))
+    _flag(raw.get("pause"))  # still type-checked; only risk "high" pauses (SPEC: ask)
     now = now_ms()
     return {
         "v": 1, "id": new_id(now), "ts": now,
@@ -328,7 +350,7 @@ def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
         "title": title, "question": question,
         "options": options, "recommended": recommended,
         **texts,
-        "risk": risk, "pause": _flag(raw.get("pause")) or risk == "high",
+        "risk": risk, "pause": risk == "high",
         "source": origin.source,
     }
 
@@ -348,8 +370,12 @@ def option_keys(entry: Mapping[str, Any]) -> list[str]:
 
 # ---- CLI commands ------------------------------------------------------
 
+def caller_session() -> str | None:
+    return os.environ.get("CLAUDE_CODE_SESSION_ID") or None
+
+
 def cli_origin() -> Origin:
-    session = os.environ.get("CLAUDE_CODE_SESSION_ID") or None
+    session = caller_session()
     codex = session is None and any(name.startswith("CODEX_") for name in os.environ)
     return Origin(session=session, project=os.getcwd(), run_kind="codex" if codex else "main",
                   source="cli")
@@ -414,16 +440,43 @@ def session_title(session: str | None, project: str | None = None) -> str | None
     return None
 
 
-def session_ended(session: str | None, project: str | None = None) -> bool:
-    """Has Claude Desktop released this session (a desktop-released.json marker exists)?"""
+class ReleasedScan:
+    """The sessions Claude Desktop released, from one folder-wide glob shared by a whole hook run."""
+
+    def __init__(self) -> None:
+        self._sessions: frozenset[str] | None = None
+
+    def sessions(self) -> frozenset[str]:
+        if self._sessions is None:
+            self._sessions = frozenset(path.name.removesuffix(RELEASED_SUFFIX)
+                                       for path in projects_root().glob(f"*/*{RELEASED_SUFFIX}"))
+        return self._sessions
+
+
+def session_ended(session: str | None, project: str | None = None,
+                  released: ReleasedScan | None = None) -> bool:
+    """Has Claude Desktop released this session (a desktop-released.json marker exists)?
+
+    The session's own project folder is checked first. The folder-wide scan runs only when that
+    folder does not hold the session, and at most once per `released`.
+    """
+    if not session or not SESSION_PATTERN.fullmatch(session):
+        return False
     try:
-        return _session_file(session, ".desktop-released.json", project) is not None
+        folder = project_folder(project)
+        if folder is not None:
+            if (folder / f"{session}{RELEASED_SUFFIX}").is_file():
+                return True
+            if (folder / f"{session}.jsonl").is_file():
+                return False
+        return session in (released or ReleasedScan()).sessions()
     except OSError:
         return False
 
 
-def _given_recommended(raw: object) -> str | None:
-    given = raw.get("recommended") if isinstance(raw, dict) else None
+def _given_text(raw: object, name: str) -> str | None:
+    """A string field as the caller gave it, or None; the error replies echo it back."""
+    given = raw.get(name) if isinstance(raw, dict) else None
     return given if isinstance(given, str) else None
 
 
@@ -437,12 +490,25 @@ def cmd_ask(json_text: str | None) -> dict[str, Any]:
         entry = build_entry(raw, origin)
         store_entry(entry)
     except ValueError as exc:  # the entry is incomplete or invalid: the agent files it again
-        return {"action": "refile", "recommended": _given_recommended(raw), "error": str(exc)}
-    except Exception:  # noqa: BLE001 - the agent always gets an answer and continues
-        return {"action": "continue", "recommended": _given_recommended(raw),
-                "error": "internal error"}
+        return {"action": "refile", "recommended": _given_text(raw, "recommended"), "error": str(exc)}
+    except Exception:  # noqa: BLE001 - the agent always gets an answer; a high-risk one never continues
+        high = _given_text(raw, "risk") == "high"
+        return {"action": "pause" if high else "continue",
+                "recommended": _given_text(raw, "recommended"), "error": "internal error"}
     return {"id": entry["id"], "recommended": entry["recommended"],
             "action": "pause" if entry["pause"] else "continue"}
+
+
+def answer_session(entry: Mapping[str, Any], by: str) -> str | None:
+    """The session an answer is bound to. A shell answer must come from the question's own session."""
+    asked = entry.get("session")
+    if by != "cli":
+        return asked  # the panel answers for the user, so no shell session is required
+    caller = caller_session()
+    if asked and caller != asked:
+        raise ValueError("answer refused: this question belongs to another session; answer it "
+                         "from the Askaway panel or from its own session")
+    return caller or asked
 
 
 def cmd_answer(item_id: str, key: str, by: str) -> dict[str, Any]:
@@ -453,7 +519,9 @@ def cmd_answer(item_id: str, key: str, by: str) -> dict[str, Any]:
         raise ValueError("unknown inbox id")
     if key not in option_keys(entry):
         raise ValueError("unknown option key")
-    if create_once(item_path("a", item_id), {"id": item_id, "key": key, "by": by, "ts": now_ms()}):
+    record = {"id": item_id, "key": key, "by": by, "session": answer_session(entry, by),
+              "ts": now_ms()}
+    if create_once(item_path("a", item_id), record):
         return {"id": item_id, "key": key, "written": True}
     stored = read_json(item_path("a", item_id)) or {}
     return {"id": item_id, "key": stored.get("key"), "written": False}
@@ -508,6 +576,13 @@ def _remove_stale_temps() -> None:
                     tmp.unlink()
 
 
+def _settled_ts(item_id: str, status: str) -> int | None:
+    """When a closed item closed: its delivery marker, or for an expired answer, the answer."""
+    folder = "a" if status == "expired" else "d"
+    ts = (read_json(item_path(folder, item_id)) or {}).get("ts")
+    return ts if isinstance(ts, int) else None
+
+
 def cmd_prune(days: int) -> dict[str, Any]:
     if days < 0:
         raise ValueError("--days must not be negative")
@@ -515,7 +590,11 @@ def cmd_prune(days: int) -> dict[str, Any]:
     cutoff = now_ms() - days * DAY_MS
     removed = 0
     for entry in load_questions():
-        if entry["ts"] < cutoff and item_status(entry["id"])[0] == "delivered":
+        status = item_status(entry["id"])[0]
+        if status not in CLOSED_STATUSES:
+            continue
+        settled = _settled_ts(entry["id"], status)
+        if settled is not None and settled < cutoff:
             _remove_item(entry["id"])
             removed += 1
     return {"removed": removed}
@@ -604,7 +683,7 @@ def askuser_skeleton(question: Mapping[str, Any]) -> dict[str, Any]:
 
 def askuser_reason(skeletons: Sequence[Mapping[str, Any]]) -> str:
     commands = [f"{number}. python3 \"{SCRIPT_PATH}\" ask --json "
-                f"'{json.dumps(skeleton, ensure_ascii=False, separators=(',', ':'))}'"
+                + shlex.quote(json.dumps(skeleton, ensure_ascii=False, separators=(',', ':')))
                 for number, skeleton in enumerate(skeletons, start=1)]
     return ("The user is away, so these AskUserQuestion calls are NOT in the Askaway inbox yet. "
             "Before you continue, fill every empty field (\"\" or null) of each skeleton, then file "
@@ -623,16 +702,31 @@ def hook_ask_guard(event: Mapping[str, Any]) -> HookOutput:
     return deny(askuser_reason(skeletons))
 
 
+def is_read_only_mcp(tool_name: object) -> bool:
+    """An MCP tool with a read verb and no write verb in its name, e.g. mcp__graphify__get_node."""
+    if not isinstance(tool_name, str) or not tool_name.startswith("mcp__"):
+        return False
+    words = set(tool_name.rsplit("__", 1)[-1].split("_"))
+    return bool(words & READ_ONLY_WORDS) and not (words & WRITE_WORDS)
+
+
+def _exempt_call(tool: object, command: str) -> bool:
+    """A call the pause lets through: one simple inbox status or list command, or a read-only MCP tool."""
+    return (tool == "Bash" and INBOX_CALL.match(command) is not None) or is_read_only_mcp(tool)
+
+
 def hook_pause_guard(event: Mapping[str, Any]) -> HookOutput:
     session = event.get("session_id")
     if not session:
         return None
+    tool = event.get("tool_name")
     command = str((event.get("tool_input") or {}).get("command", ""))
-    if event.get("tool_name") == "Bash" and INBOX_CALL.match(command):
+    if _exempt_call(tool, command):
         return None
+    # A pause holds until the answer is delivered (or lapses): an answered, undelivered item still blocks.
     blocking = next((entry for entry in load_questions()
                      if entry.get("pause") is True and entry.get("session") == session
-                     and item_status(entry["id"])[0] == "open"), None)
+                     and item_status(entry["id"])[0] not in CLOSED_STATUSES), None)
     if blocking is None:
         return None
     return deny(f"Paused: Askaway question {blocking['id']} ({blocking['title']}) needs the "
@@ -656,26 +750,31 @@ def _key_text(entry: Mapping[str, Any], key: object) -> str:
     return f"{key} · {label}" if label else str(key)
 
 
+def _one_line(text: str) -> str:
+    """The text on one line: line breaks and control characters become spaces."""
+    flat = "".join(" " if unicodedata.category(char) in ("Cc", "Zl", "Zp") else char for char in text)
+    return " ".join(flat.split())
+
+
 def _delivery_line(entry: Mapping[str, Any], key: object, other: str | None = None) -> str:
     recommended = entry.get("recommended")
     chosen = f'their own answer (Other): "{other}"' if other else _key_text(entry, key)
     line = f"The user answered Askaway question {entry['id']} ({entry['title']}): {chosen}."
     if key != recommended:
         line += f" (you were using {_key_text(entry, recommended)})"
-    return line
+    return _one_line(line)  # a title or label with a line break must not forge a second line
 
 
-def _lapse_reason(entry: Mapping[str, Any], answer: Mapping[str, Any]) -> str | None:
-    """Why an answer that no session can receive is closed now, or None to keep it waiting."""
-    if session_ended(entry.get("session"), entry.get("project")):
+def _lapse_reason(entry: Mapping[str, Any], answer: Mapping[str, Any],
+                  released: ReleasedScan | None = None) -> str | None:
+    """Why an unread answer is closed now, or None to keep it waiting: its session ended, or the TTL passed."""
+    if session_ended(entry.get("session"), entry.get("project"), released):
         return "session-ended"
-    ts = answer.get("ts")
-    if isinstance(ts, int) and ts < now_ms() - UNDELIVERED_TTL_MS:
-        return "ttl"
-    return None
+    return "ttl" if answer_lapsed(answer) else None
 
 
-def _deliver_one(item_id: str, session: str | None, cwd: object) -> str | None:
+def _deliver_one(item_id: str, session: str | None, cwd: object,
+                 released: ReleasedScan | None = None) -> str | None:
     marker = item_path("d", item_id)
     if marker.exists():
         return None
@@ -683,8 +782,9 @@ def _deliver_one(item_id: str, session: str | None, cwd: object) -> str | None:
     answer = read_json(item_path("a", item_id))
     if entry is None or answer is None:
         return None
-    if not _receives(entry, session, cwd):
-        reason = _lapse_reason(entry, answer)
+    # A lapsed answer closes for every session, the asking one included: status already says so.
+    if not _receives(entry, session, cwd) or answer_lapsed(answer):
+        reason = _lapse_reason(entry, answer, released)
         if reason:
             create_once(marker, {"id": item_id, "session": None, "expired": True,
                                  "reason": reason, "ts": now_ms()})
@@ -728,10 +828,11 @@ def hook_deliver(event: Mapping[str, Any]) -> HookOutput:
     _maybe_prune()
     session = event.get("session_id") or None
     cwd = event.get("cwd")
+    released = ReleasedScan()  # one folder-wide scan for every answer of this run, at most
     lines: list[str] = []
     for item_id in item_ids:
         try:
-            line = _deliver_one(item_id, session, cwd)
+            line = _deliver_one(item_id, session, cwd, released)
         except OSError:
             continue  # no marker was written, so the next run retries this answer
         if line:
