@@ -2,7 +2,18 @@
 
 [![🇺🇸 English](https://img.shields.io/badge/%F0%9F%87%BA%F0%9F%87%B8-English-blue.svg)](README.md) [![🇧🇷 Português (Brasil)](https://img.shields.io/badge/%F0%9F%87%A7%F0%9F%87%B7-Portugu%C3%AAs%20(Brasil)-green.svg)](README.pt-BR.md)
 
-**O Askaway é uma caixa de perguntas para o Claude Code:** os agentes registram perguntas com uma opção recomendada enquanto você está ausente, você responde num painel de verdade, e o trabalho segue na opção recomendada, a menos que a pergunta seja arriscada.
+**O Askaway é uma caixa de perguntas para o Claude Code, numa só máquina.** Enquanto você está *ausente* (a sessão roda com `bypassPermissions`, o modo ausente está ligado, ou `CLAUDE_CODE_SESSION_ATTENDED=0`), um agente registra cada decisão de que precisa como uma pergunta com uma opção *recomendada* e segue trabalhando nessa opção. Você responde no painel do Askaway, e cada resposta volta para a sessão que perguntou. Uma pergunta é *arriscada* (`risk` alto) quando aceitar a opção recomendada é irreversível ou toca arquivos reais, credenciais ou dinheiro. Só uma pergunta arriscada pausa a sua sessão, e a pausa termina quando a resposta é entregue a essa sessão, não quando é gravada. Perguntas de risco baixo e médio nunca pausam: o agente continua na opção recomendada. A nota *fit* de cada opção é uma estimativa do próprio agente, não uma medição. A pasta de estado fica só nesta máquina; uma pergunta registrada em outro computador não aparece aqui.
+
+**Termos usados nesta página**
+
+| Termo | Significado |
+|---|---|
+| **Ausente** (*away*) | A sessão está ausente quando o modo de permissão é `bypassPermissions`, o modo ausente está ligado (`/askaway away`) ou `CLAUDE_CODE_SESSION_ATTENDED=0`. Um agente ausente registra perguntas em vez de esperar. |
+| **Sessão** (*session*) | Uma sessão do Claude Code. Cada pergunta registra a sessão que perguntou, e a resposta volta para essa sessão. |
+| **Recomendada** (*recommended*) | A opção que o agente marca como padrão. Ele segue trabalhando nela até você responder, e a sua resposta a substitui. |
+| **Risco** (*risk*) | Quão arriscado é aceitar a opção recomendada: `low`, `medium` ou `high`. Só `high` pausa. |
+| **Pausa** (*pause*) | Uma retenção da sessão que perguntou uma pergunta `high`: as edições, os comandos de shell e as outras chamadas de ferramenta que alteram algo ficam bloqueadas até a resposta ser entregue a ela. |
+| **Aderência** (*fit*) | A estimativa do próprio agente, de 0 a 100, de quão bem uma opção serve à tarefa. O Askaway não mede nem verifica essa nota. |
 
 ![O painel do Askaway ao lado dos painéis Context e Environment, tema claro: dois projetos, quatro sessões, cinco perguntas, um cartão aberto](assets/window-light-en.png)
 
@@ -43,7 +54,7 @@ O Askaway não:
 - **Uma árvore por projeto e sessão.** Cada projeto com perguntas abertas é um grupo, com as sessões e as perguntas dele logo abaixo.
 - **Uma opção recomendada.** Cada pergunta traz a opção que o agente escolheria, então a sessão segue trabalhando em vez de esperar por você.
 - **Primeiro clique no desktop.** Cada botão mantém o seu identificador de clique entre as redesenhas (`hooks/held.ts`), que era a causa do primeiro clique que o desktop perdia.
-- **Pausa conforme o risco.** Uma pergunta marcada como `high`, ou que o agente define como pausa, pausa a sessão cujo id ela traz. Uma pergunta registrada sem id de sessão, como a do Codex, não pausa nada. As outras deixam a sessão continuar.
+- **Pausa conforme o risco.** Uma pergunta com `risk` alto pausa a sessão cujo id ela traz, até a resposta ser entregue a essa sessão. Uma pergunta registrada sem id de sessão, como a do Codex, não pausa nada. Perguntas de risco baixo e médio nunca pausam.
 - **Dois idiomas.** Inglês e português do Brasil, pelo seu locale ou com `/askaway lang`.
 
 ## ⚙️ Como funciona
@@ -193,7 +204,7 @@ O rótulo de risco é o risco de aceitar a opção recomendada, como o agente av
 
 - **✅ risco baixo:** seguro de aceitar e fácil de mudar depois.
 - **⚠️ risco médio:** reversível, mas mudar custa retrabalho.
-- **🛑 risco alto:** irreversível, ou toca arquivos reais, credenciais ou dinheiro. Uma pergunta de risco alto pausa a sessão que perguntou: as edições e os comandos Bash dela ficam bloqueados até você responder. O agente ainda pode ler e encerrar o turno.
+- **🛑 risco alto:** irreversível, ou toca arquivos reais, credenciais ou dinheiro. Uma pergunta de risco alto pausa a sessão que perguntou: as edições, os comandos de shell e as outras chamadas de ferramenta que alteram algo ficam bloqueados até a resposta ser entregue a essa sessão, no próximo disparo de hook dela. O agente ainda pode ler e encerrar o turno.
 
 ### Teclas
 
@@ -253,13 +264,15 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache b
 | `gains` | sim | Uma ou duas frases sobre o que o usuário ganha com ela. Até 300 caracteres. |
 | `losses` | sim | Uma ou duas frases sobre o que o usuário abre mão ou arrisca com ela. Até 300 caracteres. |
 | `analogy`, `urgency`, `undo` | sim | `analogy` é uma comparação que deixa a troca clara; `urgency` é o prazo, como `Can wait` ou `Blocks in ~8 min`; `undo` é o custo de reverter a escolha, como `changing later ≈ 10 min`. Até 300 caracteres cada. |
-| `risk` | não | O risco de aceitar a opção recomendada: `low` (padrão) é seguro de aceitar e fácil de mudar depois; `medium` é reversível, mas custa retrabalho; `high` é irreversível, ou toca arquivos reais, credenciais ou dinheiro, e pausa a sessão. |
-| `pause` | não | `true` pausa esta sessão até o usuário responder. |
+| `risk` | não | O risco de aceitar a opção recomendada: `low` (padrão) é seguro de aceitar e fácil de mudar depois; `medium` é reversível, mas custa retrabalho; `high` é irreversível, ou toca arquivos reais, credenciais ou dinheiro, e pausa a sessão até a resposta ser entregue a ela. |
+| `pause` | não | Só é verificado quanto ao tipo; não pausa nada. Uma pergunta pausa a sessão quando `risk` é `high`, e nunca em outro caso. |
 | `run_kind` | não | `main`, `subagent`, `goal`, `loop`, `bash` ou `codex`. |
 
 Não passe `session` nem `project`: a CLI os preenche a partir do ambiente e do diretório de trabalho. Texto acima do limite é cortado, não recusado.
 
-Depois de registrar, o agente continua na `recommended`, a menos que a saída traga `"action": "pause"`. Uma entrada inválida imprime `"action": "refile"` com um `error` que cita os campos que faltam, por exemplo `missing fields: analogy; option A: fit` (mensagem da CLI, em inglês). O agente completa esses campos e registra a pergunta de novo; nunca segue sem registrar. Só uma falha interna imprime `"action": "continue"` com `"error": "internal error"`, e então nada foi registrado.
+A CLI também tem `answer <id> <key> [--by <origem>]`, que registra uma resposta; agentes não devem chamá-lo. `--by` aceita exatamente `cli` (o padrão), `panel`, `accept_recommended` ou `accept_all`; qualquer outro valor é recusado. Uma resposta `cli` a uma pergunta que tem sessão é recusada, a menos que o `CLAUDE_CODE_SESSION_ID` do shell seja essa mesma sessão; um shell sem id de sessão também é recusado, e a recusa manda responder pelo painel do Askaway ou pela sessão que perguntou. As respostas `panel`, `accept_recommended` e `accept_all` não são ligadas a um shell de sessão. A primeira resposta gravada num item vale.
+
+Depois de registrar, o agente continua na `recommended`, a menos que a saída traga `"action": "pause"`, que a CLI imprime só para uma pergunta com `risk` alto. Uma entrada inválida imprime `"action": "refile"` com um `error` que cita os campos que faltam, por exemplo `missing fields: analogy; option A: fit` (mensagem da CLI, em inglês). O agente completa esses campos e registra a pergunta de novo; nunca segue sem registrar. Só uma falha interna imprime `"action": "continue"` com `"error": "internal error"`, e então nada foi registrado.
 
 ## 🗂️ Pasta de estado
 
@@ -275,6 +288,18 @@ Depois de registrar, o agente continua na `recommended`, a menos que a saída tr
 As gravações passam antes por um arquivo oculto `.<nome>.<hex>.tmp` e depois são renomeadas no lugar; a limpeza remove os arquivos `.tmp` antigos.
 
 `ASKAWAY_HOME` substitui `~/.claude/state/askaway`. O contrato completo está em [plugins/askaway/SPEC.md](plugins/askaway/SPEC.md).
+
+### O que o Askaway lê e grava
+
+- **Ganchos** (`plugins/askaway/hooks/command-hooks.json`) leem a entrada do hook pela entrada padrão: id da sessão, modo de permissão, diretório de trabalho, nome e entrada da ferramenta.
+  - `SessionStart` (em `startup`, `resume`, `clear` ou `compact`), `UserPromptSubmit` e `PostToolUse` rodam `hook deliver`: ele lê `q/`, `a/` e `d/`, grava uma marca de entrega em `d/` para cada resposta que entrega, e coloca o texto da resposta no contexto daquela sessão.
+  - `PreToolUse` em `AskUserQuestion` roda `hook ask-guard`: lê o estado ausente e não grava nada.
+  - `PreToolUse` em `Edit|Write|NotebookEdit|Bash|Agent|mcp__.*` roda `hook pause-guard`: lê `q/`, `a/` e `d/` e não grava nada.
+- **Títulos de sessão:** ao registrar uma pergunta, `ask` lê o transcrito da sessão que perguntou, `~/.claude/projects/<pasta do projeto>/<sessão>.jsonl`, e guarda só as suas entradas de título (`custom-title`, `agent-name`, `ai-title`). Não lê prompts nem respostas. O título dá nome à sessão no cartão.
+- **Marcadores de liberação do Claude Desktop:** `deliver` procura `<sessão>.desktop-released.json` na mesma pasta do projeto, para fechar as respostas de uma sessão que o Claude Desktop liberou.
+- **Painel (mod):** lê `q/`, `a/` e `d/`; grava respostas, o interruptor do modo ausente e as próprias chaves de armazenamento (a escolha de idioma).
+- **Limpeza:** no máximo uma vez por dia, `deliver` remove itens fechados e resolvidos há mais de 30 dias e arquivos temporários antigos.
+- **A CLI e os ganchos gravam só dentro da pasta de estado.** Cada arquivo é gravado primeiro num arquivo temporário e depois renomeado. Nada é enviado pela rede, e nada é gravado nos seus projetos ou transcritos.
 
 ## 🔒 Privacidade
 

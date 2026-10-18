@@ -13,7 +13,7 @@ Mod (TypeScript), from the repository root:
 claude plugin test plugins/askaway
 ```
 
-CLI and hooks (Python 3, needs `pytest`: `python3 -m pip install pytest`):
+CLI and hooks (Python 3.12 or newer is the floor; the script prints an error and exits on an older Python; needs `pytest`: `python3 -m pip install pytest`):
 
 ```bash
 cd plugins/askaway/scripts && python3 -m pytest tests -q
@@ -30,7 +30,7 @@ cd plugins/askaway/scripts && python3 -m pytest tests -q
 | `plugins/askaway/SPEC.md` | The spec: state folder contract, CLI, hooks and panel |
 | `plugins/askaway/tests/` | TypeScript tests |
 | `plugins/askaway/scripts/tests/` | Python tests |
-| `assets/` | The icon |
+| `assets/` | `askaway-icon.svg` (the icon; the same file as `plugins/askaway/assets/icon.svg`) and the README screenshots `band-en.png`, `window-light-en.png` and `window-dark-en.png` |
 
 ## Conventions
 

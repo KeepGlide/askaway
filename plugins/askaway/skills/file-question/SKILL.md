@@ -1,6 +1,6 @@
 ---
 name: file-question
-description: File a question for the user through the Askaway inbox when you need a decision and the user may be away (bypass permissions, away mode, or an unattended run). Use it instead of guessing or blocking. Each question carries a recommended option you continue with unless the question is paused.
+description: File a question for the user through the Askaway inbox when you need a decision and the user may be away (bypass permissions, away mode, or an unattended run). Use it instead of guessing or blocking. Each question carries a recommended option you continue with; only a risk-high question pauses your session, until its answer is delivered.
 metadata:
   domain: agentic
   owner: sophia-phillipa
@@ -55,8 +55,8 @@ Fields (SPEC.md, "State folder"):
 | `analogy` | yes | A comparison that makes the trade-off concrete. |
 | `urgency` | yes | When the answer is due (e.g. `Blocks in ~8 min`), or `Can wait`. |
 | `undo` | yes | What reversing the choice costs (e.g. `changing later ≈ 10 min`). |
-| `risk` | no | The risk of accepting the recommended option: `low` (default) is safe to accept and easy to change later; `medium` is reversible but costs rework; `high` is irreversible, or touches real files, credentials or money, and pauses the session. |
-| `pause` | no | `true` pauses this session until the user answers. |
+| `risk` | no | The risk of accepting the recommended option: `low` (default) is safe to accept and easy to change later; `medium` is reversible but costs rework; `high` is irreversible, or touches real files, credentials or money, and pauses the session until the answer is delivered to it. |
+| `pause` | no | Type-checked only; it pauses nothing. A question pauses its session when `risk` is `high`, and never otherwise. |
 | `run_kind` | no | `main`, `subagent`, `goal`, `loop`, `bash` or `codex`. |
 
 Do not pass `session` or `project`: the CLI fills them from the environment and the working directory.
@@ -66,12 +66,13 @@ Do not pass `session` or `project`: the CLI fills them from the environment and 
 - On `"action": "refile"`, complete the fields named in `error` and file the same question
   again. Never continue without filing it.
 - Continue on `recommended` unless `action` is `pause`.
-- `"action": "pause"` (from `risk: high` or `pause: true`) means: do read-only work
-  or end the turn until the answer arrives. Check with
+- `"action": "pause"` is printed only for a question with `risk: high`. It means: do read-only
+  work or end the turn until the answer is delivered to your session (the pause ends at delivery,
+  not when the user writes the answer). Check with
   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py status <id>` (unquoted, so the
   pause guard lets it through).
-- Pause for real files, credentials, and irreversible actions (deleting data,
-  publishing, spending money).
+- Set `risk` to `high` for real files, credentials, and irreversible actions (deleting data,
+  publishing, spending money). `low` and `medium` never pause: continue on `recommended`.
 - An answer arrives as a line in your context:
   `The user answered Askaway question <id> (<title>): <key> · <label>.`, with
   `(you were using <key> · <label>)` when it differs from your recommendation.

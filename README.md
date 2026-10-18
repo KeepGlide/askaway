@@ -2,7 +2,18 @@
 
 [![🇺🇸 English](https://img.shields.io/badge/%F0%9F%87%BA%F0%9F%87%B8-English-blue.svg)](README.md) [![🇧🇷 Português (Brasil)](https://img.shields.io/badge/%F0%9F%87%A7%F0%9F%87%B7-Portugu%C3%AAs%20(Brasil)-green.svg)](README.pt-BR.md)
 
-**Askaway is a question inbox for Claude Code:** agents file questions with a recommended default while you are away, you answer them in a real panel, and the work continues on the recommended option unless the question is risky.
+**Askaway is a question inbox for Claude Code, on one machine.** While you are *away* (the session runs with `bypassPermissions`, away mode is on, or `CLAUDE_CODE_SESSION_ATTENDED=0`), an agent files each decision it needs as a question with a *recommended* option and keeps working on that option. You answer in the Askaway panel, and each answer goes back to the session that asked. A question is *risky* (`risk` high) when accepting the recommended option is irreversible or touches real files, credentials or money. Only a risky question pauses its session, and the pause ends when the answer is delivered to that session, not when it is written. Low and medium questions never pause: the agent continues on the recommended option. The *fit* score of each option is the agent's own estimate, not a measurement. The state folder lives on this machine only, so a question filed on another computer does not show here.
+
+**Terms used on this page**
+
+| Term | Meaning |
+|---|---|
+| **Away** | The session is away when its permission mode is `bypassPermissions`, away mode is on (`/askaway away`), or `CLAUDE_CODE_SESSION_ATTENDED=0`. An agent that is away files questions instead of waiting. |
+| **Session** | One Claude Code session. Each question records the session that asked, and its answer goes back to that session. |
+| **Recommended** | The option the agent marks as its default. It keeps working on it until you answer, and your answer overrides it. |
+| **Risk** | How risky accepting the recommended option is: `low`, `medium` or `high`. Only `high` pauses. |
+| **Pause** | A hold on the session that asked a `high` question: its edits, shell commands and other changing tool calls are blocked until the answer is delivered to it. |
+| **Fit** | The agent's own 0-100 estimate of how well an option suits the task. Askaway does not measure or check it. |
 
 ![The Askaway pane beside the Context and Environment panes, light theme: two projects, four sessions, five questions, one card open](assets/window-light-en.png)
 
@@ -43,7 +54,7 @@ Askaway does not:
 - **A tree by project and session.** Each project with open questions is a group, with its sessions and their questions under it.
 - **A recommended default.** Every question carries the option the agent would take, so the session keeps working instead of waiting for you.
 - **First click on the desktop.** Each button keeps its press handle across redraws (`hooks/held.ts`), which is the cause of the first click the desktop used to drop.
-- **Risk-aware pausing.** A question marked `high`, or one the agent sets to pause, pauses the session whose id it carries. A question filed without a session id, such as one from Codex, pauses nothing. The others let the session continue.
+- **Risk-aware pausing.** A question with `risk` high pauses the session whose id it carries, until the answer is delivered to that session. A question filed without a session id, such as one from Codex, pauses nothing. Low and medium questions never pause.
 - **Two languages.** English and Brazilian Portuguese, from your locale or with `/askaway lang`.
 
 ## ⚙️ How it works
@@ -193,7 +204,7 @@ The risk label is the risk of accepting the recommended option, as the agent jud
 
 - **✅ low risk:** safe to accept and easy to change later.
 - **⚠️ medium risk:** reversible, but changing it costs rework.
-- **🛑 high risk:** irreversible, or it touches real files, credentials or money. A high-risk question pauses the session that asked: its edits and Bash commands are blocked until you answer. The agent can still read and end its turn.
+- **🛑 high risk:** irreversible, or it touches real files, credentials or money. A high-risk question pauses the session that asked: its edits, shell commands and other changing tool calls are blocked until the answer is delivered to that session, at its next hook run. The agent can still read and end its turn.
 
 ### Hotkeys
 
@@ -253,13 +264,15 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache b
 | `gains` | yes | One or two sentences on what the user gains with it. Up to 300 characters. |
 | `losses` | yes | One or two sentences on what the user gives up or risks with it. Up to 300 characters. |
 | `analogy`, `urgency`, `undo` | yes | `analogy` is a comparison that makes the trade-off clear; `urgency` is the deadline, such as `Can wait` or `Blocks in ~8 min`; `undo` is the cost of reversing the choice, such as `changing later ≈ 10 min`. Up to 300 characters each. |
-| `risk` | no | The risk of accepting the recommended option: `low` (default) is safe to accept and easy to change later; `medium` is reversible but costs rework; `high` is irreversible, or touches real files, credentials or money, and pauses the session. |
-| `pause` | no | `true` pauses this session until the user answers. |
+| `risk` | no | The risk of accepting the recommended option: `low` (default) is safe to accept and easy to change later; `medium` is reversible but costs rework; `high` is irreversible, or touches real files, credentials or money, and pauses the session until the answer is delivered to it. |
+| `pause` | no | Type-checked only; it does not pause anything. A question pauses its session when `risk` is `high`, and never otherwise. |
 | `run_kind` | no | `main`, `subagent`, `goal`, `loop`, `bash` or `codex`. |
 
 Do not pass `session` or `project`: the CLI fills them from the environment and the working directory. Text longer than its limit is cut, not refused.
 
-After filing, the agent continues on `recommended` unless the output says `"action": "pause"`. An invalid entry prints `"action": "refile"` with an `error` that names the missing fields, for example `missing fields: analogy; option A: fit`. The agent completes those fields and files the question again; it never continues without filing. Only an internal failure prints `"action": "continue"` with `"error": "internal error"`, and then nothing was filed.
+The CLI also has `answer <id> <key> [--by <source>]`, which records an answer; agents must not call it. `--by` accepts exactly `cli` (the default), `panel`, `accept_recommended` or `accept_all`; any other value is refused. A `cli` answer to a question that has a session is refused unless the shell's `CLAUDE_CODE_SESSION_ID` is that same session; a shell with no session id is refused too, and the refusal says to answer from the Askaway panel or from the session that asked. Answers from `panel`, `accept_recommended` and `accept_all` are not tied to a shell session. The first answer written to an item wins.
+
+After filing, the agent continues on `recommended` unless the output says `"action": "pause"`, which the CLI prints only for a `risk` high question. An invalid entry prints `"action": "refile"` with an `error` that names the missing fields, for example `missing fields: analogy; option A: fit`. The agent completes those fields and files the question again; it never continues without filing. Only an internal failure prints `"action": "continue"` with `"error": "internal error"`, and then nothing was filed.
 
 ## 🗂️ State folder
 
@@ -275,6 +288,18 @@ After filing, the agent continues on `recommended` unless the output says `"acti
 Writes go to a hidden `.<name>.<hex>.tmp` file first and are then renamed into place; prune removes the stale `.tmp` files.
 
 `ASKAWAY_HOME` replaces `~/.claude/state/askaway`. The full contract is in [plugins/askaway/SPEC.md](plugins/askaway/SPEC.md).
+
+### What Askaway reads and writes
+
+- **Hooks** (`plugins/askaway/hooks/command-hooks.json`) read the hook input from stdin: session id, permission mode, working directory, tool name and tool input.
+  - `SessionStart` (on `startup`, `resume`, `clear` or `compact`), `UserPromptSubmit` and `PostToolUse` run `hook deliver`: it reads `q/`, `a/` and `d/`, writes a delivery marker to `d/` for each answer it hands over, and puts the answer text into that session's context.
+  - `PreToolUse` on `AskUserQuestion` runs `hook ask-guard`: it reads the away state and writes nothing.
+  - `PreToolUse` on `Edit|Write|NotebookEdit|Bash|Agent|mcp__.*` runs `hook pause-guard`: it reads `q/`, `a/` and `d/` and writes nothing.
+- **Session titles:** when a question is filed, `ask` reads the asking session's transcript, `~/.claude/projects/<project folder>/<session>.jsonl`, and keeps only its title entries (`custom-title`, `agent-name`, `ai-title`). It does not read prompts or replies. The title labels the session on the card.
+- **Claude Desktop release markers:** `deliver` looks for `<session>.desktop-released.json` in the same project folder, to close the answers of a session that Claude Desktop has released.
+- **Panel (mod):** reads `q/`, `a/` and `d/`; it writes answers, the away toggle and its own store keys (the language choice).
+- **Prune:** at most once a day, `deliver` removes closed items settled more than 30 days ago and stale temporary files.
+- **The CLI and the hooks write only inside the state folder.** Each file is written to a temporary file first and then renamed. Nothing is sent over the network, and nothing is written to your projects or transcripts.
 
 ## 🔒 Privacy
 
