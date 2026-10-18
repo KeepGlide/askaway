@@ -18,7 +18,7 @@ Terms:
   asking session, and its family's other sessions). A question with no `family` (filed before the field existed) groups by
   its project (`project`). The group's label is the root's title (`family_title`), or the project's name when there is none.
 - **Session**: the questions of a group that were asked by one session (`session`). The root session of a family (its
-  `session` is the group's `family`) is the group itself: its questions sit right under the group's label, with no session
+  `desktop_session` is the group's `family`; `isRootSession`, `hooks/model.ts`) is the group itself: its questions sit right under the group's label, with no session
   row, so the family's title is never drawn twice. The other sessions of the family are derived sessions, drawn as rows under
   the root's questions. A question with no session sits in its group under the session label "the session" ("a sessão").
 - **Round**: the open questions of one group; Submit all writes the round of the group on screen.
@@ -335,7 +335,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
     the, to, via, with; Portuguese: its own list, `MINOR_WORDS`). A word that already has a capital stays as typed.
   - **Label of each group**: a bold row (`renderGroup`, `hooks/pane.tsx`). The group on screen is the wizard's `groupKey`
     while that group is open, else the first open group.
-    The rows of the root session (its `session` equal to the group key) come first, one step under the label, with no
+    The rows of the root session (its `desktop_session` equal to the group key) come first, one step under the label, with no
     lead and no session row (`renderRootRows`, `hooks/pane.tsx`). Its derived sessions are rows below them: "├ <session>", and
     "└ <session>" for the last one, indented with the Box's `paddingLeft`. Each question of a session is a row
     with a mark and its title: ● the question on screen (bold), ✓ picked, ○ not yet picked.

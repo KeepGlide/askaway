@@ -36,7 +36,8 @@ export type Leaving = Readonly<Partial<Record<string, number>>>
 // `session` is the Desktop session of the question (desktop_session), where the question is still known and has one.
 export type HistoryEntry = { id: string; title: string; session?: string; line: string; clearable: boolean }
 // The answers of one session of a family, newest first.
-export type HistorySession = { key: string; label: string; entries: HistoryEntry[] }
+// `isRoot`: the session is the root of its family (its `desktop_session` is the group's `family`).
+export type HistorySession = { key: string; label: string; isRoot: boolean; entries: HistoryEntry[] }
 // A family (or the fallback group of answers whose question is gone) with its sessions, in the order of its newest answer.
 export type HistoryGroup = { key: string; label: string; sessions: HistorySession[] }
 export type StatusContext = {
@@ -338,6 +339,12 @@ export const desktopSessionOf = (value: unknown): string | undefined =>
 export const escapeMarkdown = (text: string): string =>
   text.replace(/[\t\n\r]+/g, ' ').replace(MARKDOWN_PUNCTUATION, '\\$&')
 
+// Whether the question's session is the root of its family: its Desktop session (`desktop_session`, local_<uuid>) is the
+// family root (`family`, the same kind of id). The CLI session id (`session`) is never compared: it is a plain uuid.
+export function isRootSession(question: Pick<Question, 'desktop_session' | 'family'> | undefined, groupKey: string): boolean {
+  return question?.desktop_session !== undefined && question.family !== undefined && question.desktop_session === groupKey
+}
+
 export function groupKeyOf(question: Pick<Question, 'project' | 'family'>): string {
   return question.family ?? question.project
 }
@@ -478,6 +485,7 @@ function placeEntry(groups: Map<string, HistoryBuild>, lang: Lang, question: Que
   const session = group.sessions.get(sessionKey) ?? {
     key: sessionKey,
     label: sessionLabelOf({ session_title: question?.session_title }, lang),
+    isRoot: isRootSession(question, groupKey),
     entries: [],
   }
   group.sessions.set(sessionKey, session)

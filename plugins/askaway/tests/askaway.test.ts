@@ -3253,12 +3253,12 @@ test('a session family is one group labelled by its root title; an old question 
   await ui.unmount()
 })
 
-test('the root session of a family draws no session row: its questions sit right under the family title, before the derived sessions', async ($, on) => {
+test('the root session of a family (desktop_session equal to family) draws no session row: its questions sit right under the family title, before the derived sessions', async ($, on) => {
   const family = { family: 'local_root', family_title: 'release checklist review' }
   const files = new Map([
-    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'local_root', session_title: 'release checklist review', ...family })],
-    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { session: 'local_child', session_title: 'child session', ...family })],
-    [path('q', 'q-l3-cccccc'), question('q-l3-cccccc', 3000, { session: 'local_root', session_title: 'release checklist review', ...family })],
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'cli-1', desktop_session: 'local_root', session_title: 'release checklist review', ...family })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { session: 'cli-2', desktop_session: 'local_child', session_title: 'child session', ...family })],
+    [path('q', 'q-l3-cccccc'), question('q-l3-cccccc', 3000, { session: 'cli-1', desktop_session: 'local_root', session_title: 'release checklist review', ...family })],
   ])
   stubHost(on, files)
   await $.session.start(SESSION)

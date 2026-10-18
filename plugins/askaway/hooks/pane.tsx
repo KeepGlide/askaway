@@ -20,6 +20,7 @@ import {
   escapeMarkdown,
   firstBlockOf,
   groupLabelOf,
+  isRootSession,
   leadOf,
   otherLetterOf,
   piecesOf,
@@ -158,7 +159,7 @@ type TreeContext = {
 type RowPlace = { lead: string; indent: number }
 // A row under a session, drawn at its place.
 type TreeRow = (place: RowPlace) => RenderElement
-// A session of a branch. The root session of a family (`isRoot`: its key is the group's) draws no row of its own: its
+// A session of a branch. The root session of a family (`isRoot`: its Desktop session is the family root) draws no row of its own: its
 // rows sit right under the group's label, before the derived sessions, so the family's title is never drawn twice.
 type TreeSession = { key: string; label: string; isRoot: boolean; rows: readonly TreeRow[] }
 type TreeBranch = { key: string; label: string; sessions: readonly TreeSession[] }
@@ -188,7 +189,7 @@ function renderGroup(tree: TreeContext, group: Group): RenderElement {
         {
           key: `session-${first.id}`,
           label: sessionLabelOf(first, tree.lang),
-          isRoot: first.session === group.key,
+          isRoot: isRootSession(first, group.key),
           rows: questions.map(question => (place: RowPlace) => renderTreeQuestion(tree, question, place)),
         },
       ]
@@ -252,8 +253,7 @@ function renderHistory(tree: TreeContext, history: readonly HistoryGroup[]): Ren
             sessions: group.sessions.map(session => ({
               key: `history-session-${session.key}`,
               label: session.label,
-              // A row with no session (key '') is never a root, even in a group keyed '' (no family and no project).
-              isRoot: session.key !== '' && session.key === group.key,
+              isRoot: session.isRoot,
               rows: session.entries.map(entry => (place: RowPlace) => renderHistoryEntry(tree.ui, entry, place)),
             })),
           }),
