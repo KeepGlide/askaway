@@ -1350,6 +1350,41 @@ test('an answer unread past the 7-day TTL expires with no marker, and its line i
   await ui.unmount()
 })
 
+const ONE_DAY_MS = 24 * 60 * 60 * 1000
+const footerOf = async (ui: Awaited<ReturnType<typeof mountPane>>): Promise<string> =>
+  (await textsOf(ui)).find(text => text.startsWith('Nada')) ?? ''
+
+test('the footer moves an unread answer to expired once the 7-day TTL passes, without a new poll write', async ($, on) => {
+  // Stamped just inside the TTL at the clock's start, so the TTL passes within one short advance.
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'A', -ANSWER_TTL_MS + 30_000)],
+  ])
+  const { clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(await footerOf(ui)).toContain('1 ainda não lida · 0 expiradas')
+  await clock.advance(60_000)
+  await clock.settle()
+  expect(await footerOf(ui)).toContain('0 ainda não lidas · 1 expirada')
+  await ui.unmount()
+})
+
+test('the footer drops an answer from the last-24-hours count once the window passes, with no status line change', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'A', -ONE_DAY_MS + 30_000)],
+  ])
+  const { clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(await footerOf(ui)).toContain('1 respondida nas últimas 24 h')
+  await clock.advance(60_000)
+  await clock.settle()
+  expect(await footerOf(ui)).toContain('nenhuma respondida nas últimas 24 h')
+  await ui.unmount()
+})
+
 test('a legacy answer written by accept_recommended reads as a normal status line', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
@@ -2608,7 +2643,7 @@ test('the band counts the groups: two projects read "2 groups" in English', asyn
 
 // The pane is drawn again only when an atom it reads is written, so these guards count the state writes: a write that
 // the pane does not need (an equal board, an unchanged tick) is the redraw the guard forbids.
-test('a minute turning while only an answered question is open writes no atom the pane draws from, so the pane is not redrawn', async ($, on) => {
+test('a minute turning while only an answered question is open writes only the clock tick, which redraws the footer age', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 0)],
     [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'A', 0)],
@@ -2619,7 +2654,8 @@ test('a minute turning while only an answered question is open writes no atom th
   const ui = await mountPane($)
   const writesBefore = stateWrites.length
   await clock.advance(60_000)
-  expect(stateWrites.slice(writesBefore)).toEqual([])
+  // The footer draws while no question is open, and its age label ("now", then "1 min") turns with the minute.
+  expect(stateWrites.slice(writesBefore)).toEqual(['tick'])
   expect(await ui.find({ type: 'Text', text: '⏳ Resposta A enviada para App' })).toBeDefined()
   await ui.unmount()
 })

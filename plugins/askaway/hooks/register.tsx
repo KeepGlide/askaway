@@ -206,9 +206,9 @@ async function mergeBoard($: EngineInterface, next: Board): Promise<void> {
   $.ui.invalidate('ui.render')
 }
 
-// The pane draws from the clock in two ways: the age label of the question on the card (to the minute) and the delivery
-// lines (their marks are seconds apart). The tick is written only when one of them would read differently at `now`; a
-// tick that changes no drawn text would redraw the pane on every poll.
+// The pane draws from the clock in three ways: the age label of the question on the card (to the minute), the delivery
+// lines (their marks are seconds apart) and the footer counts (the 24 h window and the 7-day TTL). The tick is written
+// only when one of them would read differently at `now`; a tick that changes no drawn text would redraw the pane on every poll.
 async function tickClock($: EngineInterface, now: number, shownAt: Record<string, number>): Promise<void> {
   const last = await read($, clockTick)
   const lang = await read($, langAtom)
@@ -222,6 +222,7 @@ async function tickClock($: EngineInterface, now: number, shownAt: Record<string
     JSON.stringify([
       onCard === undefined ? null : ageLabel(lang, onCard.ts, at),
       statusLines(lang, current, { cleared: [], shownAt, now: at, leaving: {} }).map(line => line.text),
+      footerText(lang, current, at) ?? null,
     ])
   if (drawnAt(last) !== drawnAt(now)) await update($, clockTick, () => now)
 }
