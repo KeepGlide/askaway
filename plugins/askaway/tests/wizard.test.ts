@@ -10,6 +10,7 @@ import {
   pruneWizard,
   screenOf,
   submittable,
+  submittedOther,
   type Group,
   type Pick,
   type Wizard,
@@ -253,23 +254,39 @@ test('submittable lists every question in group order once all are picked, else 
   expect(submittable({ key: 'empty', sessions: [], questions: [] }, EMPTY_WIZARD)).toBeUndefined()
 })
 
-test('pruneWizard drops the picks and Other draft of questions no longer open', () => {
+test('pruneWizard drops the picks of questions no longer open', () => {
   const wizard: Wizard = {
     groupKey: '/work/app',
     step: 0,
     questionId: null,
     picks: { 'q-a-000001': A, 'q-gone-000002': B },
-    other: 'q-gone-000002',
   }
   const pruned = pruneWizard(wizard, ['q-a-000001'], 1)
   expect(pruned.picks).toEqual({ 'q-a-000001': A })
-  expect(pruned.other).toBeNull()
   expect(Object.keys(wizard.picks)).toEqual(['q-a-000001', 'q-gone-000002'])
 })
 
-test('pruneWizard keeps the Other field of a question that is still open', () => {
-  const wizard: Wizard = { ...EMPTY_WIZARD, other: 'q-a-000001' }
-  expect(pruneWizard(wizard, ['q-a-000001'], 1).other).toBe('q-a-000001')
+test('submittedOther records the trimmed text as the Other pick and keeps the wizard where it is', () => {
+  const wizard: Wizard = { ...EMPTY_WIZARD, step: 1, picks: { 'q-a-000001': A } }
+  const next = submittedOther(wizard, 'q-b-000002', '  Use a fork  ')
+  expect(next.picks).toEqual({ 'q-a-000001': A, 'q-b-000002': { key: 'other', text: 'Use a fork' } })
+  expect(next.step).toBe(1)
+})
+
+test('submittedOther with blank text takes an Other pick away, and leaves a chosen option alone', () => {
+  const picked: Wizard = { ...EMPTY_WIZARD, picks: { 'q-a-000001': { key: 'other', text: 'Use a fork' } } }
+  expect(submittedOther(picked, 'q-a-000001', '   ').picks).toEqual({})
+  const option: Wizard = { ...EMPTY_WIZARD, picks: { 'q-a-000001': A } }
+  expect(submittedOther(option, 'q-a-000001', '   ').picks).toEqual({ 'q-a-000001': A })
+})
+
+test('submittedOther keeps at most 500 code points of the trimmed text, so 600 typed characters store 500', () => {
+  const long = submittedOther(EMPTY_WIZARD, 'q-a-000001', `  ${'x'.repeat(600)}  `).picks['q-a-000001']
+  expect(long).toEqual({ key: 'other', text: 'x'.repeat(500) })
+  // Code points, not UTF-16 units: an emoji counts as one.
+  const emoji = submittedOther(EMPTY_WIZARD, 'q-a-000001', '😀'.repeat(600)).picks['q-a-000001']
+  expect([...(emoji?.text ?? '')]).toHaveLength(500)
+  expect(submittedOther(EMPTY_WIZARD, 'q-a-000001', 'y'.repeat(500)).picks['q-a-000001']?.text).toBe('y'.repeat(500))
 })
 
 test('pruneWizard clamps the step to the last question of the group on screen after the drop', () => {

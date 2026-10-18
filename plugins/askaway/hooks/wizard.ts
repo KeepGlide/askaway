@@ -3,22 +3,21 @@
 // family (or of one project, for questions with no family), in tree order (session by session). The step runs
 // 0..total-1 over the questions of the group; the last question carries the Submit all button, so there is no review step.
 import type { Question } from '../types'
-import { OTHER_KEY, groupKeyOf } from './model'
+import { OTHER_KEY, OTHER_TEXT_MAX, groupKeyOf } from './model'
 
 // A chosen option. The key 'other' carries the free text in `text`.
 export type Pick = { key: string; text?: string }
 
 // `questionId` is the id of the question on screen (the one at `step`); the pruning re-anchors the step to it when the
-// list shifts. `other` is the id of the question whose "Other…" field is open; the text typed there lives in the field only.
+// list shifts. The text typed in an "Other…" field lives in the field only until Enter records it as a pick.
 export type Wizard = {
   groupKey: string | null
   step: number
   questionId: string | null
   picks: Record<string, Pick>
-  other: string | null
 }
 
-export const EMPTY_WIZARD: Wizard = { groupKey: null, step: 0, questionId: null, picks: {}, other: null }
+export const EMPTY_WIZARD: Wizard = { groupKey: null, step: 0, questionId: null, picks: {} }
 
 // The open questions of one group. `sessions` holds the same questions split by session (sessions in the order of
 // their oldest question, questions oldest first); `questions` is those sessions one after the other: the step order.
@@ -81,16 +80,15 @@ export function submittable(group: Group, wizard: Wizard): { id: string; pick: P
   return answers.length > 0 ? answers : undefined
 }
 
-// Typing into the Other field records Other as the pick, with the text typed so far, and keeps the wizard where it is; blank
-// text takes an Other pick away. Enter still records and moves on (choose).
-export function typedOther(wizard: Wizard, id: string, text: string): Wizard {
-  const trimmed = text.trim()
+// Enter in the Other field records its trimmed text, capped at OTHER_TEXT_MAX code points, as the Other pick and keeps the
+// wizard where it is; blank text takes an Other pick away. It never moves on: Submit and Next do that, as for any option.
+export function submittedOther(wizard: Wizard, id: string, text: string): Wizard {
+  const trimmed = Array.from(text.trim()).slice(0, OTHER_TEXT_MAX).join('')
   const picks = { ...wizard.picks }
   const pick: Pick | undefined = picks[id]
   if (trimmed !== '') picks[id] = { key: OTHER_KEY, text: trimmed }
   else if (pick?.key === OTHER_KEY) delete picks[id]
-  // The field holds text only while it is not blank: the hotkeys are off exactly while typed text is in it.
-  return { ...wizard, picks, other: trimmed !== '' ? id : null }
+  return { ...wizard, picks }
 }
 
 // The question on screen at the step (clamped into the group), or undefined for a group with no question.
@@ -166,6 +164,5 @@ export function pruneWizard(wizard: Wizard, openIds: readonly string[], activeTo
     ...wizard,
     step: clampStep(wizard.step, activeTotal),
     picks: keepOpen(wizard.picks, open),
-    other: wizard.other !== null && open.has(wizard.other) ? wizard.other : null,
   }
 }

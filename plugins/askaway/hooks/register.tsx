@@ -410,7 +410,8 @@ async function mintPanelToken($: EngineInterface, home: string): Promise<string>
 // whether this answer landed (`written`).
 async function answerViaCli($: EngineInterface, home: string, id: string, key: string, text?: string): Promise<boolean> {
   const argv = ['python3', `${$.plugin.root}/scripts/askaway.py`, 'answer', id, key, '--by', 'panel', '--strict']
-  if (text !== undefined) argv.push('--text', text)
+  // One `--text=<text>` argument: a text that is itself a word such as `--help` is then never read as an option.
+  if (text !== undefined) argv.push(`--text=${text}`)
   const token = await mintPanelToken($, home)
   const who = await read($, whoAtom)
   const env = { ASKAWAY_HOME: home, ASKAWAY_PANEL_TOKEN: token, ...(who ? { ASKAWAY_WHO: who } : {}) }
@@ -523,7 +524,6 @@ function clearPicks(prev: Wizard, ids: readonly string[], first: string | null):
     step: 0,
     questionId: first,
     picks: Object.fromEntries(Object.entries(prev.picks).filter(([id]) => !drop.has(id))),
-    other: prev.other !== null && drop.has(prev.other) ? null : prev.other,
   }
 }
 
@@ -574,10 +574,7 @@ async function submitOne($: EngineInterface, id: string): Promise<void> {
 async function pickOption($: EngineInterface, id: string, choice: Pick): Promise<void> {
   const { open, group, leaving: fading } = await snapshot($)
   if (group === undefined || fading[id] !== undefined || !group.questions.some(question => question.id === id)) return
-  await update($, wizardAtom, prev => {
-    const chosen = flow.choose(prunedWizard(prev, open), group, id, choice)
-    return { ...chosen, other: chosen.other === id ? null : chosen.other }
-  })
+  await update($, wizardAtom, prev => flow.choose(prunedWizard(prev, open), group, id, choice))
 }
 
 // Moves the wizard with the group on screen; a move that needs the group goes through here. The move starts from the
@@ -593,13 +590,6 @@ async function focusOther($: EngineInterface, id: string): Promise<void> {
   await $.ui.focus({ requestId: PANE, key: `${OTHER_INPUT_PREFIX}${id}` })
 }
 
-// Typing in the field records Other with the text so far, without moving on. A question that is not open takes nothing.
-async function typeOther($: EngineInterface, id: string, text: string): Promise<void> {
-  const { open, leaving: fading } = await snapshot($)
-  if (fading[id] !== undefined || !open.some(question => question.id === id)) return
-  await update($, wizardAtom, prev => flow.typedOther(prunedWizard(prev, open), id, text))
-}
-
 // The tree's press on a question: the card on screen becomes that question, as if the wizard had walked there with Next or
 // Back, and its group becomes the group on screen; then the card scrolls into view. A question that is fading out takes
 // nothing.
@@ -612,11 +602,12 @@ async function jumpToQuestion($: EngineInterface, id: string): Promise<void> {
   await $.ui.scroll({ in: PANE, to: { key: `card-${id}` }, block: 'start' })
 }
 
-// The free text of "Other…" is a pick like an option; blank text is no answer.
+// Enter in the "Other…" field records its text as the pick and keeps the card; blank text takes the pick away. A question
+// that is not open, or fading out, takes nothing.
 async function submitOther($: EngineInterface, id: string, text: string): Promise<void> {
-  const trimmed = text.trim()
-  if (trimmed === '') return
-  await pickOption($, id, { key: OTHER_KEY, text: trimmed })
+  const { open, leaving: fading } = await snapshot($)
+  if (fading[id] !== undefined || !open.some(question => question.id === id)) return
+  await update($, wizardAtom, prev => flow.submittedOther(prunedWizard(prev, open), id, text))
 }
 
 // Opens the pane with focus; the result says whether it is drawn (a narrow terminal leaves it undrawn).
@@ -645,7 +636,6 @@ const actionsFor = ($: EngineInterface): PaneActions => ({
   dismissEnded: id => report($, withFolder($, folder => dismissEnded($, folder, id))),
   pick: (id, key) => report($, pickOption($, id, { key })),
   focusOther: id => report($, focusOther($, id)),
-  typeOther: (id, text) => report($, typeOther($, id, text)),
   submitOne: id => report($, submitOne($, id)),
   jump: id => report($, jumpToQuestion($, id)),
   submitOther: (id, text) => report($, submitOther($, id, text)),

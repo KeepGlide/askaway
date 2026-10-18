@@ -65,7 +65,6 @@ export type PaneActions = {
   skipWho: () => void
   pick: (id: string, key: string) => void
   focusOther: (id: string) => void
-  typeOther: (id: string, text: string) => void
   submitOne: (id: string) => void
   jump: (id: string) => void
   submitOther: (id: string, text: string) => void
@@ -74,14 +73,11 @@ export type PaneActions = {
   submit: () => void
 }
 
-// What one question card draws from: the question, the wizard state, whether it is fading out after a press, and
-// whether its Other field holds typed text (then the card draws no hotkeys: typed text must not press a button). The
-// Input reports typing (onInput) but no focus change, so the pane cannot see a bare focus on the field.
+// What one question card draws from: the question, the wizard state and whether it is fading out after a press.
 type CardContext = {
   question: Question
   wizard: Wizard
   isLeaving: boolean
-  isTyping: boolean
   held: HeldButtons
   surface: RenderSurface
   theme: ThemeFamily
@@ -371,12 +367,8 @@ const optionDetailsOf = (lang: Lang, option: QuestionOption): [string, string][]
 // The branch glyph that opens each sub-row under an option, and the field under "Other…".
 const BRANCH_PREFIX = '└ '
 
-// A hotkey is drawn only while the card's Other field is shut.
-const hotkeyFor = (card: CardContext, key: string | undefined): string | undefined => (card.isTyping ? undefined : key)
-
 // An option answers to its key letter in lower case; a key that is not one letter draws no hotkey.
-const optionHotkey = (card: CardContext, key: string): string | undefined =>
-  hotkeyFor(card, /^[a-z]$/i.test(key) ? key.toLowerCase() : undefined)
+const optionHotkey = (key: string): string | undefined => (/^[a-z]$/i.test(key) ? key.toLowerCase() : undefined)
 
 // Back, Next and Submit take the first free letters of their surface's pool, in that order. A letter that an option key
 // or Other… uses on this card is skipped, so no shortcut clashes with an option. The terminal pool avoids b, n and s, because
@@ -391,7 +383,7 @@ const NAV_POOLS: Partial<Record<RenderSurface, readonly string[]>> = {
 const letterFor = (card: CardContext, key: NavKey): string | undefined => {
   const taken = [...card.question.options.map(option => option.key.toLowerCase()), otherLetterOf(card.question.options)]
   const free = (NAV_POOLS[card.surface] ?? []).filter(letter => !taken.includes(letter))
-  return hotkeyFor(card, free[NAV_ORDER.indexOf(key)])
+  return free[NAV_ORDER.indexOf(key)]
 }
 
 // One question on screen: the title in bold with the risk and age beside it, the Urgency box under it (when set), the bold
@@ -413,7 +405,6 @@ function renderQuestion(
     question,
     wizard: view.wizard,
     isLeaving: view.leaving[question.id] !== undefined,
-    isTyping: view.wizard.other === question.id,
     held,
     surface: view.surface,
     theme: view.theme,
@@ -519,7 +510,7 @@ function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContex
   const text = `${option.key} · ${option.label}${isRecommended ? ` (${t(lang, 'option.recommended')})` : ''}`
   const isBold = isRecommended && !isPicked
   const key = `opt-${question.id}-${option.key}`
-  const hotkey = optionHotkey(card, option.key)
+  const hotkey = optionHotkey(option.key)
   const tradeoffLine = tradeoffLineOf(lang, option)
   const details = optionDetailsOf(lang, option)
   const onPress = () => {
@@ -557,9 +548,9 @@ function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContex
 
 // "Other…": the last row under the options, a plain link drawn with its letter, "C · Other…" (otherLetterOf). Its field
 // sits on the row under it, under the same "└ " branch glyph the option sub-rows draw. The field is always open, ready to
-// type; the link only focuses it. Typing records Other with the text typed so far (typeOther), and Enter records it and
-// moves on (submitOther). The link is bold once Other is the pick; the typed text is not drawn again under it. A surface
-// with no Input (mobile) draws no field, so no Other option either.
+// type; the link only focuses it. Enter records the text as the Other pick (submitOther) and keeps the card where it is;
+// the field keeps its own text. The link is bold once Other is the pick; the typed text is not drawn again under it. A
+// surface with no Input (mobile) draws no field, so no Other option either.
 function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext): RenderElement | false {
   if (!('Input' in ui)) return false
   const { Box, Button, Input, Text } = ui
@@ -569,7 +560,7 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
   const letter = otherLetterOf(question.options)
   const linkText = t(lang, 'option.other')
   const label = letter === undefined ? linkText : `${letter.toUpperCase()} · ${linkText}`
-  const hotkey = letter === undefined ? undefined : hotkeyFor(card, letter)
+  const hotkey = letter
   const onPress = () => {
     if (isLeaving) return
     actions.focusOther(question.id)
@@ -590,7 +581,6 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
               key={`${OTHER_INPUT_PREFIX}${question.id}`}
               placeholder={t(lang, 'input.placeholder')}
               submitLabel={t(lang, 'input.send')}
-              onInput={text => actions.typeOther(question.id, text)}
               onSubmit={text => actions.submitOther(question.id, text)}
             />
           </Box>

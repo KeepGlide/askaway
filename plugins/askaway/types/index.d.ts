@@ -88,7 +88,7 @@ export type Board = {
 }
 
 // The drawn state the hooks module reads and writes (see hooks/register.tsx), named in the contract.
-// `wizard` mirrors hooks/wizard.ts `Wizard`: the window on screen, the step, the picks and the open "Other…" field.
+// `wizard` mirrors hooks/wizard.ts `Wizard` (see the wizard field below).
 // The shape is written out here so the contract stands on its own.
 declare module 'claude-code' {
   interface PluginState {
@@ -117,13 +117,13 @@ declare module 'claude-code' {
       // "light", "dark" for one starting with "dark" or no theme row, "unknown" for any other value (auto, custom:<slug>),
       // which draws no fill. Read from the engine's theme row at session start, and written on each config.set of it.
       theme: 'dark' | 'light' | 'unknown'
-      // The question wizard: window key, step (0..total, total = review), picks by question id and the open "Other…"
-      // field.
+      // The question wizard (hooks/wizard.ts `Wizard`): the group on screen, the step, the question on screen and the picks
+      // by question id. An Other pick carries its free text in `text`.
       wizard: {
-        windowKey: string | null
+        groupKey: string | null
         step: number
+        questionId: string | null
         picks: Record<string, { key: string; text?: string }>
-        other: { id: string; text: string } | null
       }
     }
   }
