@@ -8,7 +8,9 @@ import re
 import stat
 import subprocess
 import sys
+import threading
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -29,6 +31,7 @@ def home(tmp_path, monkeypatch):
     state = tmp_path / "inbox"
     monkeypatch.setenv("ASKAWAY_HOME", str(state))
     monkeypatch.setenv("ASKAWAY_WHO", WHO)
+    monkeypatch.setenv("ASKAWAY_DESKTOP_SESSIONS", str(tmp_path / "desktop"))
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ATTENDED", raising=False)
     for name in [n for n in os.environ if n.startswith("CODEX_")]:
@@ -1602,6 +1605,218 @@ def test_ask_files_the_asking_sessions_title(home, capsys, monkeypatch):
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
     out = cli(capsys, "ask", "--json", json.dumps(base_entry()))
     assert stored(home, "q", out["id"])["session_title"] == "Cache work"
+
+
+# ---- Claude Desktop family of the asking session -------------------------
+
+def desktop_folder(home: Path) -> Path:
+    folder = home.parent / "desktop" / "org" / "user"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def write_desktop(home: Path, session_id: str, cli_session: str, title: str = "", **extra: object) -> None:
+    record = {"sessionId": session_id, "cliSessionId": cli_session, "title": title, "cwd": "/workspace/demo",
+              **extra}
+    (desktop_folder(home) / f"{session_id}.json").write_text(json.dumps(record), encoding="utf-8")
+
+
+def spawned(parent_id: str, title: str) -> dict[str, str]:
+    return {"sessionId": parent_id, "title": title}
+
+
+def write_chain(home: Path, length: int) -> None:
+    """local_0 is the root; each local_N forks from local_N-1, so cli-N sits N hops below the root."""
+    write_desktop(home, "local_0", "cli-0", "Root")
+    for depth in range(1, length + 1):
+        write_desktop(home, f"local_{depth}", f"cli-{depth}", f"Level {depth}",
+                      forkedFromSessionId=f"local_{depth - 1}")
+
+
+def test_desktop_root_defaults_to_the_claude_desktop_folder(monkeypatch):
+    monkeypatch.delenv("ASKAWAY_DESKTOP_SESSIONS")
+    assert askaway.DESKTOP_SESSIONS_ROOT == Path.home() / ".config" / "Claude" / "claude-code-sessions"
+    assert askaway.desktop_sessions_root() == askaway.DESKTOP_SESSIONS_ROOT
+
+
+def test_ask_files_the_desktop_family_root_and_titles(home, capsys, monkeypatch):
+    write_desktop(home, "local_root", "cli-root", "Root title")
+    write_desktop(home, "local_child", "cli-child", "Child title", spawnedFrom=spawned("local_root", "Root title"))
+    write_desktop(home, "local_fork", "cli-fork", "Fork title", forkedFromSessionId="local_child")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "cli-fork")
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry()))
+    entry = stored(home, "q", out["id"])
+    assert entry["family"] == "local_root" and entry["family_title"] == "Root title"
+    assert entry["session_title"] == "Fork title"
+
+
+def test_ask_clips_the_family_title_like_the_session_title(home, capsys, monkeypatch):
+    write_desktop(home, "local_root", "cli-root", "r" * 200)
+    write_desktop(home, "local_child", "cli-child", "Child", forkedFromSessionId="local_root")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "cli-child")
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry()))
+    family_title = stored(home, "q", out["id"])["family_title"]
+    assert len(family_title) == 80 and family_title.endswith("…")
+
+
+def test_ask_without_a_desktop_file_keeps_the_transcript_title(home, capsys, monkeypatch):
+    write_transcript(home, [custom("Cache work")])
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry()))
+    entry = stored(home, "q", out["id"])
+    assert entry["family"] is None and entry["family_title"] is None
+    assert entry["session_title"] == "Cache work"
+
+
+def test_desktop_title_wins_over_the_transcript_title(home):
+    write_desktop(home, "local_one", SESSION, "Window title")
+    write_transcript(home, [custom("Old transcript title")])
+    assert askaway.session_title(SESSION, desktop=askaway.desktop_session(SESSION)) == "Window title"
+
+
+def test_an_empty_desktop_title_falls_back_to_the_transcript(home):
+    write_desktop(home, "local_one", SESSION, "   ")
+    write_transcript(home, [custom("Cache work")])
+    assert askaway.session_title(SESSION, desktop=askaway.desktop_session(SESSION)) == "Cache work"
+
+
+def test_a_missing_root_file_takes_its_title_from_the_child_spawn_record(home):
+    write_desktop(home, "local_child", "cli-child", "Child", spawnedFrom=spawned("local_gone", "Gone title"))
+    assert askaway.desktop_family("cli-child") == ("local_gone", "Gone title")
+
+
+def test_a_session_with_no_parent_is_its_own_family_root(home):
+    write_desktop(home, "local_solo", "cli-solo", "Solo")
+    assert askaway.desktop_family("cli-solo") == ("local_solo", "Solo")
+
+
+def test_a_family_with_no_title_anywhere_is_none(home):
+    write_desktop(home, "local_root", "cli-root", "")
+    write_desktop(home, "local_child", "cli-child", "Child", forkedFromSessionId="local_root")
+    assert askaway.desktop_family("cli-child") is None
+
+
+def test_a_fork_cycle_gives_no_family_and_no_hang(home):
+    write_desktop(home, "local_a", "cli-a", "A", forkedFromSessionId="local_b")
+    write_desktop(home, "local_b", "cli-b", "B", forkedFromSessionId="local_a")
+    assert askaway.desktop_family("cli-a") is None
+    assert askaway.desktop_family("cli-b") is None
+
+
+def test_a_chain_of_eight_hops_reaches_its_root_and_nine_does_not(home):
+    write_chain(home, 9)
+    assert askaway.desktop_family("cli-8") == ("local_0", "Root")
+    assert askaway.desktop_family("cli-9") is None
+
+
+def test_desktop_lookup_skips_invalid_json_and_finds_the_valid_file(home):
+    folder = desktop_folder(home)
+    (folder / "local_broken.json").write_text('{"cliSessionId": "sess-under-test", ', encoding="utf-8")
+    (folder / "local_binary.json").write_bytes(b"\xff\xfe" + SESSION.encode())
+    write_desktop(home, "local_one", SESSION, "Good")
+    assert askaway.desktop_session(SESSION)["title"] == "Good"
+
+
+def test_desktop_lookup_ignores_files_over_2_mb(home):
+    write_desktop(home, "local_big", SESSION, "Big", padding="x" * (2 * 1024 * 1024))
+    assert askaway.desktop_session(SESSION) is None
+
+
+@pytest.mark.parametrize("session", ["*", "../x", None, ""])
+def test_desktop_lookup_rejects_unsafe_or_missing_session_ids(session, home):
+    write_desktop(home, "local_one", SESSION, "One")
+    assert askaway.desktop_session(session) is None
+    assert askaway.desktop_family(session) is None
+
+
+def test_desktop_lookup_without_a_desktop_folder_is_none(home):
+    assert askaway.desktop_session(SESSION) is None
+    assert askaway.desktop_family(SESSION) is None
+
+
+def finishes_within(seconds: float, call: Callable[[], object]) -> object:
+    """Run one lookup on a daemon thread: a hang fails the test at the budget instead of stalling the run."""
+    outcome: dict[str, object] = {}
+    worker = threading.Thread(target=lambda: outcome.update(value=call()), daemon=True)
+    worker.start()
+    worker.join(seconds)
+    assert not worker.is_alive(), f"lookup still running after {seconds} s"
+    return outcome["value"]
+
+
+def test_a_fifo_named_like_a_desktop_file_is_skipped_without_blocking(home):
+    os.mkfifo(desktop_folder(home) / "local_fifo.json")
+    assert finishes_within(2, lambda: askaway.desktop_session(SESSION)) is None
+    assert finishes_within(2, lambda: askaway.desktop_family(SESSION)) is None
+
+
+def test_a_valid_desktop_file_beside_a_fifo_is_still_found(home):
+    os.mkfifo(desktop_folder(home) / "local_fifo.json")
+    write_desktop(home, "local_one", SESSION, "One")
+    assert finishes_within(2, lambda: askaway.desktop_session(SESSION))["title"] == "One"
+
+
+def test_symlinks_to_a_desktop_record_or_a_device_are_not_followed(home, tmp_path):
+    outside = tmp_path / "outside.json"
+    outside.write_text(json.dumps({"sessionId": "local_out", "cliSessionId": SESSION, "title": "Outside"}),
+                       encoding="utf-8")
+    folder = desktop_folder(home)
+    os.symlink(outside, folder / "local_link.json")
+    os.symlink("/dev/zero", folder / "local_zero.json")
+    assert finishes_within(2, lambda: askaway.desktop_session(SESSION)) is None
+
+
+def test_a_zero_scan_cap_examines_no_desktop_file(home, monkeypatch):
+    write_desktop(home, "local_one", SESSION, "One")
+    monkeypatch.setattr(askaway, "DESKTOP_SCAN_MAX", 0)
+    assert askaway.desktop_session(SESSION) is None
+
+
+def test_a_folder_of_thousands_of_unrelated_files_is_bounded(home):
+    folder = desktop_folder(home)
+    for index in range(askaway.DESKTOP_SCAN_MAX + 1):
+        (folder / f"local_{index:05d}.json").write_text("{}", encoding="utf-8")
+    start = time.perf_counter()
+    assert finishes_within(2, lambda: askaway.desktop_session(SESSION)) is None
+    assert time.perf_counter() - start < 2
+
+
+def test_escape_sequences_and_control_characters_leave_a_clean_title(home):
+    assert askaway.session_title(SESSION, desktop={"title": "\x1b[31mRed\x1b[0m Title"}) == "Red Title"
+    assert askaway.session_title(SESSION, desktop={"title": "a\nb\x07c"}) == "a b c"
+    assert askaway.session_title(SESSION, desktop={"title": "\x1b]0;evil\x07Named"}) == "Named"
+    write_transcript(home, [custom("Fallback")])
+    assert askaway.session_title(SESSION, desktop={"title": "\x1b[0m\x07"}) == "Fallback"
+
+
+def test_family_titles_drop_escape_sequences(home):
+    write_desktop(home, "local_root", "cli-root", "\x1b[1mRoot\x1b[0m")
+    write_desktop(home, "local_child", "cli-child", "Child", forkedFromSessionId="local_root")
+    assert askaway.desktop_family("cli-child") == ("local_root", "Root")
+
+
+def test_ask_resolves_the_desktop_record_once_and_files_a_clean_title(home, capsys, monkeypatch):
+    lookups: list[str | None] = []
+    real_lookup = askaway.desktop_session
+
+    def counting(cli_session: str | None) -> dict | None:
+        lookups.append(cli_session)
+        return real_lookup(cli_session)
+
+    write_desktop(home, "local_one", SESSION, "\x1b[1mWindow\x1b[0m")
+    monkeypatch.setattr(askaway, "desktop_session", counting)
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry()))
+    assert lookups == [SESSION]
+    assert stored(home, "q", out["id"])["session_title"] == "Window"
+
+
+def test_questions_filed_before_the_family_keys_still_load(home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry()))
+    entry = stored(home, "q", out["id"])
+    legacy = {k: v for k, v in entry.items() if k not in {"family", "family_title"}}
+    (home / "q" / f"{out['id']}.json").write_text(json.dumps(legacy), encoding="utf-8")
+    assert [item["id"] for item in askaway.load_questions()[0]] == [out["id"]]
 
 
 def test_ask_files_how_gains_and_losses(home, capsys):

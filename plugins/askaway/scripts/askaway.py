@@ -61,6 +61,7 @@ import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from fnmatch import fnmatchcase
+from itertools import islice
 from pathlib import Path
 from typing import Any, Final, NamedTuple, NoReturn
 
@@ -110,6 +111,13 @@ SENTENCE_END: Final = re.compile(r"[.!?]+(?:\s|$)")
 RECOMMENDED_MARKER: Final = re.compile(r"\s*\((?:recommended|recomendad[oa])\)\s*$", re.IGNORECASE)
 SESSION_TITLE_MAX: Final = 80
 SESSION_PATTERN: Final = re.compile(r"[A-Za-z0-9_-]{1,128}")
+DESKTOP_SESSIONS_ROOT: Final = Path.home() / ".config" / "Claude" / "claude-code-sessions"
+DESKTOP_SESSIONS_ENV: Final = "ASKAWAY_DESKTOP_SESSIONS"
+DESKTOP_GLOB: Final = "*/*/local_*.json"  # one folder per org and user, one file per Desktop session
+DESKTOP_FILE_MAX: Final = 2 * 1024 * 1024
+DESKTOP_SCAN_MAX: Final = 2000  # files examined per lookup, so a huge Desktop folder cannot stall ask
+FAMILY_MAX_HOPS: Final = 8
+DESKTOP_ESCAPE: Final = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[ -/]*[0-~])")
 # Title entry types in precedence order: the last custom title wins, then agent name, then AI title.
 TITLE_FIELDS: Final = (("custom-title", "customTitle"), ("agent-name", "agentName"),
                        ("ai-title", "aiTitle"))
@@ -525,10 +533,12 @@ def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
     if gaps.failed():
         raise EntryError(gaps)
     now = now_ms()
+    desktop = desktop_session(origin.session)  # one Desktop scan serves both the title and the family
     return {
         "v": 1, "id": new_id(now), "ts": now,
         "project": origin.project, "session": origin.session, "run_kind": run_kind,
-        "session_title": session_title(origin.session, origin.project),
+        "session_title": session_title(origin.session, origin.project, desktop),
+        **_family_fields(desktop),
         "title": title, "options": options, "recommended": recommended,
         **texts,
         "risk": risk, "pause": risk == "high",
@@ -608,8 +618,13 @@ def _title_rows(path: Path) -> dict[str, str]:
     return latest
 
 
-def session_title(session: str | None, project: str | None = None) -> str | None:
-    """The asking session's window title: last custom, else agent, else AI title. Never raises."""
+def session_title(session: str | None, project: str | None = None,
+                  desktop: Mapping[str, Any] | None = None) -> str | None:
+    """The asking session's window title: its Desktop title (desktop is its record, when there is one),
+    else last custom, agent or AI title. Never raises."""
+    title = _desktop_title((desktop or {}).get("title"))
+    if title:
+        return _clip(title, SESSION_TITLE_MAX)
     try:
         path = _session_file(session, ".jsonl", project)
         latest = _title_rows(path) if path else {}
@@ -619,6 +634,152 @@ def session_title(session: str | None, project: str | None = None) -> str | None
         if kind in latest:
             return _clip(latest[kind], SESSION_TITLE_MAX)
     return None
+
+
+def desktop_sessions_root() -> Path:
+    return Path(os.environ.get(DESKTOP_SESSIONS_ENV) or DESKTOP_SESSIONS_ROOT)
+
+
+def _nonempty(value: object) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _desktop_title(value: object) -> str | None:
+    """A title from a Desktop file with escape sequences and control characters removed; None when nothing is left."""
+    if not isinstance(value, str):
+        return None
+    text = CONTROL_CHARS.sub(" ", DESKTOP_ESCAPE.sub("", value)).strip()
+    return text or None
+
+
+def _desktop_bytes(path: Path) -> bytes | None:
+    """A regular file's bytes, at most DESKTOP_FILE_MAX. A FIFO, a device, a directory, a symlink or an
+    oversized file gives None. O_NOFOLLOW refuses a symlink; O_NONBLOCK keeps a FIFO from blocking the open;
+    the type check runs on the opened descriptor, so nothing swapped in after the glob is read."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    with os.fdopen(descriptor, "rb") as handle:
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                return None
+            data = handle.read(DESKTOP_FILE_MAX + 1)
+        except OSError:
+            return None
+    return data if len(data) <= DESKTOP_FILE_MAX else None
+
+
+def _desktop_text(path: Path) -> str | None:
+    """A Desktop session file's text, or None when it cannot be read as one. Never raises."""
+    data = _desktop_bytes(path)
+    if data is None:
+        return None
+    try:
+        return data.decode("utf-8")
+    except ValueError:
+        return None
+
+
+def _desktop_object(text: str) -> dict[str, Any] | None:
+    try:
+        data = json.loads(text)
+    except (ValueError, RecursionError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _desktop_record(session_id: str) -> dict[str, Any] | None:
+    """The Desktop record stored under this sessionId (a fork's or a spawner's). Never raises."""
+    if not SESSION_PATTERN.fullmatch(session_id):
+        return None
+    try:
+        path = next(desktop_sessions_root().glob(f"*/*/{session_id}.json"), None)
+    except OSError:
+        return None
+    text = _desktop_text(path) if path else None
+    return _desktop_object(text) if text is not None else None
+
+
+def desktop_session(cli_session: str | None) -> dict[str, Any] | None:
+    """The Claude Desktop record of this Claude Code session (its cliSessionId), or None. Never raises."""
+    if not cli_session or not SESSION_PATTERN.fullmatch(cli_session):
+        return None
+    try:
+        for path in islice(desktop_sessions_root().glob(DESKTOP_GLOB), DESKTOP_SCAN_MAX):
+            text = _desktop_text(path)
+            if text is None or cli_session not in text:
+                continue
+            record = _desktop_object(text)
+            if record is not None and record.get("cliSessionId") == cli_session:
+                return record
+    except OSError:
+        return None
+    return None
+
+
+def _family_parent(record: Mapping[str, Any]) -> str | None:
+    """The session this one forked from, else the session that spawned it."""
+    spawner = record.get("spawnedFrom")
+    spawner_id = spawner.get("sessionId") if isinstance(spawner, dict) else None
+    return _nonempty(record.get("forkedFromSessionId")) or _nonempty(spawner_id)
+
+
+def _spawn_titles(record: Mapping[str, Any], titles: dict[str, str]) -> None:
+    """Remember the title a spawn record gives its spawner, keyed by the spawner's sessionId."""
+    spawner = record.get("spawnedFrom")
+    if not isinstance(spawner, dict):
+        return
+    spawner_id, title = _nonempty(spawner.get("sessionId")), _desktop_title(spawner.get("title"))
+    if spawner_id and title:
+        titles.setdefault(spawner_id, title)
+
+
+def family_of(record: Mapping[str, Any] | None) -> tuple[str, str] | None:
+    """The Desktop family root of a session record: (root sessionId, root title), or None. Never raises.
+    Walks fork and spawn links up to the root; a cycle or a chain past FAMILY_MAX_HOPS gives None."""
+    if record is None:
+        return None
+    root_id = _nonempty(record.get("sessionId"))
+    if root_id is None:
+        return None
+    seen = {root_id}
+    spawn_titles: dict[str, str] = {}
+    current = record
+    for _ in range(FAMILY_MAX_HOPS + 1):
+        _spawn_titles(current, spawn_titles)
+        parent = _family_parent(current)
+        if parent is None:
+            return _titled_root(root_id, current, spawn_titles)
+        if parent in seen:
+            return None
+        seen.add(parent)
+        root_id = parent
+        found = _desktop_record(parent)
+        if found is None:
+            return _titled_root(root_id, {}, spawn_titles)
+        current = found
+    return None
+
+
+def _titled_root(root_id: str, record: Mapping[str, Any], spawn_titles: Mapping[str, str]) -> tuple[str, str] | None:
+    """The root's own title, else the title its child's spawn record gives it; None when neither exists."""
+    title = _desktop_title(record.get("title")) or spawn_titles.get(root_id)
+    return (root_id, title) if title else None
+
+
+def desktop_family(cli_session: str | None) -> tuple[str, str] | None:
+    """The Desktop family root of this Claude Code session, or None. Never raises."""
+    return family_of(desktop_session(cli_session))
+
+
+def _family_fields(desktop: Mapping[str, Any] | None) -> dict[str, str | None]:
+    family = family_of(desktop)
+    if family is None:
+        return {"family": None, "family_title": None}
+    return {"family": family[0], "family_title": _clip(family[1], SESSION_TITLE_MAX)}
 
 
 class ReleasedScan:
