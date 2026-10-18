@@ -24,13 +24,13 @@ cd plugins/askaway/scripts && python3 -m pytest tests -q
 | Path | What it holds |
 |---|---|
 | `plugins/askaway/.claude-plugin/plugin.json` | The plugin manifest; it points to the command hooks |
-| `plugins/askaway/hooks/` | The mod: `register.tsx` (wiring, polling, commands), `model.ts`, `wizard.ts`, `i18n.ts`, `pane.tsx`, `look.ts`; `hooks.json` loads the mod, `command-hooks.json` holds the command hooks |
-| `plugins/askaway/scripts/askaway.py` | The CLI (`ask`, `answer`, `status`, `list`, `away`, `prune`) and the hook modes (`hook ask-guard`, `hook pause-guard`, `hook deliver`) |
-| `plugins/askaway/skills/file-question/SKILL.md` | The skill that tells an agent how to file a question |
+| `plugins/askaway/hooks/` | The mod: `register.tsx` (wiring, polling, commands), `model.ts`, `wizard.ts`, `i18n.ts`, `pane.tsx`, `band.tsx`, `held.ts`, `look.ts`; `hooks.json` loads the mod, `command-hooks.json` holds the command hooks |
+| `plugins/askaway/scripts/askaway.py` | The CLI (`ask`, `answer`, `status`, `list`, `wait`, `export`, `away`, `prune`) and the hook modes (`hook ask-guard`, `hook pause-guard`, `hook deliver`) |
+| `plugins/askaway/skills/askaway-question-playbook/SKILL.md` | The skill (`askaway:askaway-question-playbook`) that tells an agent how to file a question |
 | `plugins/askaway/SPEC.md` | The spec: state folder contract, CLI, hooks and panel |
 | `plugins/askaway/tests/` | TypeScript tests |
 | `plugins/askaway/scripts/tests/` | Python tests |
-| `assets/` | `askaway-icon.svg` (the icon; the same file as `plugins/askaway/assets/icon.svg`) and the README screenshots `band-en.png`, `window-light-en.png` and `window-dark-en.png` |
+| `assets/` | `askaway-icon.svg` (the icon) and the README screenshots `band-en.png`, `window-light-en.png` and `window-dark-en.png`. The plugin ships `plugins/askaway/assets/icon.svg`, a separate file |
 
 ## Conventions
 

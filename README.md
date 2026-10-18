@@ -21,7 +21,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Early access (0.4.0-beta.7):** the mod API moves between Claude Code releases, so expect changes until a stable release.
+> ⚠️ **Early access (0.4.0-beta.7):** the mod API moves between Claude Code releases, so expect changes until a stable release. The changes of 0.4.0-beta.8 are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## 💡 What it is
 
@@ -29,14 +29,12 @@ An agent that needs a decision while you are away has two bad options: stop and 
 
 The agent keeps doing what does not depend on your answer. When you are back, the toast and the band button above the prompt tell you questions are waiting. You open the panel and find every question filed by any session of any project, one card at a time, each with what the agent added to help you judge it:
 
-- **Context and origin:** the task and the step that stopped;
+- **What it is** and **The problem:** what the decision concerns, and what happens if nothing is decided;
 - **Analogy:** a comparison that makes the trade-off clear;
-- **Why** the recommended option;
-- **How** it works once accepted;
-- **What we gain** and **What we lose** with it;
 - **Urgency:** whether it blocks and when;
-- **Undo:** what it costs to change the choice later;
-- **each option** with its trade-off and its fit score, drawn after the trade-off as `· fit 88`.
+- **each option** as `A · label`, with its trade-off and its fit score (`· fit 88`), what happens if you choose it, and its pros and cons;
+- **Why** the recommended option, **Undo** (what it costs to change the choice later), **How** it works once accepted, **What we gain** and **What we lose**;
+- **Context and origin** last: the task and the step that stopped.
 
 You pick an option or write your own, move to the next question with the buttons or the hotkeys, and send all the answers of the group with **Submit all**. Each one is delivered automatically to the session that asked, with no step on your side.
 
@@ -66,7 +64,7 @@ flowchart LR
     agent["Agent needs a decision"] -->|"ask: writes a question"| folder[("State folder: q/ questions")]
     folder -->|"poll every 5 s"| band["Band button and toast"]
     band --> panel["Panel: tree of questions by project, one card at a time, Submit all"]
-    panel -->|"Submit all: writes a/ answers"| answers[("State folder: a/ answers")]
+    panel -->|"Submit all: the CLI writes a/ answers"| answers[("State folder: a/ answers")]
     answers -->|"deliver hook or idle hand-off"| agent
 ```
 
@@ -82,7 +80,7 @@ sequenceDiagram
     Panel->>Folder: poll every 5 s
     Panel-->>You: band button and toast
     You->>Panel: pick options, then Submit all
-    Panel->>Folder: write the answers
+    Panel->>Folder: the CLI (answer --by panel) writes the answers
     alt session is busy
         Folder-->>Agent: deliver hook reads the answer at its next hook
     else session is idle
@@ -151,7 +149,7 @@ Ground rules:
 | 4 | 🧑 Install the plugin | `claude plugin install askaway@keepglide` | Exit 0; `claude plugin list` shows `askaway@keepglide`. |
 | 5 | Make a test state folder | `mkdir -p /tmp/askaway-test` | Exit 0; the folder is empty. |
 | 6 | Check away mode | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" away status` | Prints `{"away": false}`. |
-| 7 | File a test question | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Test","question":"Pick A?","context":"Install spec check of the Askaway CLI.","options":[{"key":"A","label":"Yes","tradeoff":"Safe to accept and easy to change later","fit":90},{"key":"B","label":"No","tradeoff":"Keeps the current behavior","fit":10}],"recommended":"A","why":"A is the safe default for this test.","how":"The session continues on A at once.","gains":"The check finishes without a human.","losses":"Nothing is changed by the test.","analogy":"A dry run before the real job.","urgency":"Can wait","undo":"changing later ≈ 1 min","risk":"low"}'` | Prints `{"id": "q-…", "recommended": "A", "action": "continue"}`. |
+| 7 | File a test question | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Test","question":"Pick A?","what":"A test question for the Askaway CLI. It only checks that a question is filed.","problem":"Nothing is decided by this test, so the check has no cost.","context":"Install spec check of the Askaway CLI.","options":[{"key":"A","label":"Yes","tradeoff":"Safe to accept and easy to change later","fit":90,"does":"The check takes option A.","pros":"Quick to verify.","cons":"Tests nothing else."},{"key":"B","label":"No","tradeoff":"Keeps the current behavior","fit":10,"does":"The check takes option B.","pros":"Changes nothing.","cons":"Gives no result."}],"recommended":"A","why":"A is the safe default for this test.","how":"The session continues on A at once.","gains":"The check finishes without a human.","losses":"Nothing is changed by the test.","analogy":"A dry run before the real job.","urgency":"Can wait","undo":"changing later ≈ 1 min","risk":"low"}'` | Prints `{"id": "q-…", "recommended": "A", "action": "continue"}`. |
 | 8 | Check the pause rule | Step 7 again, with `"risk":"high"` instead of `"risk":"low"` | Prints `"action": "pause"`. |
 | 9 | 🧑 Open the panel (in a Claude Code session) | `/askaway` | The Askaway panel opens. |
 | 10 | Hand back to the user | none | Report each result, the folder `/tmp/askaway-test` and any skipped step. Ask the user to delete `/tmp/askaway-test`. |
@@ -171,32 +169,30 @@ While questions are open, a band sits above the prompt: `2 questions waiting · 
 ### Answering a question
 
 1. Press `1` from an empty prompt, or click **Answer** on the band, to open the pane. The header shows the Askaway logo, the heading **Questions waiting** and the counter, such as `2 pending · 1 group`.
-2. The tree lists every project with open questions, one under the other. The project on screen is in the accent color. Under each project, its sessions (`├` or `└`) hold their questions. A mark shows where each question stands: `●` the one on screen, `✓` a picked option, `○` waiting. Nothing is sent until **Submit all**. Project and session names are text, not buttons.
+2. The tree lists every project with open questions, one under the other, each project name in bold. Under each project, its sessions (`├` or `└`) hold their questions. A mark shows where each question stands: `●` the one on screen, `✓` a picked option, `○` waiting. Nothing is sent until **Submit all**. Project and session names are text, not buttons.
 3. Click an option to record it. The pane moves to the next question without an answer, wrapping to the start if needed, or to the last question once every question has one. Nothing is sent yet.
 4. For your own answer, click **Other…**, type it and press Enter (the field's button reads **Done**). The text is recorded as the answer, and the hotkeys stay off while the field is open.
 5. **← Back** goes to the previous question. **Next →** goes to the next one, with or without an answer. It is on every question but the last.
 6. On the project's last question, the forward button is **Submit all (N)**, where N is the number of questions of the project on screen. It is pressable only once every question has an answer. Pressing it sends every answer of the project to the sessions that asked. Nothing is sent before this button.
 
-Status lines at the bottom of the pane show where each answer is: `⏳` sent, `✅` read by the session, `⚠️` the session ended before reading it, or the answer expired unread. The last two can be dismissed with `✕`.
+Status lines at the bottom of the pane show where each answer is: `⏳` sent, `✅` read by the session, `⚠️` the session ended before reading it, or the answer expired unread (`expired`: no session read it within 7 days). The last two can be dismissed with `✕`.
+
+When no question is open, the pane shows one footer line under the status lines, with the counts: `Nothing waiting · 1 answered in the last 24 h · last: <title> → A, <age> · 1 not yet read · 1 expired`. It is absent while a question is open.
 
 ### Anatomy of a card
 
 The card draws these parts from top to bottom. The labels are the English ones; the panel shows them in Portuguese when the language is `pt-BR`.
 
 1. **Title row:** the title in bold, then the risk label and the age, for example `⚠️ medium risk · 12 min ago`. A question filed without `title` gets its question clipped to 60 characters as its title (the CLI does it). The pane cuts a stored empty title to 24 characters. The risk wraps under the title when there is no room.
-2. **The question:** the question text, in bold. Always present.
-3. **The explanation block:** the block under the question, drawn only when at least one of the fields below is set. Each section is one line, `heading: text`, and each is drawn only when its field is set:
-   - **🧭 Context and origin** (`context`): where the question comes from.
-   - **🔁 Analogy** (`analogy`): a comparison that makes the trade-off clear.
-   - **💡 Why A** (`why`): why the recommended option. The letter is the recommended key.
-   - **🛠️ How** (`how`): how the recommended option works.
-   - **🎁 What we gain** (`gains`) and **⚖️ What we lose** (`losses`): two sections, each drawn only when its field is set.
-   - **⏱️ Urgency** (`urgency`): the deadline, when there is one.
-   - **↩️ Undo** (`undo`): the cost of reversing the choice; drawn whenever it is filled.
+2. **Lead line:** in bold, what the agent does now: `The agent is already on A since 14:05`, or `The agent is paused since 14:05` for a `high` risk question.
+3. **Explanation before the question:** a box with the sections that are set, one line each, `heading: text`: **What it is** (`what`), **The problem** (`problem`) and **🔁 Analogy** (`analogy`).
+4. **The question:** the question text, in bold. Always present.
+5. **Explanation before the options:** a box with **⏱️ Urgency** (`urgency`), when it is set.
+6. **The options:** each one a full-width button, `A · Label`, with `(Recommended)` after the label of the recommended one. Under it, a line `└ trade-off · fit 88`, then **What happens** (`does`), **Pros** (`pros`) and **Cons** (`cons`). The picked option is the filled button; the recommended one is bold until it is picked. The last one is **Other…**, numbered with the position after the options (`3. Other…` with two options).
+7. **Explanation after the options:** a box with, in this order, **💡 Why A** (`why`; the letter is the recommended key), **↩️ Undo** (`undo`), **🛠️ How** (`how`), **🎁 What we gain** (`gains`), **⚖️ What we lose** (`losses`) and **🧭 Context and origin** (`context`) last.
+8. **The nav row:** a separator, then **← Back** (dim on the first question), **Next →** (every question but the last), or on the last question **Submit all (N)** (see step 6 above).
 
-   The CLI requires all of these fields, so every card filed through it carries them all. Names the agent wrote as slash commands or in backticks are drawn in the accent color.
-4. **The options:** numbered `1. Label`, each on its own line with its trade-off under it and its fit after the trade-off, as `· fit 88`. The recommended option reads `(Recommended)` after its label and is bold until it is picked. The picked option is the filled button. The last one is **Other…**, with the next number after the options.
-5. **The nav row:** **← Back** (dim on the first question), **Next →** (every question but the last), or on the last question **Submit all (N)** (see step 6 above).
+   The CLI requires `what`, `problem`, `analogy`, `context`, `why`, `how`, `gains`, `losses`, `urgency` and `undo`, and each option's `tradeoff`, `does`, `pros` and `cons`, so every card filed through it carries them all. Names the agent wrote as slash commands or in backticks are drawn in bold. The accent colour is not used for text: the explanation box is `#1F2937` on `#F9FAFB`, 14.05:1.
 
 ### Risk label
 
@@ -208,9 +204,11 @@ The risk label is the risk of accepting the recommended option, as the agent jud
 
 ### Hotkeys
 
-- The digits **1 to 9** pick the option with that number, on the terminal and on the desktop. **Other…** takes the next digit after the options.
+- Each option button shows its key letter and answers to it in lower case: `a` picks A, `b` picks B, and so on, on the terminal and on the desktop.
+- **Other…** keeps its digit, the position after the options (`3` with two options; the digits stop at 9).
+- Back, Next and Submit all take `z`, `x` and `w` on the terminal, and `p`, `f` and `e` on the desktop. A letter that one of the card's options uses is skipped, and the keys shift to the next free letters of the same list.
 - The band's **Answer** button keeps hotkey `1`.
-- In the terminal only, `b` is Back, `n` is Next and `s` is Submit all. On the desktop you click those three.
+- No hotkey works while the **Other…** field is open, so typed text presses no button.
 
 On the desktop, the KeepGlide mark sits beside the counter and beside **Submit all (N)**.
 
@@ -229,12 +227,14 @@ On the desktop, the KeepGlide mark sits beside the counter and beside **Submit a
 | State folder | `~/.claude/state/askaway` | Environment variable `ASKAWAY_HOME` |
 | Language | `auto`: the locale. The first set of `LC_ALL`, `LC_MESSAGES`, `LANG`, `LANGUAGE` decides; a value that starts with `pt` is Portuguese, anything else English | `/askaway lang pt-BR`, `/askaway lang en` or `/askaway lang auto` |
 | Away mode | Off | `/askaway away` (stored in `away.json` in the state folder) |
+| Who answered | `ASKAWAY_WHO` when it holds a name, else the OS user name, else `unknown` | Environment variable `ASKAWAY_WHO`. Each answer records it as `who`, and `status`, `list` and `export` show it |
+| Prune window | 30 days | Environment variable `ASKAWAY_PRUNE_DAYS`, in whole days; `0` prunes delivered and expired items at once |
 
 Away mode is one of three ways an agent learns you are away; the others are the permission mode `bypassPermissions` and the environment variable `CLAUDE_CODE_SESSION_ATTENDED=0`.
 
 ## 🧠 How agents file questions
 
-Each agent reads the skill `plugins/askaway/skills/file-question/SKILL.md` and files a question with the CLI instead of asking and waiting. An agent files a question when any of these is true:
+Each agent reads the skill `askaway:askaway-question-playbook` (`plugins/askaway/skills/askaway-question-playbook/SKILL.md`) and files a question with the CLI instead of asking and waiting. An agent files a question when any of these is true:
 
 - the permission mode is `bypassPermissions`;
 - away mode is on (`away.json` has `"on": true`);
@@ -245,7 +245,7 @@ The `ask-guard` hook runs before every `AskUserQuestion` call. When one of these
 Otherwise the question is asked in Claude Code as usual. The CLI prints one JSON line:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache backend","question":"Which cache should the service use?","context":"Sizing the API for three workers; the cache sits in front of the reads.","options":[{"key":"A","label":"Redis","tradeoff":"Safe to accept and easy to change later; one more service to run and monitor","fit":88},{"key":"B","label":"In-process","tradeoff":"Give up sharing hits across workers; the cache is lost on restart","fit":40}],"recommended":"A","why":"Workers share one cache, so a hit on one serves all three.","analogy":"A shared filing cabinet instead of one desk drawer per worker.","how":"Redis runs as a service in `docker-compose.yml` next to the API; the cache client points at it.","gains":"Hits are shared across workers and survive a restart.","losses":"One more service to run and monitor.","urgency":"Can wait","undo":"changing later ≈ 10 min","risk":"low"}'
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache backend","question":"Which cache should the service use?","what":"The service needs a cache in front of its reads. Three workers run the API, and each one can keep its own cache or share one.","problem":"Without a choice, each worker keeps a separate cache and repeats the same reads.","context":"Sizing the API for three workers; the cache sits in front of the reads.","options":[{"key":"A","label":"Redis","tradeoff":"Safe to accept and easy to change later; one more service to run and monitor","fit":88,"does":"Redis runs as a service next to the API, and the workers share its cache.","pros":"Hits are shared across workers and survive a restart.","cons":"One more service to run and monitor."},{"key":"B","label":"In-process","tradeoff":"Give up sharing hits across workers; the cache is lost on restart","fit":40,"does":"Each worker keeps its own cache in memory.","pros":"No extra service to run.","cons":"Hits are not shared, and the cache is lost on restart."}],"recommended":"A","why":"Workers share one cache, so a hit on one serves all three.","analogy":"A shared filing cabinet instead of one desk drawer per worker.","how":"Redis runs as a service in `docker-compose.yml` next to the API; the cache client points at it.","gains":"Hits are shared across workers and survive a restart.","losses":"One more service to run and monitor.","urgency":"Can wait","undo":"changing later ≈ 10 min","risk":"low"}'
 ```
 
 ```text
@@ -255,9 +255,11 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache b
 | Field | Required | Notes |
 |---|---|---|
 | `question` | yes | Up to 400 characters. |
-| `options` | yes | At least 2 objects, each with a unique `key` (such as `A`), a `label`, a `tradeoff` and a `fit`. `tradeoff` (up to 300 characters) and `fit` (integer 0-100) are required for every option; `fit` set to `null` is refused. The panel draws the fit after the trade-off as `· fit 88`. |
+| `options` | yes | At least 2 objects. Their `key`s are consecutive uppercase letters in order: `A`, `B`, `C`… Each has a `label`, a `tradeoff` (up to 300 characters), a `fit` (integer 0-100; `null` is refused), and `does` (what happens if it is chosen), `pros` and `cons`, each up to 300 characters. The panel draws the fit after the trade-off as `· fit 88`. |
 | `recommended` | yes | One of the option keys. |
 | `title` | no | Up to 60 characters. When it is missing, the question is clipped to 60 characters and used as the title. |
+| `what` | yes | What the thing is, in at least two sentences. Up to 600 characters. Drawn as **What it is**. |
+| `problem` | yes | The concrete consequence if nothing is decided. Up to 400 characters. Drawn as **The problem**. |
 | `context` | yes | Where the question comes from: the task and the step that stopped. Up to 600 characters. |
 | `why` | yes | One or two sentences on why the recommended option. Up to 300 characters. |
 | `how` | yes | One or two sentences on how the recommended option works. Up to 400 characters. |
@@ -270,9 +272,28 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache b
 
 Do not pass `session` or `project`: the CLI fills them from the environment and the working directory. Text longer than its limit is cut, not refused.
 
-The CLI also has `answer <id> <key> [--by <source>]`, which records an answer; agents must not call it. `--by` accepts exactly `cli` (the default), `panel`, `accept_recommended` or `accept_all`; any other value is refused. A `cli` answer to a question that has a session is refused unless the shell's `CLAUDE_CODE_SESSION_ID` is that same session; a shell with no session id is refused too, and the refusal says to answer from the Askaway panel or from the session that asked. Answers from `panel`, `accept_recommended` and `accept_all` are not tied to a shell session. The first answer written to an item wins.
+The CLI also has `answer <id> <key> [--by <source>] [--text <text>]`, which records an answer; agents must not call it. `--by` accepts exactly `cli` (the default), `panel`, `accept_recommended` or `accept_all`; any other value is refused. The `other` key takes its free text from `--text` (trimmed, required for `other`, and dropped for a lettered key). A `cli` answer to a question that has a session is refused unless the shell's `CLAUDE_CODE_SESSION_ID` is that same session; a shell with no session id is refused too, and the refusal says to answer from the Askaway panel or from the session that asked. Answers from `panel`, `accept_recommended` and `accept_all` are not tied to a shell session.
+
+The panel answers only through this command, with `answer <id> <key> --by panel --strict`, so the CLI is the one writer of `a/`. The first answer written to an item wins, across processes: a later one is not written.
 
 After filing, the agent continues on `recommended` unless the output says `"action": "pause"`, which the CLI prints only for a `risk` high question. An invalid entry prints `"action": "refile"` with an `error` that names the missing fields, for example `missing fields: analogy; option A: fit`. The agent completes those fields and files the question again; it never continues without filing. Only an internal failure prints `"action": "continue"` with `"error": "internal error"`, and then nothing was filed.
+
+### CLI commands
+
+Every command prints one JSON line, except `export`, which prints its document. Run them as `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" <command>`.
+
+| Command | What it does |
+|---|---|
+| `ask --json '<entry>'` | Files a question with the fields above. `--strict` exits 1 on a refile or an error. |
+| `answer <id> <key> [--by <source>] [--text <text>]` | Records an answer (agents must not call it). `--strict` exits 1 when the answer is refused or invalid. |
+| `status <id>` | Prints the status (`open`, `answered`, `delivered` or `expired`), the key and, when set, `who`. `--strict` as for `ask`. |
+| `list [--open or --answered] [--since <when>]` | Lists the questions with their status. `--since` needs `--answered` and keeps the answers given since `<when>`. |
+| `wait <id> [--timeout 300]` | Polls every 0.5 s until the answer exists, then prints `"status": "answered"` with its key, or `"status": "timeout"` when the seconds run out. |
+| `export [--since <when>] [--format json, jsonl or csv]` | Writes every question with its answer, newest first. `--since` keeps the questions asked since `<when>`. |
+| `away on`, `away off` or `away status` | Turns away mode on or off, or reports it. |
+| `prune [--days N]` | Removes delivered and expired items older than N days. The default is `ASKAWAY_PRUNE_DAYS`, else 30. |
+
+`<when>` is a duration such as `30m`, `12h` or `7d`, or an ISO time (without a zone it is UTC). The pause guard lets `ask`, `status`, `list`, `wait` and `export` through, so a paused session can wait for its answer.
 
 ## 🗂️ State folder
 
@@ -285,7 +306,7 @@ After filing, the agent continues on `recommended` unless the output says `"acti
 └── last_prune    when the last prune ran (its mtime)
 ```
 
-Writes go to a hidden `.<name>.<hex>.tmp` file first and are then renamed into place; prune removes the stale `.tmp` files.
+Writes go to a hidden `.<name>.<hex>.tmp` file first and are then renamed into place. An answer is published with an exclusive link, so only the first one written stays. Prune removes the stale `.tmp` files.
 
 `ASKAWAY_HOME` replaces `~/.claude/state/askaway`. The full contract is in [plugins/askaway/SPEC.md](plugins/askaway/SPEC.md).
 
@@ -297,8 +318,8 @@ Writes go to a hidden `.<name>.<hex>.tmp` file first and are then renamed into p
   - `PreToolUse` on `Edit|Write|NotebookEdit|Bash|Agent|mcp__.*` runs `hook pause-guard`: it reads `q/`, `a/` and `d/` and writes nothing.
 - **Session titles:** when a question is filed, `ask` reads the asking session's transcript, `~/.claude/projects/<project folder>/<session>.jsonl`, and keeps only its title entries (`custom-title`, `agent-name`, `ai-title`). It does not read prompts or replies. The title labels the session on the card.
 - **Claude Desktop release markers:** `deliver` looks for `<session>.desktop-released.json` in the same project folder, to close the answers of a session that Claude Desktop has released.
-- **Panel (mod):** reads `q/`, `a/` and `d/`; it writes answers, the away toggle and its own store keys (the language choice).
-- **Prune:** at most once a day, `deliver` removes closed items settled more than 30 days ago and stale temporary files.
+- **Panel (mod):** reads `q/`, `a/` and `d/`; it writes answers only through the CLI (`answer --by panel`), the away toggle and its own store keys (the language choice).
+- **Prune:** at most once a day, `deliver` removes closed items (delivered or expired) settled more than `ASKAWAY_PRUNE_DAYS` days ago (default 30), and stale temporary files.
 - **The CLI and the hooks write only inside the state folder.** Each file is written to a temporary file first and then renamed. Nothing is sent over the network, and nothing is written to your projects or transcripts.
 
 ## 🔒 Privacy
@@ -316,7 +337,8 @@ Writes go to a hidden `.<name>.<hex>.tmp` file first and are then renamed into p
 | The CLI prints `"action": "refile"` with an `error` | The entry is invalid or incomplete, for example a field is missing, `fit` is `null` or there are fewer than two options | Complete the fields named in `error` and file the question again. |
 | The CLI prints `"error": "internal error"` | An internal failure; nothing was filed | Continue on the recommended option and report the error text. |
 | The panel is in the wrong language | The locale variables say otherwise | Run `/askaway lang en` or `/askaway lang pt-BR`. |
-| An answer never reaches the session | The session has not read it yet, or the answer expired after 7 days | Check it with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" status <id>`; the status line in the panel shows the delivery state. |
+| An answer never reaches the session | The session has not read it yet, or the answer expired unread after 7 days | Check it with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" status <id>`; the status line in the panel shows the delivery state. |
+| The CLI prints `"error": "answer refused: ..."` | A `cli` answer to a question of another session, or from a shell with no session id | Answer from the Askaway panel, or from the session that asked. |
 
 ## 🔧 Development
 

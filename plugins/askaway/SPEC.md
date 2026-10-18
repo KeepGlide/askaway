@@ -252,8 +252,8 @@ its presses (the first click was dropped); this is the same finding as another m
 status list). `hooks/pane.tsx`, `renderPane`.
 
 - **Header**: the Askaway logo, then "Questions waiting" ("Perguntas aguardando"; `pane.heading`, `hooks/i18n.ts`), with the counter on the right. The logo is the violet
-  SVG on the desktop (`hooks/logo.ts`, `#8B5CF6`) and the "?" glyph in the accent color on the terminal
-  (`hooks/logo-element.tsx`). The counter reads "<n> pending · <n> groups" ("<n> pendentes · <n> grupos"), or
+  SVG on the desktop (`hooks/logo.ts`, `#8B5CF6`) and the bold "?" glyph on the terminal
+  (`hooks/logo-element.tsx`, `LOGO_GLYPH`). The counter reads "<n> pending · <n> groups" ("<n> pendentes · <n> grupos"), or
   "Nothing pending" ("Nenhuma pendente") when no question is open (`counterText`, `hooks/model.ts`).
 - **Tree of the open questions** (drawn when at least one question is open). The questions are grouped by GROUP =
   their `project`, in the order of each group's oldest question. Every open group is drawn in turn, one under the other,
@@ -263,11 +263,11 @@ status list). `hooks/pane.tsx`, `renderPane`.
     "the session" ("a sessão") when there is no title (`projectLabel`, `sessionLabelOf`, `titleCase`, `hooks/model.ts`).
     Minor words stay lower-case after the first word (English: a, an, and, as, at, but, by, for, in, of, on, or,
     the, to, via, with; Portuguese: its own list, `MINOR_WORDS`). A word that already has a capital stays as typed.
-  - **Label of each group**: a bold row. It is in the accent color (`ACCENT_COLOR`, `hooks/look.ts`) for the group on
-    screen (the wizard's `groupKey` while that group is open, else the first open group), and has no color for the others.
+  - **Label of each group**: a bold row (`renderGroup`, `hooks/pane.tsx`). The group on screen is the wizard's `groupKey`
+    while that group is open, else the first open group.
     Its sessions are rows below it: "├ <session>", and
     "└ <session>" for the last one, indented with the Box's `paddingLeft`. Each question of a session is a row
-    with a mark and its title: ● the question on screen (bold, in the accent color), ✓ picked, ○ not yet picked.
+    with a mark and its title: ● the question on screen (bold), ✓ picked, ○ not yet picked.
     The questions of a session that is not the last are indented with `paddingLeft={1}` and prefixed "│  "; those
     of the last session are indented with `paddingLeft={4}` (`renderSession`, `renderTreeQuestion`, `hooks/pane.tsx`).
   - The card shows the questions of one group at a time (the group on screen); the other groups stay in the tree only,
@@ -281,30 +281,43 @@ status list). `hooks/pane.tsx`, `renderPane`.
     high) is the risk of accepting the recommended option, as the filing agent judged it. A question with no title is
     named by its text, cut to 24 characters with "…";
   - the question text, bold;
-  - the explanation box, when at least one of its sections is set: a box on a very light gray ground (`#F9FAFB`, ink
-    `#1F2937`, `EXPLAIN_COLORS`, 14.05:1), with `paddingX={1}` and `paddingY={1}`. Its sections, each drawn only when its field is set: 🧭 Context and origin, 🔁 Analogy,
-    💡 Why <rec>, 🛠️ How, one section for gains and losses (🎁 What we gain · ⚖️ What we lose; its heading names only
-    the halves that are set), then ⏱️ Urgency and ↩️ Undo (pt: ⏱️ Urgência, ↩️ Como desfazer). Each section is one line,
-    "heading: text" (pt: "💡 Por que A: <why>"): the heading in bold, then the text, wrapping as one paragraph. Every name
-    in the text (a slash command, or anything the agent wrote between backticks) is drawn in the accent color
-    (`ACCENT_COLOR`), its backticks not drawn (`piecesOf`, `renderSection`, `hooks/model.ts`, `hooks/pane.tsx`). The box
-    sits before the options (`sectionsOf`, `renderExplanation`, `hooks/pane.tsx`, `hooks/model.ts`);
-  - the options, one full-width Button each, "N. Label", with the option's tradeoff under it: one line, its first letter
-    capitalized, then the fit after a dot, `· fit N` (`· aderência N` in pt-BR; with no tradeoff the line reads `└ fit N`;
-    a null fit draws nothing), indented one cell (`paddingLeft={1}`), dim only while the card fades. The options
-    are in a column with `gap={2}` and `marginTop={1}`, so two blank lines part them from the explanation box
-    (`renderQuestion`, `hooks/pane.tsx`). The recommended option reads "N. Label (Recommended)"
-    (Portuguese: "Recomendada") and is bold while not picked. The picked option is the primary button;
+  - the lead line, bold: "The agent is already on <key> since <HH:MM>", or "The agent is paused since <HH:MM>" for a
+    `high` risk question (`leadOf`, `hooks/model.ts`; pt: "O agente já seguiu com <key> desde <HH:MM>", "O agente está
+    pausado desde <HH:MM>");
+  - the explanation box before the question, when one of its sections is set: a box on a very light gray ground
+    (`#F9FAFB`, ink `#1F2937`, `EXPLAIN_COLORS`, 14.05:1), with `paddingX={1}` and `paddingY={1}`. Its sections, each
+    drawn only when its field is set: "What it is" (`what`; pt "O que é"), "The problem" (`problem`; pt "O problema"),
+    and "🔁 Analogy" (`analogy`; pt "🔁 Analogia");
+  - the question text, bold;
+  - the explanation box before the options, when `urgency` is set: "⏱️ Urgency" (pt "⏱️ Urgência");
+  - the options, one full-width Button each, "<key> · Label" (for example "A · Label"), with "(Recommended)" (pt
+    "(Recomendada)") after the label of the recommended one. The recommended option is bold while not picked; the picked
+    option is the primary button. Under each option, its own lines, indented one cell (`paddingLeft={1}`), dim only while
+    the card fades: the tradeoff line "└ <tradeoff> · fit N" (the first letter of the tradeoff capitalized; pt "· aderência N";
+    with no tradeoff "└ fit N"; a null fit draws nothing), then "What happens: <does>", "Pros: <pros>" and
+    "Cons: <cons>" (pt "O que acontece", "Prós", "Contras"). The options are in a column with `gap={2}` and
+    `marginTop={1}`, so two blank lines part them from the explanation box (`renderQuestion`, `renderOption`,
+    `hooks/pane.tsx`);
   - "N. Other…" is the last option (Portuguese: "Outra…"). Its button opens and shuts a text field under it
     (autofocused). Enter in that field ("Done" / "Pronto") records the typed text as the pick (key `other`); blank
     text records nothing. Once recorded, the text shows under the button and the button is primary. A surface with
     no Input draws no Other option (`renderOther`);
+  - the explanation box after the options, when one of its sections is set, in this order: "💡 Why <rec>" (`why`; pt
+    "💡 Por que A"), "↩️ Undo" (`undo`; pt "↩️ Como desfazer"), "🛠️ How" (`how`; pt "🛠️ Como"), "🎁 What we gain" (`gains`;
+    pt "🎁 O que ganhamos"), "⚖️ What we lose" (`losses`; pt "⚖️ O que perdemos"), and "🧭 Context and origin" (`context`;
+    pt "🧭 Contexto e origem") last. Each section is one line, "heading: text", the heading in bold, the text wrapping as one
+    paragraph; every name in the text (a slash command, or anything the agent wrote between backticks) is drawn in bold
+    ink (`piecesOf`, `renderSection`, `hooks/model.ts`, `hooks/pane.tsx`). The three boxes are `sectionsOf` and
+    `renderExplanation` (`hooks/model.ts`, `hooks/pane.tsx`);
+  - a separator: a 1px rule on the desktop, a row of "─" on the terminal (`renderDivider`);
   - the nav row: [← Back] (Portuguese: "← Voltar") on every question, dim on the first; [Next →] (Portuguese:
     "Próxima →") on every question but the last; on the last one, [Submit all (n)] (Portuguese: "Enviar tudo (n)"),
     where n is the number of questions of the group, dim until every question of the group has a pick.
-- **Hotkeys**: options take the digits 1 to 9 in order on every surface; "Other…" takes the next digit (none after
-  nine). Back `b`, Next `n` and Submit all `s` are drawn on the terminal only (`letterFor`, `hooks/pane.tsx`): the
-  desktop clicks them. No hotkey is drawn while the Other field is open, so typed text presses no button.
+- **Hotkeys**: each option button draws its key letter in lower case as its hotkey (`optionHotkey`, `hooks/pane.tsx`), on
+  every surface. "Other…" keeps its digit, the position after the options (none after nine). Back, Next and Submit all
+  take the first free letters of their surface's pool (`letterFor`, `NAV_POOLS`, `hooks/pane.tsx`): `z`, `x`, `w` on the
+  terminal; `p`, `f`, `e` and then `z`, `x`, `w` on the desktop. A letter that an option of the card uses is skipped. No
+  hotkey is drawn while the Other field is open, so typed text presses no button.
 - **Choosing**: an option, or "Other…" with its text, records the pick and moves on: to the first question without a
   pick after the current one (wrapping to the start), or, once every question of the group has a pick, to the last
   question, where Submit all is. After each pick the group stays selected. Nothing is written until Submit all.
@@ -325,12 +338,15 @@ status list). `hooks/pane.tsx`, `renderPane`.
     (non-destructive: no q/, a/ or d/ file changes).
   `<window>` is "<project name> · <session title>" (the project's last path segment, then the session title; the
   part that is missing is left out), the same label that the tree uses for a session.
+- **Footer** (`footerText`, `hooks/model.ts`; pt "Nada aguardando" first): drawn under the status lines only while no
+  question is open. It counts the answers given in the last 24 h, names the last answer (its question's title cut to 40
+  characters, its key and its age), and counts the answers not yet read and the expired ones. Absent while a question is open.
 
 ## Focus and clicks
 
 Decision: every Button of the pane and of the band keeps its press handle across redraws, on the desktop and on the
 terminal alike. The plugin does not hold the focus ring any more (there is no `ui.focus` hook); the engine moves the
-ring as it does for any plugin, and the pane's hotkeys (the digits on both surfaces; `b`, `n`, `s` on the terminal) are its keyboard path.
+ring as it does for any plugin, and the pane's hotkeys (the option letters on both surfaces, the digit of "Other…", and `z`, `x`, `w` or `p`, `f`, `e` for Back, Next and Submit all) are its keyboard path.
 
 Why: the engine hands a Button a new press handle on every redraw, unless the very same element object comes back. On
 the desktop a click moves the focus onto the Button, and that move redraws the site just before the press arrives. The
@@ -364,8 +380,10 @@ Two guards keep the drawn state from changing for nothing:
   `groupKey` would change (the field is `groupKey`, `hooks/wizard.ts`). With nothing open the pane draws no
   card, so that write would only redraw the pane. A group that opens later still starts at step 0.
 
-Known limit: the accent `#1E40AF` (`hooks/look.ts`) is low contrast on a dark theme (2.03:1 on a dark background,
-per the comment in `hooks/look.ts`). The engine gives the mod no theme signal, so the color cannot switch with the theme.
+Colour: the accent `#3566C8` (`ACCENT_COLOR`, `hooks/look.ts`) is never used for text (since 0.4.0-beta.7, commit 0a01eb5):
+text is bold ink, or the theme's own foreground, and the explanation box is `#1F2937` on `#F9FAFB`. Measured WCAG 2.x
+contrast of the accent, for the record: 5.40:1 on `#FFFFFF` and 3.28:1 on `#111827` (`#1E40AF` measured 8.72:1 and 2.03:1).
+The engine gives the mod no theme signal, so the colours cannot switch with the theme.
 
 ## Polling
 
@@ -398,7 +416,7 @@ Other text become spaces, so a title cannot start a second line of the delivery.
 - Free text (key `other`): `The user answered Askaway question <id> (<title>): their own answer (Other): "<text>".`
 - Ask-guard and pause-guard reasons: see "Hook modes".
 
-The agent instruction lives in `skills/file-question/SKILL.md`: file a question with every required
+The agent instruction lives in `skills/askaway-question-playbook/SKILL.md`: file a question with every required
 field, a recommended option, and on `refile` complete and file again; continue on `recommended` unless
 `action` is `pause`.
 
@@ -411,4 +429,4 @@ field, a recommended option, and on `refile` complete and file again; continue o
   declares the command hooks (`deliver`, `ask-guard`, `pause-guard`), which use
   `python3` and `${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py`.
 - `plugins/askaway/hooks/hooks.json`: the mod, `{"modules":["./register.tsx"]}`.
-- `plugins/askaway/skills/file-question/SKILL.md`: the skill agents read before they file a question.
+- `plugins/askaway/skills/askaway-question-playbook/SKILL.md`: the skill (`askaway:askaway-question-playbook`) agents read before they file a question.
