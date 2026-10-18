@@ -111,8 +111,8 @@ writes its document instead); exit 0 always, unless `--strict` is given (below).
 - `wait <id> [--timeout 300]` — polls a/ every 0.5 s until the answer exists or the timeout (seconds,
   finite, zero or more; `0` checks once) passes. Prints `{"id","status":"answered","key","text"?}` (the
   `text` of an `other` answer, as in `status`), `{"id","status":"timeout"}`, or
-  `{"id","status":"unknown id"}`. Exit 0. The pause guard does not exempt `wait` or `export`
-  (only `ask|status|list`), so a paused turn cannot run them.
+  `{"id","status":"unknown id"}`. Exit 0. The pause guard exempts `wait` and `export` like `ask`,
+  `status` and `list`, so a paused turn can wait for its answer.
 - `list [--open | --answered] [--since <when>]` — prints `{"items":[{"id","title","status","recommended","key"}...]}`,
   newest first. `--answered` keeps the answered items (`answered`, `delivered`, `expired`). With
   `--since`, only the items whose answer `ts` is at or after `<when>`; `--since` needs `--answered`.
@@ -125,9 +125,15 @@ writes its document instead); exit 0 always, unless `--strict` is given (below).
   asked at or after `<when>` (the question's `ts`; unlike `list --since`, which filters by the answer's).
   Writes the document to stdout, not a JSON result line; exit 0.
 - `away on|off|status` — writes or reads away.json; prints `{"away":bool}`.
-- `prune [--days 30]` — deletes q/a/d files of closed items (`delivered` or `expired`) whose closing
+- `prune [--days N]` — deletes q/a/d files of closed items (`delivered` or `expired`) whose closing
   time is older than N days: the delivery marker's `ts` for `delivered`, the answer's `ts` for
   `expired`; never the question's `ts`. Prints `{"removed":n}`.
+  N defaults to env `ASKAWAY_PRUNE_DAYS` when it is a whole number of days (1 to 6 digits, `0`
+  allowed, surrounding spaces ignored), else 30; `--days` overrides both. Any other value (empty,
+  negative, decimal, a word, more than 6 digits) falls back to 30. The window never reaches an open,
+  answered-but-unexpired or otherwise undelivered item: only `delivered` and `expired` items are
+  candidates, so `ASKAWAY_PRUNE_DAYS=0` prunes a delivered or expired item at once and nothing earlier.
+  The `deliver` slow path uses the same window (at most once a day).
 
 ## Hook modes
 
@@ -153,7 +159,7 @@ It fails open: any error exits 0 with no output. The command hooks are declared 
   `pause:true` (risk `high` only) whose status is not closed (`open` or `answered`, that is, not yet
   delivered nor expired) has `session == input.session_id`, it denies with the reason "Paused: Askaway question
   <id> (<title>) needs the user's answer. Do read-only work or end the turn; check with
-  `askaway.py status <id>`." Exception: one simple Bash command running `askaway.py ask|status|list`
+  `askaway.py status <id>`." Exception: one simple Bash command running `askaway.py ask|status|list|wait|export`
   (no `;&|`$<>`) passes. `answer` never passes, so only the user lifts a pause; an answer that is
   written but not yet delivered still holds it, and the next deliver run (the `status` call's
   PostToolUse, for one) ends it. Read-only MCP tools pass: `mcp__<server>__<tool>` whose tool name

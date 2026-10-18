@@ -89,6 +89,8 @@ TITLE_FIELD_BY_TYPE: Final = dict(TITLE_FIELDS)
 TITLE_LINE: Final = re.compile(r'"(?:custom-title|agent-name|ai-title)"')
 DAY_MS: Final = 86_400_000
 DEFAULT_PRUNE_DAYS: Final = 30
+PRUNE_DAYS_ENV: Final = "ASKAWAY_PRUNE_DAYS"
+PRUNE_DAYS_TEXT: Final = re.compile(r"[0-9]{1,6}")
 UNDELIVERED_TTL_MS: Final = 7 * DAY_MS
 PRUNE_INTERVAL_S: Final = 86_400
 RELEASED_SUFFIX: Final = ".desktop-released.json"
@@ -104,7 +106,7 @@ WRITE_WORDS: Final = frozenset({
     "add", "apply", "create", "delete", "edit", "exec", "execute", "insert", "keep", "kill", "move",
     "patch", "post", "purge", "push", "put", "register", "remove", "reset", "run", "save", "send",
     "set", "start", "stop", "update", "write"})
-# One simple `askaway.py ask|status|list` call. The path token excludes shell metacharacters,
+# One simple `askaway.py ask|status|list|wait|export` call. The path token excludes shell metacharacters,
 # so a command substitution in the path never matches. The path may be quoted, and a quoted path
 # may start with the literal ${CLAUDE_PLUGIN_ROOT} (the form the Askaway skill teaches).
 _PATH_CHARS = r"[^\s;&|`$<>()\"]*"
@@ -112,7 +114,7 @@ _QUOTED_CHARS = r"[^;&|`$<>()\"\\\n]*"
 INBOX_CALL: Final = re.compile(
     r"^\s*(?:/usr/bin/)?python3(?:\.\d+)?\s+"
     rf"(?:{_PATH_CHARS}askaway\.py|\"(?:\$\{{CLAUDE_PLUGIN_ROOT\}})?{_QUOTED_CHARS}askaway\.py\")"
-    r"\s+(?:ask|status|list)\b[^;&|`$<>\n]*$"
+    r"\s+(?:ask|status|list|wait|export)\b[^;&|`$<>\n]*$"
 )
 
 
@@ -621,6 +623,12 @@ def _settled_ts(item_id: str, status: str) -> int | None:
     return ts if isinstance(ts, int) else None
 
 
+def prune_days() -> int:
+    """The retention window: ASKAWAY_PRUNE_DAYS when it is a whole number of days, else 30."""
+    text = os.environ.get(PRUNE_DAYS_ENV, "").strip()
+    return int(text) if PRUNE_DAYS_TEXT.fullmatch(text) else DEFAULT_PRUNE_DAYS
+
+
 def cmd_prune(days: int) -> dict[str, Any]:
     if days < 0:
         raise ValueError("--days must not be negative")
@@ -629,6 +637,7 @@ def cmd_prune(days: int) -> dict[str, Any]:
     removed = 0
     for entry in load_questions():
         status = item_status(entry["id"])[0]
+        # Only closed items: an undelivered or unexpired record is never pruned, whatever the window.
         if status not in CLOSED_STATUSES:
             continue
         settled = _settled_ts(entry["id"], status)
@@ -730,7 +739,7 @@ def build_parser() -> argparse.ArgumentParser:
     away.set_defaults(run=lambda a: cmd_away(a.state))
 
     prune = commands.add_parser("prune")
-    prune.add_argument("--days", type=int, default=DEFAULT_PRUNE_DAYS)
+    prune.add_argument("--days", type=int, default=prune_days())
     prune.set_defaults(run=lambda a: cmd_prune(a.days))
 
     wait = commands.add_parser("wait")
@@ -816,7 +825,7 @@ def is_read_only_mcp(tool_name: object) -> bool:
 
 
 def _exempt_call(tool: object, command: str) -> bool:
-    """A call the pause lets through: one simple inbox status or list command, or a read-only MCP tool."""
+    """A call the pause lets through: one simple inbox ask, status, list, wait or export, or a read-only MCP tool."""
     return (tool == "Bash" and INBOX_CALL.match(command) is not None) or is_read_only_mcp(tool)
 
 
@@ -917,7 +926,7 @@ def _maybe_prune() -> None:
     if not _prune_due(marker):
         return
     with contextlib.suppress(OSError):
-        cmd_prune(DEFAULT_PRUNE_DAYS)
+        cmd_prune(prune_days())
         marker.touch()
 
 

@@ -599,6 +599,8 @@ def test_pause_guard_denies_bash_that_is_not_inbox(capsys, monkeypatch):
 @pytest.mark.parametrize("command", [
     "python3 scripts/askaway.py status {item}",
     "python3 scripts/askaway.py list --open",
+    "python3 scripts/askaway.py wait {item} --timeout 0",
+    "python3 scripts/askaway.py export --format csv",
 ])
 def test_pause_guard_lets_a_bash_command_run_inbox(command, capsys, monkeypatch):
     item = pending_pause(capsys, monkeypatch)
@@ -611,9 +613,11 @@ def test_pause_guard_lets_a_bash_command_run_inbox(command, capsys, monkeypatch)
     "rm -rf x # askaway.py",
     "askaway.py status x && rm y",
     "python3 scripts/askaway.py status {item} && rm y",
+    "python3 scripts/askaway.py wait {item} ; rm y",
+    "python3 scripts/askaway.py export > out.csv && rm y",
     "python3 $(rm -rf x)askaway.py status {item}",
 ])
-def test_pause_guard_denies_bash_that_is_not_one_simple_status_or_list_call(
+def test_pause_guard_denies_bash_that_is_not_one_simple_inbox_call(
         command, capsys, monkeypatch):
     item = pending_pause(capsys, monkeypatch)
     event = edit_event(tool="Bash", command=command.format(item=item))
@@ -916,6 +920,87 @@ def test_prune_counts_an_expired_item_from_its_answer_not_its_question(home, clo
     clock["ms"] = base + 33 * DAY_MS
     assert cli(capsys, "prune", "--days", "30") == {"removed": 1}
     assert not (home / "d" / f"{item}.json").exists()
+
+
+# ---- retention window --------------------------------------------------
+
+def test_prune_days_defaults_to_30_without_the_env_var(monkeypatch):
+    monkeypatch.delenv("ASKAWAY_PRUNE_DAYS", raising=False)
+    assert askaway.prune_days() == 30
+
+
+@pytest.mark.parametrize("value", ["0", "7", " 90 "])
+def test_prune_days_reads_a_whole_number_from_the_env_var(value, monkeypatch):
+    monkeypatch.setenv("ASKAWAY_PRUNE_DAYS", value)
+    assert askaway.prune_days() == int(value)
+
+
+@pytest.mark.parametrize("value", ["", "-1", "1.5", "abc", "7d", "1000000", "٧"])
+def test_prune_days_falls_back_to_30_on_an_invalid_value(value, monkeypatch):
+    monkeypatch.setenv("ASKAWAY_PRUNE_DAYS", value)
+    assert askaway.prune_days() == 30
+
+
+def test_env_var_sets_the_default_window_of_the_prune_command(home, clock, capsys, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    monkeypatch.setenv("ASKAWAY_PRUNE_DAYS", "7")
+    base = 1_000_000_000_000
+    clock["ms"] = base
+    item = ask_item(capsys)
+    cli(capsys, "answer", item, "A")
+    run_hook(capsys, monkeypatch, "deliver", deliver_event())
+    clock["ms"] = base + 8 * DAY_MS
+    assert cli(capsys, "prune") == {"removed": 1}
+    assert not (home / "q" / f"{item}.json").exists()
+
+
+def test_days_flag_still_overrides_the_env_var(home, clock, capsys, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    monkeypatch.setenv("ASKAWAY_PRUNE_DAYS", "7")
+    base = 1_000_000_000_000
+    clock["ms"] = base
+    item = ask_item(capsys)
+    cli(capsys, "answer", item, "A")
+    run_hook(capsys, monkeypatch, "deliver", deliver_event())
+    clock["ms"] = base + 8 * DAY_MS
+    assert cli(capsys, "prune", "--days", "30") == {"removed": 0}
+    assert (home / "q" / f"{item}.json").exists()
+
+
+def test_deliver_slow_path_uses_the_env_var_window(home, clock, capsys, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    monkeypatch.setenv("ASKAWAY_PRUNE_DAYS", "7")
+    base = 1_000_000_000_000
+    clock["ms"] = base
+    old_done = ask_item(capsys)
+    cli(capsys, "answer", old_done, "A")
+    run_hook(capsys, monkeypatch, "deliver", deliver_event())
+    clock["ms"] = base + 8 * DAY_MS
+    stale = time.time() - 2 * 86_400
+    os.utime(home / "last_prune", (stale, stale))
+    pending = ask_item(capsys)
+    cli(capsys, "answer", pending, "A")
+    run_hook(capsys, monkeypatch, "deliver", deliver_event())
+    assert not (home / "q" / f"{old_done}.json").exists()
+    assert (home / "q" / f"{pending}.json").exists()
+
+
+def test_zero_day_window_never_prunes_an_undelivered_or_unexpired_item(home, clock, capsys, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    monkeypatch.setenv("ASKAWAY_PRUNE_DAYS", "0")
+    base = 1_000_000_000_000
+    clock["ms"] = base
+    open_item = ask_item(capsys, title="still open")
+    answered = ask_item(capsys, title="answered, not delivered")
+    cli(capsys, "answer", answered, "A")
+    clock["ms"] = base + 6 * DAY_MS
+    assert cli(capsys, "prune") == {"removed": 0}
+    assert (home / "q" / f"{open_item}.json").exists()
+    assert (home / "a" / f"{answered}.json").exists()
+    clock["ms"] = base + 8 * DAY_MS
+    assert cli(capsys, "prune") == {"removed": 1}
+    assert (home / "q" / f"{open_item}.json").exists()
+    assert not (home / "q" / f"{answered}.json").exists()
 
 
 # ---- robustness and CLI shape -----------------------------------
