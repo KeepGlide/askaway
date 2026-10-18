@@ -294,9 +294,9 @@ const letterFor = (card: CardContext, key: NavKey): string | undefined => {
 }
 
 // One question on screen: the title in bold with the risk and age beside it, the bold lead line under it, the details
-// toggle under the lead, What it is, The problem and Analogy above the question, the question, the Urgency box, the
-// options with their tradeoff, fit, what happens, pros and cons, and "Other…". The long sections (Why to Context below
-// the options) draw only while the details are open. Then a separator, and the Back / Next or Submit all row. One blank
+// toggle under the lead, then the box above the question: What it is, The problem and Analogy, and the details (Why to
+// Context) right after Analogy while they are open. Then the question, the Urgency box, the options with their tradeoff,
+// fit, what happens, pros and cons, and "Other…". Then a separator, and the Back / Next or Submit all row. One blank
 // line sits under it.
 function renderQuestion(
   ui: Ui,
@@ -317,7 +317,7 @@ function renderQuestion(
     held,
     surface: view.surface,
   }
-  const { isLeaving, isExpanded } = card
+  const { isLeaving } = card
   const isEnded = view.ended.includes(question.id)
   return (
     <Box key={`card-${question.id}`} flexDirection="column" gap={1} borderStyle="round" borderDimColor={isLeaving} paddingX={1} paddingBottom={1}>
@@ -327,7 +327,7 @@ function renderQuestion(
       </Box>
       <Text bold dimColor={isLeaving}>{leadOf(lang, question)}</Text>
       {hasDetailsOf(lang, question) && renderDetailsToggle(ui, lang, actions, card)}
-      {renderExplanation(ui, 'before-question', sectionsOf(lang, question, 'before-question'), isLeaving)}
+      {renderExplanation(ui, 'before-question', sectionsAboveQuestion(lang, card), isLeaving)}
       <Text bold dimColor={isLeaving}>{question.question}</Text>
       {renderExplanation(ui, 'before-options', sectionsOf(lang, question, 'before-options'), isLeaving)}
       {isEnded ? (
@@ -338,7 +338,6 @@ function renderQuestion(
           {renderOther(ui, lang, actions, card)}
         </Box>
       )}
-      {isExpanded && renderExplanation(ui, 'after-options', sectionsOf(lang, question, 'after-options'), isLeaving)}
       {renderDivider(ui, view.surface)}
       {isEnded ? renderEndedNav(ui, lang, actions, card, screen) : renderNav(ui, lang, actions, card, screen)}
     </Box>
@@ -348,8 +347,15 @@ function renderQuestion(
 // The key of the details toggle: "e" opens and closes the long sections of the card.
 const DETAILS_KEY = 'e'
 
-// Whether the card has anything behind the details toggle: a section of the folded slot below the options.
-const hasDetailsOf = (lang: Lang, question: Question): boolean => sectionsOf(lang, question, 'after-options').length > 0
+// The sections of the box above the question: What it is, The problem and Analogy, then the details while they are open,
+// so the details come right after Analogy in the same text flow.
+const sectionsAboveQuestion = (lang: Lang, card: CardContext): Section[] => [
+  ...sectionsOf(lang, card.question, 'before-question'),
+  ...(card.isExpanded ? sectionsOf(lang, card.question, 'details') : []),
+]
+
+// Whether the card has anything behind the details toggle: a section of the folded details.
+const hasDetailsOf = (lang: Lang, question: Question): boolean => sectionsOf(lang, question, 'details').length > 0
 
 // The details toggle, a link under the lead line: a plain Button (no chrome) whose label is underlined text, "Details" or,
 // while the long sections are open, "Hide details". Its hotkey is drawn before the label ("e: Details"). An option keyed E

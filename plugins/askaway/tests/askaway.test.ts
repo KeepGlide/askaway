@@ -474,28 +474,28 @@ test('model: the footer cuts a long title of the last answer, and names a questi
 
 test('model: each explanation section reads in the chosen language and shows only the fields set', () => {
   const short = parsedQuestion('q-m-000001', 10)
-  expect(sectionsOf('pt', short, 'after-options')).toEqual([{ heading: '💡 Por que A', body: 'It is smaller.' }])
-  expect(sectionsOf('en', short, 'after-options')).toEqual([{ heading: '💡 Why A', body: 'It is smaller.' }])
+  expect(sectionsOf('pt', short, 'details')).toEqual([{ heading: '💡 Por que A', body: 'It is smaller.' }])
+  expect(sectionsOf('en', short, 'details')).toEqual([{ heading: '💡 Why A', body: 'It is smaller.' }])
   expect(sectionsOf('en', short, 'before-question')).toEqual([])
 
   const full = parsedQuestion('q-m-000002', 10, { context: 'C', analogy: 'An', how: 'H', gains: 'G', losses: 'L' })
   expect(sectionsOf('pt', full, 'before-question').map(section => section.heading)).toEqual(['🔁 Analogia'])
-  expect(sectionsOf('pt', full, 'after-options').map(section => section.heading)).toEqual([
+  expect(sectionsOf('pt', full, 'details').map(section => section.heading)).toEqual([
     '💡 Por que A',
     '🛠️ Como',
     '🎁 O que ganhamos',
     '⚖️ O que perdemos',
     '🧭 Contexto e origem',
   ])
-  expect(sectionsOf('en', full, 'after-options').slice(2, 4)).toEqual([
+  expect(sectionsOf('en', full, 'details').slice(2, 4)).toEqual([
     { heading: '🎁 What we gain', body: 'G' },
     { heading: '⚖️ What we lose', body: 'L' },
   ])
 
   const gainsOnly = parsedQuestion('q-m-000003', 10, { gains: 'G' })
-  expect(sectionsOf('en', gainsOnly, 'after-options')[1]).toEqual({ heading: '🎁 What we gain', body: 'G' })
+  expect(sectionsOf('en', gainsOnly, 'details')[1]).toEqual({ heading: '🎁 What we gain', body: 'G' })
   const lossesOnly = parsedQuestion('q-m-000007', 10, { losses: 'L' })
-  expect(sectionsOf('en', lossesOnly, 'after-options')[1]).toEqual({ heading: '⚖️ What we lose', body: 'L' })
+  expect(sectionsOf('en', lossesOnly, 'details')[1]).toEqual({ heading: '⚖️ What we lose', body: 'L' })
 })
 
 test('model: each card slot keeps its sections in the card order, each only when set, in both languages', () => {
@@ -504,7 +504,7 @@ test('model: each card slot keeps its sections in the card order, each only when
   })
   expect(sectionsOf('en', every, 'before-question').map(section => section.heading)).toEqual(['What it is', 'The problem', '🔁 Analogy'])
   expect(sectionsOf('en', every, 'before-options')).toEqual([{ heading: '⏱️ Urgency', body: 'Blocks in ~8 min' }])
-  expect(sectionsOf('en', every, 'after-options').map(section => section.heading)).toEqual([
+  expect(sectionsOf('en', every, 'details').map(section => section.heading)).toEqual([
     '💡 Why A',
     '↩️ Undo',
     '🛠️ How',
@@ -512,10 +512,10 @@ test('model: each card slot keeps its sections in the card order, each only when
     '⚖️ What we lose',
     '🧭 Context and origin',
   ])
-  expect(sectionsOf('en', every, 'after-options')[1]).toEqual({ heading: '↩️ Undo', body: 'Changing later ≈ 10 min' })
+  expect(sectionsOf('en', every, 'details')[1]).toEqual({ heading: '↩️ Undo', body: 'Changing later ≈ 10 min' })
   expect(sectionsOf('pt', every, 'before-question').map(section => section.heading)).toEqual(['O que é', 'O problema', '🔁 Analogia'])
   expect(sectionsOf('pt', every, 'before-options')).toEqual([{ heading: '⏱️ Urgência', body: 'Blocks in ~8 min' }])
-  expect(sectionsOf('pt', every, 'after-options').map(section => section.heading)).toEqual([
+  expect(sectionsOf('pt', every, 'details').map(section => section.heading)).toEqual([
     '💡 Por que A',
     '↩️ Como desfazer',
     '🛠️ Como',
@@ -525,7 +525,7 @@ test('model: each card slot keeps its sections in the card order, each only when
   ])
 
   const withoutEither = parsedQuestion('q-m-000005', 10, { gains: 'G' })
-  expect(sectionsOf('en', withoutEither, 'after-options').map(section => section.heading)).toEqual(['💡 Why A', '🎁 What we gain'])
+  expect(sectionsOf('en', withoutEither, 'details').map(section => section.heading)).toEqual(['💡 Why A', '🎁 What we gain'])
   expect(sectionsOf('en', withoutEither, 'before-options')).toEqual([])
 
   const urgencyOnly = parsedQuestion('q-m-000006', 10, { urgency: 'Can wait' })
@@ -1057,7 +1057,7 @@ test('each explanation section shows only when its field is set, in the box of i
   await ui.unmount()
 })
 
-test('the card draws urgency between the question and the options, and undo right after why, with their Portuguese labels', async ($, on) => {
+test('the card draws the details right after the explanation before the question, urgency after the question, and undo right after why, with their Portuguese labels', async ($, on) => {
   const files = new Map([
     [
       path('q', 'q-l3-cccccc'),
@@ -1069,16 +1069,20 @@ test('the card draws urgency between the question and the options, and undo righ
   const ui = await mountPane($)
   await ui.press({ key: 'details-q-l3-cccccc' })
   const texts = await textsOf(ui)
+  const questionLine = texts.indexOf('Which way for q-l3-cccccc?')
   const urgencyLine = texts.indexOf('⏱️ Urgência: Blocks in ~8 min')
   const whyLine = texts.indexOf('💡 Por que A: It is smaller.')
   const undoLine = texts.indexOf('↩️ Como desfazer: Changing later ≈ 10 min')
   const gainsLine = texts.indexOf('🎁 O que ganhamos: Fast reads.')
   const lossesLine = texts.indexOf('⚖️ O que perdemos: A file to back up.')
   expect(urgencyLine).toBeGreaterThanOrEqual(0)
-  expect(whyLine).toBeGreaterThan(urgencyLine)
+  expect(whyLine).toBeGreaterThan(-1)
   expect(undoLine).toBeGreaterThan(whyLine)
   expect(gainsLine).toBeGreaterThan(undoLine)
   expect(lossesLine).toBeGreaterThan(gainsLine)
+  // The details sit before the question, and Urgency comes after it.
+  expect(questionLine).toBeGreaterThan(lossesLine)
+  expect(urgencyLine).toBeGreaterThan(questionLine)
   await ui.unmount()
 })
 
@@ -1481,6 +1485,12 @@ test('the card folds only Why to Context behind the details toggle, and each que
   expect(await labelOf(ui, 'details-q-f1-aaaaaa')).toBe('Ocultar detalhes')
   texts = await textsOf(ui)
   for (const name of [...shown, ...folded]) expect(texts.some(text => text.includes(name))).toBe(true)
+  // The details sit right after Analogy and before the question, in the same box as What it is.
+  const at = (name: string): number => texts.findIndex(text => text.includes(name))
+  expect(at('Analogy N')).toBeLessThan(at('Reason R'))
+  expect(at('Reason R')).toBeLessThan(at('Context C'))
+  expect(at('Context C')).toBeLessThan(at('Which way for q-f1-aaaaaa?'))
+  expect(at('Which way for q-f1-aaaaaa?')).toBeLessThan(at('Blocks soon'))
   // The fold is kept per question: the second question starts folded, and the first is open again on return.
   await ui.press({ key: 'nav-next' })
   texts = await textsOf(ui)
@@ -2654,7 +2664,7 @@ test('the card has no n/total counter, no More button, no m hotkey and no JEV te
   await ui.unmount()
 })
 
-test('the explanation boxes sit above the question, between the question and the options, and below the options; the options column has gap 2', async ($, on) => {
+test('the details open inside the box above the question, right after Analogy; the Urgency box follows the question and the options column has gap 2', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { what: 'W', urgency: 'Soon' })]])
   stubHost(on, files)
   await $.session.start(SESSION)
@@ -2666,13 +2676,13 @@ test('the explanation boxes sit above the question, between the question and the
   const whatAt = keyAt('explanation-before-question')
   const urgencyAt = keyAt('explanation-before-options')
   const firstOptionAt = keyAt('optrow-q-l1-aaaaaa-A')
-  const belowAt = keyAt('explanation-after-options')
   expect(questionAt).toBeGreaterThan(-1)
   expect(whatAt).toBeGreaterThan(-1)
+  // One box above the question holds What it is and the details: no box of its own after the options.
+  expect(keyAt('explanation-after-options')).toBe(-1)
   expect(questionAt).toBeGreaterThan(whatAt)
   expect(urgencyAt).toBeGreaterThan(questionAt)
   expect(firstOptionAt).toBeGreaterThan(urgencyAt)
-  expect(belowAt).toBeGreaterThan(firstOptionAt)
   const column = nodes.find(
     node =>
       Array.isArray(node.children) &&
@@ -2706,7 +2716,7 @@ const expectInOrder = (texts: string[], lines: string[]): void => {
   expect(found).toEqual([...found].sort((a, b) => a - b))
 }
 
-test('the card draws What, The problem, Analogy, the question, Urgency, the options with their sub-lines, then Why to Context last, in pt-BR', async ($, on) => {
+test('the card draws What, The problem, Analogy, then the details (Why to Context) before the question, then Urgency and the options with their sub-lines, in pt-BR', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, FULL_CARD)]])
   stubHost(on, files)
   await $.session.start(SESSION)
@@ -2716,6 +2726,12 @@ test('the card draws What, The problem, Analogy, the question, Urgency, the opti
     'O que é: W',
     'O problema: P',
     '🔁 Analogia: An',
+    '💡 Por que A: It is smaller.',
+    '↩️ Como desfazer: U',
+    '🛠️ Como: H',
+    '🎁 O que ganhamos: G',
+    '⚖️ O que perdemos: L',
+    '🧭 Contexto e origem: C',
     'Which way for q-l1-aaaaaa?',
     '⏱️ Urgência: Soon',
     '└ Cheap · aderência 80',
@@ -2724,17 +2740,11 @@ test('the card draws What, The problem, Analogy, the question, Urgency, the opti
     'Contras: Old code.',
     '└ Slow · aderência 40',
     'O que acontece: It moves.',
-    '💡 Por que A: It is smaller.',
-    '↩️ Como desfazer: U',
-    '🛠️ Como: H',
-    '🎁 O que ganhamos: G',
-    '⚖️ O que perdemos: L',
-    '🧭 Contexto e origem: C',
   ])
   await ui.unmount()
 })
 
-test('the card draws the same order in English, with the option sub-lines under each link line', async ($, on) => {
+test('the card draws the same order in English: the details right after Analogy, the question, then the option sub-lines under each link line', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, FULL_CARD)]])
   stubHost(on, files, true, {}, {}, { LANG: 'en_US.UTF-8' })
   await $.session.start(SESSION)
@@ -2744,6 +2754,12 @@ test('the card draws the same order in English, with the option sub-lines under 
     'What it is: W',
     'The problem: P',
     '🔁 Analogy: An',
+    '💡 Why A: It is smaller.',
+    '↩️ Undo: U',
+    '🛠️ How: H',
+    '🎁 What we gain: G',
+    '⚖️ What we lose: L',
+    '🧭 Context and origin: C',
     'Which way for q-l1-aaaaaa?',
     '⏱️ Urgency: Soon',
     '└ Cheap · fit 80',
@@ -2752,12 +2768,6 @@ test('the card draws the same order in English, with the option sub-lines under 
     'Cons: Old code.',
     '└ Slow · fit 40',
     'What happens: It moves.',
-    '💡 Why A: It is smaller.',
-    '↩️ Undo: U',
-    '🛠️ How: H',
-    '🎁 What we gain: G',
-    '⚖️ What we lose: L',
-    '🧭 Context and origin: C',
   ])
   await ui.unmount()
 })

@@ -333,10 +333,10 @@ status list). `hooks/pane.tsx`, `renderPane`.
   - the question text, bold;
   - the lead line, bold: "Working on <key> since <HH:MM> while it waits for you. Your answer still counts: pick another option and it switches; with no answer it stays on <key>.", or "Paused since <HH:MM>: it waits for your answer before going on." for a `high` risk question (`leadOf`,
     `hooks/model.ts`; pt: "Trabalhando na <key> desde <HH:MM> enquanto espera você. Sua resposta ainda vale: escolha outra opção e ele muda; sem resposta, segue na <key>.", "Pausado desde <HH:MM>: espera a sua resposta para seguir.");
-  - the explanation box before the question, drawn (not folded) when one of its sections is set: a box on a very light gray ground
-    (`#F9FAFB`, ink `#1F2937`, `EXPLAIN_COLORS`, 14.05:1), with `paddingX={1}` and `paddingY={1}`. Its sections, each
+  - the explanation group before the question, drawn (not folded) when one of its sections is set: plain text on the
+    card's own background, with no box and no fill (`renderExplanation`), its sections spaced by `gap={1}`. Its sections, each
     drawn only when its field is set: "What it is" (`what`; pt "O que é"), "The problem" (`problem`; pt "O problema"),
-    and "🔁 Analogy" (`analogy`; pt "🔁 Analogia");
+    and "🔁 Analogy" (`analogy`; pt "🔁 Analogia"), and, while the details are open, the details (below) follow Analogy in the same box;
   - the question text, bold;
   - the explanation box before the options, when `urgency` is set: "⏱️ Urgency" (pt "⏱️ Urgência");
   - the options, one full-width Button each, "<key> · Label" (for example "A · Label"), with "(Recommended)" (pt

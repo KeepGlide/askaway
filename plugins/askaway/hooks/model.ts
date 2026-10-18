@@ -413,9 +413,10 @@ export function ageLabel(lang: Lang, ts: number, now: number): string {
   return t(lang, 'age.days', { n: Math.round(hours / 24) })
 }
 
-// Where an explanation box sits on the card: above the question text, between the question and the options, or below
-// the options. The three boxes hold the sections in the card order.
-export type CardSlot = 'before-question' | 'before-options' | 'after-options'
+// Where an explanation section sits on the card: the box above the question text (What it is, The problem, Analogy), the
+// box between the question and the options (Urgency), or the details (Why to Context), which the card draws inside the
+// box above the question, right after Analogy, while they are open. The sections keep that order.
+export type CardSlot = 'before-question' | 'before-options' | 'details'
 
 // The explanation sections of one slot, in the approved order; each one only when its field is set.
 export function sectionsOf(lang: Lang, question: Question, slot: CardSlot): Section[] {

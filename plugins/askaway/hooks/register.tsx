@@ -576,7 +576,7 @@ async function jumpToQuestion($: EngineInterface, id: string): Promise<void> {
   await update($, wizardAtom, prev => flow.jumpTo(prunedWizard(prev, open), target, id))
   const question = target.questions.find(candidate => candidate.id === id)
   const lang = await read($, langAtom)
-  if (question !== undefined && sectionsOf(lang, question, 'after-options').length > 0) {
+  if (question !== undefined && sectionsOf(lang, question, 'details').length > 0) {
     await $.ui.focus({ requestId: PANE, key: `details-${id}` })
   }
   await $.ui.scroll({ in: PANE, to: { key: `card-${id}` }, block: 'start' })
