@@ -561,6 +561,7 @@ def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
         "v": 1, "id": new_id(now), "ts": now,
         "project": origin.project, "session": origin.session, "run_kind": run_kind,
         "session_title": session_title(origin.session, origin.project, desktop),
+        "desktop_session": _nonempty(desktop.get("sessionId")) if desktop else None,
         **_family_fields(desktop),
         "title": title, "options": options, "recommended": recommended,
         **texts,

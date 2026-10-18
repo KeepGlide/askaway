@@ -382,7 +382,7 @@ const letterFor = (card: CardContext, key: NavKey): string | undefined => {
   return free[NAV_ORDER.indexOf(key)]
 }
 
-// One question on screen: the title in bold with the risk and age beside it, the Urgency box under it (when set), the first
+// One question on screen: the title row (renderTitleRow), the Urgency box under it (when set), the first
 // block (What it is and The problem, plain paragraphs), then the details block: the "Askaway Details:" title and Analogy,
 // Why to Context. Then the question, the dim lead line under it, the options with their tradeoff, fit, what happens,
 // pros and cons, and "Other…". Then a separator, and the Back / Next or Submit all row. One blank line sits under it.
@@ -409,10 +409,7 @@ function renderQuestion(
   const details = sectionsOf(lang, question, 'details')
   return (
     <Box key={`card-${question.id}`} flexDirection="column" gap={1} borderStyle="round" borderDimColor={isLeaving} paddingX={1} paddingBottom={1}>
-      <Box flexDirection="row" flexWrap="wrap" gap={2}>
-        <Text bold dimColor={isLeaving}>{questionLabel(question)}</Text>
-        <Text dimColor>{`${riskLabel(lang, question.risk)} · ${ageLabel(lang, question.ts, view.now)}`}</Text>
-      </Box>
+      {renderTitleRow(ui, lang, question, isLeaving, view.now)}
       {renderUrgency(ui, lang, question, isLeaving)}
       {renderFirstBlock(ui, question, isLeaving)}
       {details.length > 0 && renderDetailsBlock(ui, lang, card, details)}
@@ -466,6 +463,27 @@ function renderDivider(ui: Ui, surface: RenderSurface, key: string): RenderEleme
   }
   const { Text } = ui
   return <Text key={key} dimColor>{'─'.repeat(DIVIDER_COLUMNS)}</Text>
+}
+
+// The title row. Where the surface draws Markdown: one heading line, "### <title> - See session - <risk> · <age>", the
+// title a size up from the body, and "See session" a link (in the surface's link look, as the tree rows) to the asking
+// session's Desktop window, `#<desktop_session>`; the link and its dashes are left out when the question knows no Desktop
+// session. The surface opens the link itself (no onLinkPress). Else the bold title and the dim risk and age side by side.
+function renderTitleRow(ui: Ui, lang: Lang, question: Question, isLeaving: boolean, now: number): RenderElement {
+  const { Box, Text } = ui
+  const status = `${riskLabel(lang, question.risk)} · ${ageLabel(lang, question.ts, now)}`
+  if (!('Markdown' in ui)) {
+    return (
+      <Box key={`title-${question.id}`} flexDirection="row" flexWrap="wrap" gap={2}>
+        <Text bold dimColor={isLeaving}>{questionLabel(question)}</Text>
+        <Text dimColor>{status}</Text>
+      </Box>
+    )
+  }
+  const { Markdown } = ui
+  const session = question.desktop_session === undefined ? [] : [`[${t(lang, 'card.session')}](#${question.desktop_session})`]
+  const text = `### ${[escapeMarkdown(questionLabel(question)), ...session, status].join(' - ')}`
+  return <Markdown key={`title-${question.id}`} text={text} dimColor={isLeaving} />
 }
 
 // The Urgency line under the title: its bold title in the default colour, its text in the colour of its grade (URGENCY_COLOR).

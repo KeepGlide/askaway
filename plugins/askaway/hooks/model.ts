@@ -125,6 +125,7 @@ export function parseQuestion(raw: unknown, id: string): Question | undefined {
     project: typeof raw.project === 'string' ? raw.project : '',
     session: typeof raw.session === 'string' ? raw.session : null,
     session_title: optionalText(raw.session_title),
+    desktop_session: desktopSessionOf(raw.desktop_session),
     family: optionalText(raw.family),
     family_title: optionalText(raw.family_title),
     options,
@@ -327,6 +328,12 @@ export function titleCase(text: string, lang: Lang): string {
 // Escapes the markdown punctuation of a label (a question title is text the agent wrote), so it cannot draw a link,
 // an autolink, emphasis or HTML of its own. Tabs and newlines become spaces: a Markdown drawing has no others.
 const MARKDOWN_PUNCTUATION = /[\\`*_[\]()<>!|~&:.@]/g
+// The Desktop sessionId of the asking session, kept only in its one shape, `local_<id>` of letters, digits and dashes:
+// it goes into the href of the card's "See session" link as written, so any other text is dropped, not drawn.
+const DESKTOP_SESSION = /^local_[A-Za-z0-9-]+$/
+export const desktopSessionOf = (value: unknown): string | undefined =>
+  typeof value === 'string' && DESKTOP_SESSION.test(value) ? value : undefined
+
 export const escapeMarkdown = (text: string): string =>
   text.replace(/[\t\n\r]+/g, ' ').replace(MARKDOWN_PUNCTUATION, '\\$&')
 

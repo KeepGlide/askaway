@@ -26,7 +26,7 @@ import {
   historyOf,
   titleCase,
   urgencyGradeOf,
-} from '../hooks/model'
+ desktopSessionOf } from '../hooks/model'
 import { heldButtons } from '../hooks/held'
 import { renderTreeQuestion } from '../hooks/pane'
 import { ACCENT_COLOR, DETAILS_FILL, LINK_MARK, URGENCY_COLOR, themeFamilyOf } from '../hooks/look'
@@ -257,11 +257,14 @@ const textOfNode = (node: unknown): string => {
 }
 
 // Every Text the pane draws, in order; a tree link (a Markdown block) reads as its label, with its mark.
+// The texts drawn, one per Text node and per Markdown block; a card's title heading ("### <title> - <See session> - <risk>
+// · <age>") is split at its dashes, so the title, the link and the status line are listed as the Text nodes they were.
 const textsOf = async (ui: Awaited<ReturnType<typeof mountPane>>): Promise<string[]> =>
   nodesOf(await ui.drawn()).flatMap(node => {
     if (node.type === 'Text') return [textOfNode(node)]
-    if (node.type === 'Markdown') return [plainMarkdown(String((node.props as Record<string, unknown>).text))]
-    return []
+    if (node.type !== 'Markdown') return []
+    const text = plainMarkdown(String((node.props as Record<string, unknown>).text))
+    return text.startsWith('### ') ? text.slice(4).split(' - ') : [text]
   })
 
 // The Text the pane draws that contains the fragment. A History line carries its own times, so tests match its words.
@@ -895,9 +898,12 @@ test('the card draws the risk and age on the title row, and two blank lines befo
       (Array.isArray(node.children) ? node.children : [])
         .filter((child): child is Record<string, unknown> => typeof child === 'object' && child !== null && (child as Record<string, unknown>).type === 'Text')
         .map(textOf)
-    const titleRow = nodes.find(node => node.type === 'Box' && childTexts(node)[0] === 'Title q-l1-aaaaaa')
-    expect((titleRow?.props as Record<string, unknown> | undefined)?.flexDirection).toBe('row')
-    expect(childTexts(titleRow ?? {})[1]?.startsWith(riskLabel('pt', 'low'))).toBe(true)
+    // The title row is one Markdown heading: the title, a dash, then the risk and the age; no See session link without a
+    // Desktop session on the question.
+    const titleRow = await ui.find({ type: 'Markdown', key: 'title-q-l1-aaaaaa' })
+    const titleText = String((titleRow?.props as Record<string, unknown> | undefined)?.text)
+    expect(titleText.startsWith(`### Title q-l1-aaaaaa - ${riskLabel('pt', 'low')} · `)).toBe(true)
+    expect(titleText).not.toContain('](#')
     const optionList = nodes.find(
       node => node.type === 'Box' && nodesOf(node).some(inner => keyOfNode(inner) === 'opt-q-l1-aaaaaa-A') && nodesOf(node).some(inner => keyOfNode(inner) === 'opt-q-l1-aaaaaa-B') && (node.props as Record<string, unknown> | undefined)?.gap === 2,
     )
@@ -1843,6 +1849,27 @@ test('a line cleared before a restart stays hidden after it', async ($, on) => {
   await ui.unmount()
 })
 
+test('the title row links "See session" to the asking session\'s Desktop window, between the title and the risk, when the question knows it', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { desktop_session: 'local_abc', title: 'Cache [it] now' })]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  const titleRow = await ui.find({ type: 'Markdown', key: 'title-q-l1-aaaaaa' })
+  const text = String((titleRow?.props as Record<string, unknown> | undefined)?.text)
+  expect(text.startsWith(`### Cache \\[it\\] now - [Ver sessão](#local_abc) - ${riskLabel('pt', 'low')} · `)).toBe(true)
+  // The surface opens the link itself: no pressable list on the heading.
+  expect((titleRow?.props as Record<string, unknown> | undefined)?.pressableLinks).toBeUndefined()
+  await ui.unmount()
+})
+
+test('model: desktop_session is kept only as local_<id> of letters, digits and dashes; any other text draws no link', () => {
+  expect(desktopSessionOf('local_7f3a-b2')).toBe('local_7f3a-b2')
+  expect(desktopSessionOf('local_x) - [a](b)')).toBeUndefined()
+  expect(desktopSessionOf('local_a b')).toBeUndefined()
+  expect(desktopSessionOf('abc')).toBeUndefined()
+  expect(desktopSessionOf(null)).toBeUndefined()
+})
+
 test('the risk label reads in pt-BR for low, medium and high, with the age after it, one question per card', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { risk: 'low', session: 's1' })],
@@ -1852,12 +1879,11 @@ test('the risk label reads in pt-BR for low, medium and high, with the age after
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: /^✅ risco baixo · / })).toBeDefined()
+  expect(await ui.find({ type: 'Markdown', text: / - ✅ risco baixo · / })).toBeDefined()
   await ui.press({ key: 'nav-next' })
-  expect(await ui.find({ type: 'Text', text: /^⚠️ risco médio · / })).toBeDefined()
+  expect(await ui.find({ type: 'Markdown', text: / - ⚠️ risco médio · / })).toBeDefined()
   await ui.press({ key: 'nav-next' })
-  expect(await ui.find({ type: 'Text', text: /^🛑 risco alto · / })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^🛑 risco alto · / })).toBeDefined()
+  expect(await ui.find({ type: 'Markdown', text: / - 🛑 risco alto · / })).toBeDefined()
   await ui.unmount()
 })
 
@@ -2531,10 +2557,10 @@ test('a pane that stays mounted reads the age on as the clock moves: 60 s, then 
   await $.session.start(SESSION)
   const ui = await mountPane($)
   await clock.advance(60_000)
-  expect(await ui.find({ type: 'Text', text: /· há 1 min$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Markdown', text: /· há 1 min$/ })).toBeDefined()
   const ticksBefore = stateWrites.filter(key => key === 'tick').length
   await clock.advance(30_000)
-  expect(await ui.find({ type: 'Text', text: /· há 2 min$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Markdown', text: /· há 2 min$/ })).toBeDefined()
   expect(stateWrites.filter(key => key === 'tick').length - ticksBefore).toBe(1)
   await ui.unmount()
 })

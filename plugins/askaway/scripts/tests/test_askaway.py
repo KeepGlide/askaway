@@ -1696,6 +1696,7 @@ def test_ask_files_the_desktop_family_root_and_titles(home, capsys, monkeypatch)
     entry = stored(home, "q", out["id"])
     assert entry["family"] == "local_root" and entry["family_title"] == "Root title"
     assert entry["session_title"] == "Fork title"
+    assert entry["desktop_session"] == "local_fork"
 
 
 def test_ask_clips_the_family_title_like_the_session_title(home, capsys, monkeypatch):
@@ -1713,6 +1714,7 @@ def test_ask_without_a_desktop_file_keeps_the_transcript_title(home, capsys, mon
     out = cli(capsys, "ask", "--json", json.dumps(base_entry()))
     entry = stored(home, "q", out["id"])
     assert entry["family"] is None and entry["family_title"] is None
+    assert entry["desktop_session"] is None
     assert entry["session_title"] == "Cache work"
 
 

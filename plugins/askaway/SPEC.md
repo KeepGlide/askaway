@@ -30,6 +30,7 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   {"v":1,"id":"q-lq3x9a1-a3f9c2","ts":1791993000000,
    "project":"<absolute project path>","session":"<CLAUDE_CODE_SESSION_ID or null>",
    "run_kind":"main|subagent|goal|loop|bash|codex","session_title":"<<= 80 chars> | null>",
+   "desktop_session":"<Claude Desktop sessionId of the asking session, local_<uuid> | null>",
    "family":"<Claude Desktop root sessionId, local_<uuid> | null>","family_title":"<<= 80 chars> | null>",
    "title":"<= 60 chars","question":"<= 400 chars",
    "what":"<<= 600 chars, 2+ sentences>","problem":"<<= 400 chars>","context":"<<= 600 chars>",
@@ -350,8 +351,11 @@ status list). `hooks/pane.tsx`, `renderPane`.
   drawn on the desktop only: 24px before the counter in the header (key `keepglide-counter`, `KEEPGLIDE_HEADER_SIZE`)
   and 28px before the Submit all button (key `keepglide-submit`, `KEEPGLIDE_SUBMIT_SIZE`). The terminal draws no mark.
 - **Question card**, one question at a time, bordered, rows separated by a gap. Top to bottom:
-  - the title row: the question's title, bold, with its risk and age beside it, muted, "<risk label> · <age label>"
-    (`riskLabel`, `ageLabel`); the row wraps the risk under the title when it does not fit. The risk label (low, medium,
+  - the title row (`renderTitleRow`): where the surface draws Markdown, one heading, "### <title> - See session - <risk
+    label> · <age label>" (`riskLabel`, `ageLabel`), the title a size up from the body; "See session" ("Ver sessão",
+    `card.session`) is a link to the asking session's Desktop window, `#<desktop_session>`, left out with its dashes when
+    the question has no `desktop_session`; the surface opens it itself (no `onLinkPress`). Elsewhere the title in bold with
+    the risk and age beside it, muted, wrapping under the title when they do not fit. The risk label (low, medium,
     high) is the risk of accepting the recommended option, as the filing agent judged it. A question with no title is
     named by its text, cut to 24 characters with "…";
   - the Urgency line, directly under the title row and before the lead line, when `urgency` is set: "⏱️ Urgency" (pt

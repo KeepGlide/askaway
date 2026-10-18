@@ -40,6 +40,9 @@ export type Question = {
   project: string
   session: string | null
   session_title?: string
+  // The Claude Desktop sessionId ("local_<uuid>") of the asking session itself: the card's "See session" link. Absent
+  // when the asking session has no Desktop record (a terminal, or a question filed before the field existed).
+  desktop_session?: string
   // The Claude Desktop root session of the asking session's family ("local_<uuid>") and that root's title. Absent on
   // questions filed before they existed; the tree then groups by project.
   family?: string
