@@ -212,29 +212,38 @@ const optionDetailsOf = (lang: Lang, option: QuestionOption): [string, string][]
   return details.filter((detail): detail is [string, string] => detail[1] !== undefined)
 }
 
-// An option answers to its digit: 1 to 9 for the first nine positions, none after.
+// The digit of "Other…": the position after the options, 1 to 9 for the first nine positions, none after. Options never
+// take digits; they answer to their key letters.
 const digitOf = (position: number): string | undefined => (position <= 8 ? String(position + 1) : undefined)
 
 // A hotkey is drawn only while the card's Other field is shut.
 const hotkeyFor = (card: CardContext, key: string | undefined): string | undefined => (card.isTyping ? undefined : key)
 
-// Back, Next and Submit take a letter on each surface: b, n and s on the terminal, p, f and e on the desktop. The desktop
-// letters clash with no option digit, no option key A to D and no terminal letter. A surface not listed draws none.
+// An option answers to its key letter in lower case; a key that is not one letter draws no hotkey.
+const optionHotkey = (card: CardContext, key: string): string | undefined =>
+  hotkeyFor(card, /^[a-z]$/i.test(key) ? key.toLowerCase() : undefined)
+
+// Back, Next and Submit take the first free letters of their surface's pool, in that order. A letter that an option key
+// uses on this card is skipped, so no shortcut clashes with an option. The terminal pool avoids b, n and s, because
+// option B, N and S would clash with them; the desktop keeps p, f and e while no option uses them. A surface not listed
+// draws none.
 type NavKey = 'back' | 'next' | 'submit'
-const NAV_LETTERS: Partial<Record<RenderSurface, Record<NavKey, string>>> = {
-  terminal: { back: 'b', next: 'n', submit: 's' },
-  desktop: { back: 'p', next: 'f', submit: 'e' },
+const NAV_ORDER: readonly NavKey[] = ['back', 'next', 'submit']
+const NAV_POOLS: Partial<Record<RenderSurface, readonly string[]>> = {
+  terminal: ['z', 'x', 'w'],
+  desktop: ['p', 'f', 'e', 'z', 'x', 'w'],
 }
 
 const letterFor = (card: CardContext, key: NavKey): string | undefined => {
-  const letters = NAV_LETTERS[card.surface]
-  return letters === undefined ? undefined : hotkeyFor(card, letters[key])
+  const taken = card.question.options.map(option => option.key.toLowerCase())
+  const free = (NAV_POOLS[card.surface] ?? []).filter(letter => !taken.includes(letter))
+  return hotkeyFor(card, free[NAV_ORDER.indexOf(key)])
 }
 
 // One question on screen: the title in bold with the risk and age beside it, the bold lead line under it (what the agent
 // does about the question), the box of What and Problem and Analogy, the question, the Urgency box, two blank lines, the
-// numbered options with "Other…", the box of Why to Context, a separator, and the Back / Next or Submit all row. One
-// blank line sits under the nav row.
+// options with their key letters and "Other…", the box of Why to Context, a separator, and the Back / Next or Submit all
+// row. One blank line sits under the nav row.
 function renderQuestion(
   ui: Ui,
   lang: Lang,
@@ -265,7 +274,7 @@ function renderQuestion(
       <Text bold dimColor={isLeaving}>{question.question}</Text>
       {renderExplanation(ui, 'before-options', sectionsOf(lang, question, 'before-options'), isLeaving)}
       <Box flexDirection="column" gap={2} marginTop={1}>
-        {question.options.map((option, position) => renderOption(ui, lang, actions, card, option, position))}
+        {question.options.map(option => renderOption(ui, lang, actions, card, option))}
         {renderOther(ui, lang, actions, card)}
       </Box>
       {renderExplanation(ui, 'after-options', sectionsOf(lang, question, 'after-options'), isLeaving)}
@@ -297,24 +306,18 @@ function renderExplanation(ui: Ui, slot: CardSlot, sections: Section[], isLeavin
   )
 }
 
-// A full-width numbered option, its tradeoff and fit under it, then what happens, its pros and its cons. The picked one is
-// the primary button; the recommended one, when not picked, is bold and says "(Recommended)" in its text.
-function renderOption(
-  ui: Ui,
-  lang: Lang,
-  actions: PaneActions,
-  card: CardContext,
-  option: QuestionOption,
-  position: number,
-): RenderElement {
+// A full-width option, headed by its key letter ("A · label"), its tradeoff and fit under it, then what happens, its pros
+// and its cons. The picked one is the primary button; the recommended one, the one whose key is the recommended key, when
+// not picked, is bold and says "(Recommended)" in its text.
+function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, option: QuestionOption): RenderElement {
   const { Box, Button, Text } = ui
   const { question, isLeaving, wizard, held } = card
   const isPicked = wizard.picks[question.id]?.key === option.key
   const isRecommended = option.key === question.recommended
-  const text = `${position + 1}. ${option.label}${isRecommended ? ` (${t(lang, 'option.recommended')})` : ''}`
+  const text = `${option.key} · ${option.label}${isRecommended ? ` (${t(lang, 'option.recommended')})` : ''}`
   const isBold = isRecommended && !isPicked
   const key = `opt-${question.id}-${option.key}`
-  const hotkey = hotkeyFor(card, digitOf(position))
+  const hotkey = optionHotkey(card, option.key)
   const tradeoffLine = tradeoffLineOf(lang, option)
   const details = optionDetailsOf(lang, option)
   const onPress = () => {

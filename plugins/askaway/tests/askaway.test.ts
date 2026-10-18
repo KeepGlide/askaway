@@ -799,17 +799,17 @@ test('no 🎯 and no tooltip: the recommended option says "(Recomendada)" in its
   const isAbsoluteBox = (node: Record<string, unknown>): boolean =>
     node.type === 'Box' && (node.props as Record<string, unknown> | undefined)?.position === 'absolute'
   expect(nodesOf(await ui.drawn()).filter(isAbsoluteBox)).toHaveLength(0)
-  expect(await labelOf(ui, 'opt-q-l1-aaaaaa-A')).toBe('1. Keep (Recomendada)')
-  expect(await ui.find({ type: 'Text', text: '1. Keep (Recomendada)' })).toMatchObject({ props: { bold: true } })
+  expect(await labelOf(ui, 'opt-q-l1-aaaaaa-A')).toBe('A · Keep (Recomendada)')
+  expect(await ui.find({ type: 'Text', text: 'A · Keep (Recomendada)' })).toMatchObject({ props: { bold: true } })
   await ui.unmount()
 })
 
-test('each option is one full-width column with its tradeoff under it, numbered, and Other… is the last one', async ($, on) => {
+test('each option is one full-width column with its tradeoff under it, headed by its key letter, and Other… is the last one', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await labelOf(ui, 'opt-q-l1-aaaaaa-B')).toBe('2. Rewrite')
+  expect(await labelOf(ui, 'opt-q-l1-aaaaaa-B')).toBe('B · Rewrite')
   expect(await labelOf(ui, 'other-q-l1-aaaaaa')).toBe('3. Outra…')
   for (const key of ['optrow-q-l1-aaaaaa-A', 'optrow-q-l1-aaaaaa-B']) {
     expect((await ui.find({ type: 'Box', key }))?.props.flexDirection).toBe('column')
@@ -1953,7 +1953,7 @@ test('a group answered from outside while another is open: the pane shows the fi
   await ui.unmount()
 })
 
-test('hotkeys: each option its digit, Other the next, then b, n and s on the terminal and p, f and e on the desktop; none while the Other field is open', async ($, on) => {
+test('hotkeys: each option its key letter, Other the next digit, then z, x and w on the terminal and p, f and e on the desktop; none while the Other field is open', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
@@ -1962,13 +1962,13 @@ test('hotkeys: each option its digit, Other the next, then b, n and s on the ter
   await $.session.start(SESSION)
   const ui = await mountPane($)
   const hotkeyOf = async (key: string): Promise<unknown> => (await ui.find({ type: 'Button', key }))?.props.hotkey
-  expect(await hotkeyOf('opt-q-l1-aaaaaa-A')).toBe('1')
-  expect(await hotkeyOf('opt-q-l1-aaaaaa-B')).toBe('2')
+  expect(await hotkeyOf('opt-q-l1-aaaaaa-A')).toBe('a')
+  expect(await hotkeyOf('opt-q-l1-aaaaaa-B')).toBe('b')
   expect(await hotkeyOf('other-q-l1-aaaaaa')).toBe('3')
-  expect(await hotkeyOf('nav-back')).toBe('b')
-  expect(await hotkeyOf('nav-next')).toBe('n')
+  expect(await hotkeyOf('nav-back')).toBe('z')
+  expect(await hotkeyOf('nav-next')).toBe('x')
   await ui.press({ key: 'nav-next' })
-  expect(await hotkeyOf('submit-all')).toBe('s')
+  expect(await hotkeyOf('submit-all')).toBe('w')
   await ui.press({ key: 'nav-back' })
   await ui.press({ key: 'other-q-l1-aaaaaa' })
   expect(await ui.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa' })).toBeDefined()
@@ -1977,11 +1977,11 @@ test('hotkeys: each option its digit, Other the next, then b, n and s on the ter
   for (const button of buttons) expect(button.props.hotkey).toBeUndefined()
   await ui.press({ key: 'other-q-l1-aaaaaa' })
   await ui.unmount()
-  // The desktop keeps the digits and takes p, f and e for Back, Next and Submit: none of them is a digit, an option key
-  // A to D or a terminal letter (b, n, s), so no shortcut clashes with another.
+  // The desktop takes p, f and e for Back, Next and Submit: none of them is an option key of this question (A or B), so no
+  // shortcut clashes with another. Options take their letters on the desktop too.
   const desk = await mountPane($, 'desktop')
   const deskHotkey = async (key: string): Promise<unknown> => (await desk.find({ type: 'Button', key }))?.props.hotkey
-  expect(await deskHotkey('opt-q-l1-aaaaaa-A')).toBe('1')
+  expect(await deskHotkey('opt-q-l1-aaaaaa-A')).toBe('a')
   expect(await deskHotkey('other-q-l1-aaaaaa')).toBe('3')
   expect(await deskHotkey('nav-back')).toBe('p')
   expect(await deskHotkey('nav-next')).toBe('f')
@@ -1992,6 +1992,33 @@ test('hotkeys: each option its digit, Other the next, then b, n and s on the ter
   for (const button of await desk.findAll({ type: 'Button' })) expect(button.props.hotkey).toBeUndefined()
   await desk.press({ key: 'other-q-l1-aaaaaa' })
   await desk.unmount()
+})
+
+test('options filed as [B, A] with B recommended: the first button reads "B · …" with the mark, and the "a" hotkey picks A', async ($, on) => {
+  const reversed = [
+    { key: 'B', label: 'Rewrite', tradeoff: 'slow', fit: 40 },
+    { key: 'A', label: 'Keep', tradeoff: 'cheap', fit: 80 },
+  ]
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { options: reversed, recommended: 'B' })]])
+  const { writes } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  const optionButtons = (await ui.findAll({ type: 'Button' })).filter(button => String(button.props.label).includes(' · '))
+  expect(optionButtons[0]?.props.label).toBe('B · Rewrite (Recomendada)')
+  expect(await labelOf(ui, 'opt-q-l1-aaaaaa-A')).toBe('A · Keep')
+  expect(await ui.find({ type: 'Text', text: 'B · Rewrite (Recomendada)' })).toMatchObject({ props: { bold: true } })
+  const hotkeyOf = async (key: string): Promise<unknown> => (await ui.find({ type: 'Button', key }))?.props.hotkey
+  expect(await hotkeyOf('opt-q-l1-aaaaaa-B')).toBe('b')
+  expect(await hotkeyOf('opt-q-l1-aaaaaa-A')).toBe('a')
+  const buttonWithHotkey = nodesOf(await ui.drawn()).find(
+    node => node.type === 'Button' && (node.props as Record<string, unknown>).hotkey === 'a',
+  )
+  expect(buttonWithHotkey).toBeDefined()
+  await ui.press({ key: String(keyOfNode(buttonWithHotkey ?? {})) })
+  await ui.press({ key: 'submit-all' })
+  expect(writes).toEqual([path('a', 'q-l1-aaaaaa')])
+  expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ id: 'q-l1-aaaaaa', key: 'A', by: 'panel' })
+  await ui.unmount()
 })
 
 test('draw order: every status line is drawn after the card\'s Back and Next buttons', async ($, on) => {
@@ -2382,7 +2409,7 @@ test('the card has no n/total counter, no More button, no m hotkey and no JEV te
   const hotkeys = nodesOf(await ui.drawn())
     .filter(node => node.type === 'Button')
     .map(node => (node.props as Record<string, unknown>).hotkey)
-  expect(hotkeys).toContain('1')
+  expect(hotkeys).toContain('a')
   expect(hotkeys).not.toContain('m')
   await ui.unmount()
 })
