@@ -184,7 +184,7 @@ Enquanto há perguntas abertas, uma faixa fica acima do prompt: `2 perguntas agu
 ### Responder uma pergunta
 
 1. Aperte `1` com o prompt vazio, ou clique em **Responder** na faixa, para abrir o painel. O cabeçalho mostra o logo do Askaway, o título **Perguntas aguardando** e o contador, como `2 pendentes · 1 grupo`.
-2. A árvore lista cada projeto com perguntas abertas, um abaixo do outro, com o nome de cada projeto em negrito. Embaixo de cada projeto, as sessões (`├` ou `└`) guardam as suas perguntas. Uma marca mostra em que ponto está cada pergunta: `●` a que está na tela, `✓` com opção escolhida, `○` aguardando. Nada é enviado até **Enviar tudo**. Os nomes de projeto e de sessão são texto, não botões.
+2. A árvore lista cada projeto com perguntas abertas, um abaixo do outro, com o nome de cada projeto em negrito. Embaixo de cada projeto, as sessões (`├` ou `└`) guardam as suas perguntas. Uma marca mostra em que ponto está cada pergunta: `●` a que está na tela, `✓` com opção escolhida, `○` aguardando. Nada é enviado até **Enviar tudo**. Os nomes de projeto e de sessão são texto, não botões; cada linha de pergunta é um botão, e apertar uma leva ao cartão dela.
 3. Clique numa opção para registrá-la. O painel avança para a próxima pergunta sem resposta, voltando ao início se preciso, ou para a última pergunta quando todas já têm resposta. Nada é enviado ainda.
 4. Para responder com as suas palavras, clique em **Outra…**, digite e aperte Enter (o botão do campo diz **Pronto**). O texto vira a resposta, e as teclas ficam desligadas enquanto o campo estiver aberto.
 5. **← Voltar** vai para a pergunta anterior. **Próxima →** vai para a seguinte, com ou sem resposta. Ele aparece em todas as perguntas, menos na última.
@@ -198,7 +198,7 @@ Quando nenhuma pergunta está aberta, o painel mostra uma linha de rodapé sob a
 
 O cartão desenha estas partes de cima para baixo. Os rótulos são os do painel em português (pt-BR).
 
-O cartão abre com o título, a linha de estado, a explicação antes da pergunta, a pergunta, a Urgência, as opções com a troca, a aderência, as linhas **O que acontece**, **Prós** e **Contras**, e a linha de navegação. Só o passo 7 fica dobrado até você apertar `e` (`e · detalhes`). A tecla abre e fecha esse trecho naquele cartão, e o botão só aparece quando o passo 7 tem algo.
+O cartão abre com o título, a linha de estado, o link **Detalhes** logo abaixo, a explicação antes da pergunta, a pergunta, a Urgência, as opções com a troca, a aderência, as linhas **O que acontece**, **Prós** e **Contras**, e a linha de navegação. Só o passo 7 fica dobrado até você apertar `e` (o link **Detalhes**, que aparece como `e: Detalhes`). A tecla abre e fecha esse trecho naquele cartão, e o link só aparece quando o passo 7 tem algo.
 
 1. **Linha do título:** o título em negrito, seguido do rótulo de risco e da idade, por exemplo `⚠️ risco médio · há 12 min`. Uma pergunta registrada sem `title` recebe a pergunta cortada em 60 caracteres como título (a CLI faz isso). O painel corta em 24 caracteres só um título armazenado vazio. O risco quebra para baixo do título quando não cabe na linha.
 2. **Linha de estado:** em negrito, o que o agente faz agora e o que acontece se ninguém responder: `Trabalhando na A desde 14:05 enquanto espera você. Sua resposta ainda vale: escolha outra opção e ele muda; sem resposta, segue na A.`, ou `Pausado desde 14:05: espera a sua resposta para seguir.` para uma pergunta de risco `high`.

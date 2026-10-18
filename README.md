@@ -184,7 +184,7 @@ While questions are open, a band sits above the prompt: `2 questions waiting · 
 ### Answering a question
 
 1. Press `1` from an empty prompt, or click **Answer** on the band, to open the pane. The header shows the Askaway logo, the heading **Questions waiting** and the counter, such as `2 pending · 1 group`.
-2. The tree lists every project with open questions, one under the other, each project name in bold. Under each project, its sessions (`├` or `└`) hold their questions. A mark shows where each question stands: `●` the one on screen, `✓` a picked option, `○` waiting. Nothing is sent until **Submit all**. Project and session names are text, not buttons.
+2. The tree lists every project with open questions, one under the other, each project name in bold. Under each project, its sessions (`├` or `└`) hold their questions. A mark shows where each question stands: `●` the one on screen, `✓` a picked option, `○` waiting. Nothing is sent until **Submit all**. Project and session names are text, not buttons; each question row is a button, and pressing one jumps to its card.
 3. Click an option to record it. The pane moves to the next question without an answer, wrapping to the start if needed, or to the last question once every question has one. Nothing is sent yet.
 4. For your own answer, click **Other…**, type it and press Enter (the field's button reads **Done**). The text is recorded as the answer, and the hotkeys stay off while the field is open.
 5. **← Back** goes to the previous question. **Next →** goes to the next one, with or without an answer. It is on every question but the last.
@@ -198,7 +198,7 @@ When no question is open, the pane shows one footer line under the status lines,
 
 The card draws these parts from top to bottom. The labels are the English ones; the panel shows them in Portuguese when the language is `pt-BR`.
 
-The card opens with the title, the lead line, the explanation before the question, the question, Urgency, the options with their trade-off, fit, **What happens**, **Pros** and **Cons** lines, and the nav row. Only step 7 stays folded until you press `e` (`e · details`). The toggle opens and closes it for that card, and it appears only when the card has something in step 7.
+The card opens with the title, the lead line, the **Details** link under it, the explanation before the question, the question, Urgency, the options with their trade-off, fit, **What happens**, **Pros** and **Cons** lines, and the nav row. Only step 7 stays folded until you press `e` (the **Details** link, drawn `e: Details`). The link opens and closes it for that card, and it appears only when the card has something in step 7.
 
 1. **Title row:** the title in bold, then the risk label and the age, for example `⚠️ medium risk · 12 min ago`. A question filed without `title` gets its question clipped to 60 characters as its title (the CLI does it). The pane cuts a stored empty title to 24 characters. The risk wraps under the title when there is no room.
 2. **Lead line:** in bold, what the agent does now and what happens if nobody answers: `Working on A since 14:05 while it waits for you. Your answer still counts: pick another option and it switches; with no answer it stays on A.`, or `Paused since 14:05: it waits for your answer before going on.` for a `high` risk question.

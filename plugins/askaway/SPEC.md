@@ -294,6 +294,13 @@ status list). `hooks/pane.tsx`, `renderPane`.
     of the last session are indented with `paddingLeft={4}` (`renderSession`, `renderTreeQuestion`, `hooks/pane.tsx`).
   - The card shows the questions of one group at a time (the group on screen); the other groups stay in the tree only,
     and the picks of every group are kept.
+  - **Pressing a question row**: each question row is a plain Button (key `tree-jump-<question id>`, `renderTreeQuestion`,
+    `hooks/pane.tsx`). Its press puts that question on the card, the same move as walking there with Next or Back
+    (`jumpToQuestion`, `hooks/register.tsx`; `jumpTo`, `hooks/wizard.ts`): the question's group becomes the group on screen
+    and its step is the question's place in that group. The card's Details link takes the focus (`$.ui.focus`) when the card has one, so Enter toggles the details and never answers and the
+    card scrolls to the top of the window (`$.ui.scroll`). The focus is a request the surface may refuse, since it is
+    granted only while the pane holds the keys. A question that is fading out after a press takes nothing. Groups and
+    sessions stay Text, with no press.
 - **KeepGlide mark**: an SVG of the KeepGlide tile (`hooks/keepglide.ts`, `renderKeepGlide`, `hooks/logo-element.tsx`),
   drawn on the desktop only: 24px before the counter in the header (key `keepglide-counter`, `KEEPGLIDE_HEADER_SIZE`)
   and 28px before the Submit all button (key `keepglide-submit`, `KEEPGLIDE_SUBMIT_SIZE`). The terminal draws no mark.
@@ -330,11 +337,16 @@ status list). `hooks/pane.tsx`, `renderPane`.
     paragraph; every name in the text (a slash command, or anything the agent wrote between backticks) is drawn in bold
     ink (`piecesOf`, `renderSection`, `hooks/model.ts`, `hooks/pane.tsx`). The three boxes are `sectionsOf` and
     `renderExplanation` (`hooks/model.ts`, `hooks/pane.tsx`);
-  - **Details toggle**: the explanation box after the options (Why to Context) is folded by default. One Button under the
-    options, labelled "e · details" (pt "e · detalhes"), with hotkey `e`. When an option is keyed E, the label is "details"
-    (pt "detalhes") and the toggle has no hotkey, since the option keeps the letter. Pressing it opens and shuts that box.
-    Everything else stays drawn: the title, the lead line, What it is, The problem, Analogy, the question, Urgency, and each
-    option's tradeoff, What happens, Pros and Cons lines, and the nav row. The toggle is drawn only when the card has a
+  - **Details toggle**: a link under the lead line, drawn before What it is. It is a plain Button (no chrome, no variant)
+    whose label is underlined text: "Details" (pt "Detalhes"), or "Hide details" (pt "Ocultar detalhes") while the long
+    sections are open. Its hotkey `e` is drawn before the label ("e: Details"). When an option is keyed E, the toggle has no
+    hotkey, since the option keeps the letter. Pressing it opens and shuts the explanation box after the options (Why to
+    Context), which is folded by default. Everything else stays drawn: the title, the lead line, What it is, The problem,
+    Analogy, the question, Urgency, and each option's tradeoff, What happens, Pros and Cons lines, and the nav row. The toggle
+    is drawn only when the card has a folded section. Its state is kept per question in the plugin's state (`expanded`,
+    `hooks/register.tsx`) while the plugin is loaded; it is not written to disk (`renderDetailsToggle`, `hasDetailsOf`,
+    `hooks/pane.tsx`). On the terminal the link is text with an underline; on the desktop the surface draws its native
+    button for a Button, plain or not, since the API has no link-style control. The toggle is drawn only when the card has a
     folded section. Its state is kept per question in the plugin's state (`expanded`, `hooks/register.tsx`) while the plugin
     is loaded; it is not written to disk (`renderDetailsToggle`, `hasDetailsOf`, `hooks/pane.tsx`).
   - a separator: a 1px rule on the desktop, a row of "─" on the terminal (`renderDivider`);

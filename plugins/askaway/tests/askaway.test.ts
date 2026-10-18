@@ -1062,7 +1062,9 @@ test('the card draws the lead line under the title in pt-BR: the recommended key
   const texts = await cardTextsAt1402($, on, {}, {})
   const lead = 'Trabalhando na B desde 14:02 enquanto espera você. Sua resposta ainda vale: escolha outra opção e ele muda; sem resposta, segue na B.'
   expect(texts).toContain(lead)
-  expect(texts.indexOf(lead)).toBe(texts.indexOf('Which way for q-l1-aaaaaa?') - 1)
+  // The details toggle sits between the lead and the question: the lead, then the toggle, then the question.
+  expect(texts.indexOf(lead)).toBe(texts.indexOf('Detalhes') - 1)
+  expect(texts.indexOf('Detalhes')).toBe(texts.indexOf('Which way for q-l1-aaaaaa?') - 1)
   expect(texts.indexOf(lead)).toBeGreaterThan(texts.indexOf('Title q-l1-aaaaaa'))
 })
 
@@ -1437,9 +1439,10 @@ test('the card folds only Why to Context behind the details toggle, and each que
   for (const name of shown) expect(texts.some(text => text.includes(name))).toBe(true)
   expect(texts.some(text => text.startsWith('└ Cheap'))).toBe(true)
   for (const name of folded) expect(texts.some(text => text.includes(name))).toBe(false)
-  expect(await labelOf(ui, 'details-q-f1-aaaaaa')).toBe('e · detalhes')
-  // Unfolded: the same card, with Why to Context too.
+  expect(await labelOf(ui, 'details-q-f1-aaaaaa')).toBe('Detalhes')
+  // Unfolded: the same card, with Why to Context too, and the toggle now says Hide details.
   await ui.press({ key: 'details-q-f1-aaaaaa' })
+  expect(await labelOf(ui, 'details-q-f1-aaaaaa')).toBe('Ocultar detalhes')
   texts = await textsOf(ui)
   for (const name of [...shown, ...folded]) expect(texts.some(text => text.includes(name))).toBe(true)
   // The fold is kept per question: the second question starts folded, and the first is open again on return.
@@ -1467,7 +1470,33 @@ test('the details toggle draws the plain "details" label and no hotkey when an o
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await labelOf(ui, 'details-q-f3-cccccc')).toBe('detalhes')
+  expect(await labelOf(ui, 'details-q-f3-cccccc')).toBe('Detalhes')
+  expect((await ui.find({ type: 'Button', key: 'details-q-f3-cccccc' }))?.props.hotkey).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the details toggle sits under the lead line as a plain Button with underlined link text and the hotkey e', async ($, on) => {
+  const options = [
+    { key: 'A', label: 'Keep', tradeoff: 'cheap', fit: 80, does: 'Keeps the queue' },
+    { key: 'B', label: 'Rewrite', tradeoff: 'slow', fit: 40 },
+  ]
+  const files = new Map([
+    [path('q', 'q-f4-dddddd'), question('q-f4-dddddd', 1000, { what: 'What W', why: 'Reason R', options })],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  // The toggle comes after the title and before the explanation and the question: its label sits between them in order.
+  const texts = await textsOf(ui)
+  const toggleAt = texts.indexOf('Detalhes')
+  expect(toggleAt).toBeGreaterThan(texts.indexOf('Title q-f4-dddddd'))
+  expect(toggleAt).toBeLessThan(texts.findIndex(text => text.includes('What W')))
+  expect(toggleAt).toBeLessThan(texts.indexOf('Which way for q-f4-dddddd?'))
+  // A link, not a button: no chrome (plain), no variant, underlined text, and the hotkey e drawn before it.
+  const toggle = await ui.find({ type: 'Button', key: 'details-q-f4-dddddd' })
+  expect(toggle?.props).toMatchObject({ plain: true, hotkey: 'e' })
+  expect(toggle?.props.variant).toBeUndefined()
+  expect(JSON.stringify(toggle)).toContain('"underline":true')
   await ui.unmount()
 })
 
@@ -2286,6 +2315,40 @@ test('a question row under the last session is indented 4, and one under another
   const ui = await mountPane($)
   expect((await ui.find({ type: 'Box', key: 'tree-q-l3-cccccc' }))?.props.paddingLeft).toBe(4)
   expect((await ui.find({ type: 'Box', key: 'tree-q-l1-aaaaaa' }))?.props.paddingLeft).toBe(1)
+  await ui.unmount()
+})
+
+test('a question row of the tree is a plain Button: its press puts that question on the card, whose Details link is there to take the focus', async ($, on) => {
+  // q-l3 has a folded section (why), so its card draws the Details link the press focuses. The focus itself is a request the
+  // harness does not grant (ui.focus needs the keys), so the test checks the card and the link it would focus.
+  const files = treeFiles()
+  files.set(path('q', 'q-l3-cccccc'), question('q-l3-cccccc', 2000, { session: 's2', why: 'Reason R' }))
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(await ui.find({ type: 'Button', key: 'tree-jump-q-l3-cccccc' })).toMatchObject({ props: { plain: true } })
+  await ui.press({ key: 'tree-jump-q-l3-cccccc' })
+  // The card is now the question of the row, bold in the tree, and the first question's card is gone.
+  const texts = await textsOf(ui)
+  expect(texts).toContain('Which way for q-l3-cccccc?')
+  expect(texts).not.toContain('Which way for q-l1-aaaaaa?')
+  expect(await ui.find({ type: 'Text', text: '● Title q-l3-cccccc' })).toMatchObject({ props: { bold: true } })
+  expect(await ui.find({ type: 'Button', key: 'details-q-l3-cccccc' })).toMatchObject({ props: { plain: true } })
+  await ui.unmount()
+})
+
+test('a question of another project is pressable too: its press switches the group on screen and its card', async ($, on) => {
+  const files = treeFiles()
+  files.set(path('q', 'q-o1-eeeeee'), question('q-o1-eeeeee', 4000, { project: '/work/other' }))
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(await textsOf(ui)).toContain('Which way for q-l1-aaaaaa?')
+  await ui.press({ key: 'tree-jump-q-o1-eeeeee' })
+  const texts = await textsOf(ui)
+  expect(texts).toContain('Which way for q-o1-eeeeee?')
+  expect(texts).not.toContain('Which way for q-l1-aaaaaa?')
+  // Walking back with Back stays inside the other project: its first question is the only one it has.
   await ui.unmount()
 })
 

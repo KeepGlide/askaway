@@ -24,6 +24,7 @@ import {
   parseDelivery,
   parseQuestion,
   sameBoard,
+  sectionsOf,
   statusLines,
   withAnswer,
   withLocalAnswers,
@@ -483,6 +484,24 @@ async function toggleDetails($: EngineInterface, id: string): Promise<void> {
   await update($, expanded, prev => ({ ...prev, [id]: prev[id] !== true }))
 }
 
+// The tree's press on a question: the card on screen becomes that question, as if the wizard had walked there with Next or
+// Back, and its group becomes the group on screen. The card's Details link takes the focus when the card has one, so an
+// Enter right after the press toggles the details and never answers a question; then the card scrolls into view. A
+// question that is fading out takes nothing.
+async function jumpToQuestion($: EngineInterface, id: string): Promise<void> {
+  const { open, leaving: fading } = await snapshot($)
+  if (fading[id] !== undefined) return
+  const target = flow.groupsOf(open).find(group => group.questions.some(question => question.id === id))
+  if (target === undefined) return
+  await update($, wizardAtom, prev => flow.jumpTo(prunedWizard(prev, open), target, id))
+  const question = target.questions.find(candidate => candidate.id === id)
+  const lang = await read($, langAtom)
+  if (question !== undefined && sectionsOf(lang, question, 'after-options').length > 0) {
+    await $.ui.focus({ requestId: PANE, key: `details-${id}` })
+  }
+  await $.ui.scroll({ in: PANE, to: { key: `card-${id}` }, block: 'start' })
+}
+
 // The free text of "Other…" is a pick like an option; blank text is no answer.
 async function submitOther($: EngineInterface, id: string, text: string): Promise<void> {
   const trimmed = text.trim()
@@ -516,6 +535,7 @@ const actionsFor = ($: EngineInterface): PaneActions => ({
   pick: (id, key) => report($, pickOption($, id, { key })),
   toggleOther: id => report($, toggleOther($, id)),
   toggleDetails: id => report($, toggleDetails($, id)),
+  jump: id => report($, jumpToQuestion($, id)),
   submitOther: (id, text) => report($, submitOther($, id, text)),
   back: () => report($, moveWizard($, (current, group) => flow.back(current, group))),
   next: () => report($, moveWizard($, (current, group) => flow.next(current, group))),

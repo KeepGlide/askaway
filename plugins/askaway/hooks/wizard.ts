@@ -132,6 +132,14 @@ export function next(wizard: Wizard, group: Group): Wizard {
   return onStep(wizard, group, step + 1)
 }
 
+// Moves to a question of a group, the group on screen included: the press on a question row of the tree. A question
+// the group does not hold leaves the wizard as it is.
+export function jumpTo(wizard: Wizard, group: Group, id: string): Wizard {
+  const step = group.questions.findIndex(question => question.id === id)
+  if (step < 0) return wizard
+  return onStep({ ...wizard, groupKey: group.key }, group, step)
+}
+
 const keepOpen = <V>(record: Record<string, V>, open: ReadonlySet<string>): Record<string, V> =>
   Object.fromEntries(Object.entries(record).filter(([id]) => open.has(id)))
 

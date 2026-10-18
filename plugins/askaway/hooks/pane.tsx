@@ -52,6 +52,7 @@ export type PaneActions = {
   pick: (id: string, key: string) => void
   toggleOther: (id: string) => void
   toggleDetails: (id: string) => void
+  jump: (id: string) => void
   submitOther: (id: string, text: string) => void
   back: () => void
   next: () => void
@@ -91,7 +92,7 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
           {renderKeepGlide(ui, view.surface, 'keepglide-counter', KEEPGLIDE_HEADER_SIZE)}
         </Box>
       </Box>
-      {view.groups.length > 0 && renderTree(ui, lang, view)}
+      {view.groups.length > 0 && renderTree({ ui, lang, view, actions, held })}
       {screen !== undefined && renderQuestion(ui, lang, view, actions, screen, held)}
       {view.lines.map(line => renderStatusLine(ui, actions, line, held))}
       {view.footer !== undefined && view.questions.length === 0 && renderFooter(ui, view.footer)}
@@ -132,55 +133,73 @@ function groupLabel(group: Group, lang: Lang): string {
   return projectLabel(group.questions[0]?.project ?? '', lang) || t(lang, 'status.target.session')
 }
 
+// What the tree draws from: the view and the language, the actions a row's press runs, and the held table for its Buttons.
+type TreeContext = {
+  ui: Ui
+  lang: Lang
+  view: PaneView
+  actions: PaneActions
+  held: HeldButtons
+}
+
 // The tree of the open questions: every group in turn, one under the other, each with its sessions and their questions.
 // Group labels are bold. A question's mark says where it stands: ● the one on screen, ✓ picked, ○ not yet.
 // Indentation is the Box's paddingLeft, not leading spaces, which a desktop may collapse.
-function renderTree(ui: Ui, lang: Lang, view: PaneView): RenderElement {
-  const { Box } = ui
+function renderTree(tree: TreeContext): RenderElement {
+  const { Box } = tree.ui
   return (
     <Box key="tree" flexDirection="column" gap={1}>
-      {view.groups.map(group => renderGroup(ui, lang, view, group))}
+      {tree.view.groups.map(group => renderGroup(tree, group))}
     </Box>
   )
 }
 
-function renderGroup(ui: Ui, lang: Lang, view: PaneView, group: Group): RenderElement {
-  const { Box, Text } = ui
-  const label = groupLabel(group, lang)
+function renderGroup(tree: TreeContext, group: Group): RenderElement {
+  const { Box, Text } = tree.ui
+  const label = groupLabel(group, tree.lang)
   const lastSession = group.sessions.length - 1
   return (
     <Box key={`group-${group.key}`} flexDirection="column">
       <Text bold>{label}</Text>
-      {group.sessions.map((questions, index) => renderSession(ui, lang, view, questions, index === lastSession))}
+      {group.sessions.map((questions, index) => renderSession(tree, questions, index === lastSession))}
     </Box>
   )
 }
 
 // One session of the group: its row ("├ " or, for the last one, "└ "), then its questions under it.
-function renderSession(ui: Ui, lang: Lang, view: PaneView, questions: Question[], isFinal: boolean): RenderElement | false {
-  const { Box, Text } = ui
+function renderSession(tree: TreeContext, questions: Question[], isFinal: boolean): RenderElement | false {
+  const { Box, Text } = tree.ui
   const [first] = questions
   if (first === undefined) return false
   return (
     <Box key={`session-${first.id}`} flexDirection="column">
       <Box paddingLeft={1}>
-        <Text>{`${isFinal ? '└' : '├'} ${sessionLabelOf(first, lang)}`}</Text>
+        <Text>{`${isFinal ? '└' : '├'} ${sessionLabelOf(first, tree.lang)}`}</Text>
       </Box>
-      {questions.map(question => renderTreeQuestion(ui, view, question, isFinal))}
+      {questions.map(question => renderTreeQuestion(tree, question, isFinal))}
     </Box>
   )
 }
 
 // One question under its session: "│  " before the mark under a session that is not the last one, nothing under the last.
-// The indent is the Box's paddingLeft, so the mark sits in the same column under either session.
-function renderTreeQuestion(ui: Ui, view: PaneView, question: Question, isFinal: boolean): RenderElement {
-  const { Box, Text } = ui
+// The indent is the Box's paddingLeft, so the mark sits in the same column under either session. The row is a plain
+// Button: its press jumps to the question's card (actions.jump), as walking there with Next or Back would. Its text is
+// bold while the card on screen is that question.
+function renderTreeQuestion(tree: TreeContext, question: Question, isFinal: boolean): RenderElement {
+  const { ui, view, actions, held } = tree
+  const { Box, Button, Text } = ui
   const isOnScreen = view.screen?.question.id === question.id
   const mark = isOnScreen ? '●' : view.wizard.picks[question.id] !== undefined ? '✓' : '○'
   const label = `${isFinal ? '' : '│  '}${mark} ${questionLabel(question)}`
+  const key = `tree-jump-${question.id}`
+  const onPress = () => actions.jump(question.id)
   return (
     <Box key={`tree-${question.id}`} paddingLeft={isFinal ? 4 : 1}>
-      <Text bold={isOnScreen}>{label}</Text>
+      {held.hold(key, [label, isOnScreen], onPress, press => (
+        <Button key={key} label={label} plain onPress={press}>
+          <Text bold={isOnScreen}>{label}</Text>
+        </Button>
+      ))}
     </Box>
   )
 }
@@ -244,10 +263,11 @@ const letterFor = (card: CardContext, key: NavKey): string | undefined => {
   return hotkeyFor(card, free[NAV_ORDER.indexOf(key)])
 }
 
-// One question on screen: the title in bold with the risk and age beside it, the bold lead line under it, What it is,
-// The problem and Analogy above the question, the question, the Urgency box, the options with their tradeoff, fit, what
-// happens, pros and cons, "Other…", and the details toggle. The long sections (Why to Context below the options) draw only
-// while the details are open. Then a separator, and the Back / Next or Submit all row. One blank line sits under it.
+// One question on screen: the title in bold with the risk and age beside it, the bold lead line under it, the details
+// toggle under the lead, What it is, The problem and Analogy above the question, the question, the Urgency box, the
+// options with their tradeoff, fit, what happens, pros and cons, and "Other…". The long sections (Why to Context below
+// the options) draw only while the details are open. Then a separator, and the Back / Next or Submit all row. One blank
+// line sits under it.
 function renderQuestion(
   ui: Ui,
   lang: Lang,
@@ -275,6 +295,7 @@ function renderQuestion(
         <Text dimColor>{`${riskLabel(lang, question.risk)} · ${ageLabel(lang, question.ts, view.now)}`}</Text>
       </Box>
       <Text bold dimColor={isLeaving}>{leadOf(lang, question)}</Text>
+      {hasDetailsOf(lang, question) && renderDetailsToggle(ui, lang, actions, card)}
       {renderExplanation(ui, 'before-question', sectionsOf(lang, question, 'before-question'), isLeaving)}
       <Text bold dimColor={isLeaving}>{question.question}</Text>
       {renderExplanation(ui, 'before-options', sectionsOf(lang, question, 'before-options'), isLeaving)}
@@ -282,7 +303,6 @@ function renderQuestion(
         {question.options.map(option => renderOption(ui, lang, actions, card, option))}
         {renderOther(ui, lang, actions, card)}
       </Box>
-      {hasDetailsOf(lang, question) && renderDetailsToggle(ui, lang, actions, card)}
       {isExpanded && renderExplanation(ui, 'after-options', sectionsOf(lang, question, 'after-options'), isLeaving)}
       {renderDivider(ui, view.surface)}
       {renderNav(ui, lang, actions, card, screen)}
@@ -296,13 +316,14 @@ const DETAILS_KEY = 'e'
 // Whether the card has anything behind the details toggle: a section of the folded slot below the options.
 const hasDetailsOf = (lang: Lang, question: Question): boolean => sectionsOf(lang, question, 'after-options').length > 0
 
-// The one toggle of the long sections: labelled "e · details" and bound to the hotkey e. An option keyed E takes the letter,
-// so the toggle then draws the plain "details" label and binds no hotkey. The open sections show its state.
+// The details toggle, a link under the lead line: a plain Button (no chrome) whose label is underlined text, "Details" or,
+// while the long sections are open, "Hide details". Its hotkey is drawn before the label ("e: Details"). An option keyed E
+// takes the letter, so the toggle then draws no hotkey.
 function renderDetailsToggle(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext): RenderElement {
-  const { Button } = ui
-  const { question, isLeaving, held } = card
+  const { Button, Text } = ui
+  const { question, isLeaving, isExpanded, held } = card
   const takesKey = question.options.some(option => option.key.toLowerCase() === DETAILS_KEY)
-  const label = t(lang, takesKey ? 'details.label' : 'details.hint')
+  const label = t(lang, isExpanded ? 'details.hide' : 'details.show')
   const hotkey = takesKey ? undefined : hotkeyFor(card, DETAILS_KEY)
   const key = `details-${question.id}`
   const onPress = () => {
@@ -310,7 +331,9 @@ function renderDetailsToggle(ui: Ui, lang: Lang, actions: PaneActions, card: Car
     actions.toggleDetails(question.id)
   }
   return held.hold(key, [label, isLeaving, hotkey], onPress, press => (
-    <Button key={key} label={label} variant="secondary" dimColor={isLeaving} hotkey={hotkey} onPress={press} />
+    <Button key={key} label={label} plain dimColor={isLeaving} hotkey={hotkey} onPress={press}>
+      <Text underline dimColor={isLeaving}>{label}</Text>
+    </Button>
   ))
 }
 

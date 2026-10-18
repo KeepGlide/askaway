@@ -16,6 +16,9 @@ Commit hashes name the change in `git log`.
 ### Changed
 
 - The card keeps What it is, The problem, Analogy, the question, Urgency, and each option's What happens, Pros and Cons drawn at once. `e` (`e · details`) folds only Why, Undo, How, What we gain, What we lose and Context and origin (pane changes).
+- The details toggle sits right under the lead line as underlined link text ("Details" / "Hide details", hotkey `e`), no button chrome; the desktop still draws its native button around it (pane changes).
+- Each question row in the tree is pressable and jumps to that question's card; project names stay text (`hooks/wizard.ts` jumpTo).
+- The Bash guard judges inline code line by line: a state-folder write needs the folder and a write verb on the same line, and an answer in code needs the askaway module or script named, so a heredoc that edits a document is no longer denied (`askaway.py`).
 - The lead line says what the agent does while it waits: "Working on <key> since <time> while it waits for you. Your answer still counts: pick another option and it switches; with no answer it stays on <key>.", or "Paused since <time>: it waits for your answer before going on." for a `high` risk question.
 
 ### Migration needed
