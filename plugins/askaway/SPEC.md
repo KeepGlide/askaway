@@ -116,6 +116,7 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   marker (Claude Desktop released it). `ttl`: the answer has been unread for more than 7 days (measured
   from the answer's `ts`); it expires for every session, the asking one included.
 - `away.json` — `{"on":true,"ts":<ms>}` (missing = off).
+- `draft.json` — `{"ts":<ms>,"picks":{"<question id>":{"key":"…","text"?:"…"}}}` (missing = no picks): the wizard's picks, shared by every session of the folder. The pane writes it on each change of the picks, and each session's poll reads it (see "Shared picks" below). The CLI never reads it.
 - `foreign_check` — an empty stamp file; its mtime is the last re-check of unread answers that other sessions
   receive. The deliver hook re-checks them at most once every 60 s, so its usual cost stays near the empty folder's.
 
@@ -423,7 +424,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
 - **Choosing**: an option records the pick and moves on: to the first question without a pick after the current one
   (wrapping to the start), or, once every question of the group has a pick, to the last question, where Submit all is.
   "Other…" with its text (Enter in its field, or the field losing focus, or a nav action) records the pick and keeps the card (see above). After each pick the group
-  stays selected. Nothing is written until Submit all.
+  stays selected. No answer is written until Submit all; the picks are shared through `draft.json` (see "Shared picks").
   A card that is fading after a press takes no pick.
 - **Next** moves to the next question whether or not it has a pick; **Back** moves to the previous one. Next does
   nothing on the last question.
@@ -439,6 +440,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
   picks of those questions are cleared and the step goes back to the first question. When other groups stay open, the
   card then shows the first question of the first group still open.
 - **Picks** survive a re-poll. Picks, and an open Other field, of questions that are no longer open are dropped.
+- **Shared picks**: every session of the state folder shows the same picks. Each change of the picks (an option, an Other text, Submit all, a row's Submit) writes `draft.json` with the picks and the write's `ts` (`changeWizard`, `saveDraft`, `hooks/register.tsx`). Each session's poll applies a draft whose `ts` is newer than the last one it wrote or applied (`applyDraft`; a malformed file is ignored), so the newest write wins; a session that starts applies the folder's draft at its first poll. Only the picks are shared: the step, the group and the card stay per session. Each write merges this session's changed ids into the file's picks (`saveDraft` reads the file first), so the picks another session made within the same poll interval (5 s) are kept; two sessions that change the same id within that interval keep the later write. An answer stays first-writer-wins: a second reply to a question already answered is refused by the CLI (`written: false`), and the pane takes the stored answer.
 - **History** (under the card, above the footer; `historyOf`, `hooks/model.ts`; `renderHistory`, `hooks/pane.tsx`): the answers
   of the last while, drawn as the open tree is: a heading row with the History icon (a clock with an arrow turning back,
   `historySvg` in `hooks/logo.ts`, the glyph "⟲" on the terminal; not the Askaway logo) and "History" ("Histórico"), a

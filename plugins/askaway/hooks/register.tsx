@@ -27,6 +27,7 @@ import {
   whoText,
   parseAway,
   parseDelivery,
+  parseDraft,
   parseQuestion,
   sameBoard,
   clearableIdsOf,
@@ -88,6 +89,8 @@ const endedAtom = atom({ plugin: 'askaway', key: 'ended' } as const, [] as strin
 const whoAtom = atom({ plugin: 'askaway', key: 'who' } as const, null as string | null)
 const quietAtom = atom({ plugin: 'askaway', key: 'quiet' } as const, false)
 const wizardAtom = atom({ plugin: 'askaway', key: 'wizard' } as const, flow.EMPTY_WIZARD)
+// The ts of the picks this session last wrote to draft.json or applied from it. A draft with a newer ts is applied.
+let draftTs = 0
 
 // Files are written once and never change, so a parsed file stays until its name leaves the folder.
 const questionCache = new Map<string, Question>()
@@ -296,6 +299,7 @@ async function pollInbox($: EngineInterface, home: string, ownSession?: string):
   const away = parseAway(await readJson($, `${home}/away.json`))
   const now = await $.clock.now()
   await mergeBoard($, next)
+  await applyDraft($, home)
   await refreshEnded($, home, next)
   if ((await read($, isAway)) !== away) await update($, isAway, () => away)
   const shownAt = await recordDeliveries($, next, now)
@@ -317,6 +321,23 @@ async function pruneWizardState($: EngineInterface): Promise<void> {
   const drawnNothing = open.length === 0 ? { ...next, groupKey: prev.groupKey, questionId: prev.questionId } : next
   if (same(drawnNothing, prev)) return
   await update($, wizardAtom, current => prunedWizard(current, open))
+}
+
+const samePicks = (a: Wizard['picks'], b: Wizard['picks']): boolean => JSON.stringify(a) === JSON.stringify(b)
+
+// Applies the picks of draft.json when it is newer than this session's last write or apply (newest ts wins). Only the picks
+// move: the step, the group and the card stay with this session. A draft that moves no pick writes nothing, so the pane
+// is not redrawn on every poll. The update reads the wizard again, so a pick pressed meanwhile is not thrown away; its
+// own write carries a newer ts than this draft, so the next poll brings it back should the apply land first.
+async function applyDraft($: EngineInterface, home: string): Promise<void> {
+  const draft = parseDraft(await readJson($, `${home}/draft.json`))
+  if (draft === undefined || draft.ts <= draftTs) return
+  const open = openQuestions(await read($, board), await read($, leaving))
+  const prev = await read($, wizardAtom)
+  if (!samePicks(prunedWizard({ ...prev, picks: draft.picks }, open).picks, prev.picks)) {
+    await update($, wizardAtom, current => prunedWizard({ ...current, picks: draft.picks }, open))
+  }
+  draftTs = Math.max(draftTs, draft.ts)
 }
 
 // Hands this session's answers to its prompt: one submit for all of them. Only an idle session takes one: a busy
@@ -528,6 +549,33 @@ function clearPicks(prev: Wizard, ids: readonly string[], first: string | null):
   }
 }
 
+// Writes this session's changed picks to draft.json: the file's picks (another session may have written since this
+// session's last poll) with each id whose pick changed set or removed, under the write's ts. That ts becomes this session's
+// draftTs, so its own poll does not apply the draft back over its screen.
+async function saveDraft($: EngineInterface, home: string, before: Wizard['picks'], after: Wizard['picks']): Promise<void> {
+  const picks = { ...(parseDraft(await readJson($, `${home}/draft.json`))?.picks ?? {}) }
+  for (const id of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    const pick = after[id]
+    if (JSON.stringify(before[id]) === JSON.stringify(pick)) continue
+    if (pick === undefined) delete picks[id]
+    else picks[id] = pick
+  }
+  const ts = await $.clock.now()
+  await $.fs.write(`${home}/draft.json`, `${JSON.stringify({ ts, picks })}\n`)
+  draftTs = ts
+}
+
+// The one way a pick changes: the wizard is updated, then, when the picks moved, they go to draft.json for every session
+// of the folder. A failed write is logged; the pick stays on this session's screen.
+async function changeWizard($: EngineInterface, change: (prev: Wizard) => Wizard): Promise<void> {
+  const before = await read($, wizardAtom)
+  await update($, wizardAtom, change)
+  const after = await read($, wizardAtom)
+  const folder = await folderOf($)
+  if (folder === undefined || samePicks(before.picks, after.picks)) return
+  await saveDraft($, folder, before.picks, after.picks).catch((error: unknown) => logFailure($, error))
+}
+
 // Submit all: each question of the group gets its answer through the answer path, then its picks are cleared and the
 // step goes back to the first question. Nothing is written unless every question has a pick.
 async function submitGroup($: EngineInterface, group: Group, current: Wizard): Promise<void> {
@@ -538,7 +586,7 @@ async function submitGroup($: EngineInterface, group: Group, current: Wizard): P
   try {
     for (const { id, pick } of items) await answerEntry($, folder, id, pick.key, pick.text)
     const ids = items.map(item => item.id)
-    await update($, wizardAtom, prev => clearPicks(prev, ids, group.questions[0]?.id ?? null))
+    await changeWizard($, prev => clearPicks(prev, ids, group.questions[0]?.id ?? null))
   } finally {
     submitting.delete(group.key)
   }
@@ -564,7 +612,7 @@ async function submitOne($: EngineInterface, id: string): Promise<void> {
   try {
     await answerEntry($, folder, id, pick.key, pick.text)
     const first = group.questions.find(question => question.id !== id)?.id ?? null
-    await update($, wizardAtom, prev => clearPicks(prev, [id], first))
+    await changeWizard($, prev => clearPicks(prev, [id], first))
   } finally {
     submitting.delete(submittingOne(id))
   }
@@ -575,7 +623,7 @@ async function submitOne($: EngineInterface, id: string): Promise<void> {
 async function pickOption($: EngineInterface, id: string, choice: Pick): Promise<void> {
   const { open, group, leaving: fading } = await snapshot($)
   if (group === undefined || fading[id] !== undefined || !group.questions.some(question => question.id === id)) return
-  await update($, wizardAtom, prev => flow.choose(prunedWizard(prev, open), group, id, choice))
+  await changeWizard($, prev => flow.choose(prunedWizard(prev, open), group, id, choice))
 }
 
 // Moves the wizard with the group on screen; a move that needs the group goes through here. The move starts from the
@@ -615,7 +663,7 @@ let focusedKey: string | undefined
 async function submitOther($: EngineInterface, id: string, text: string): Promise<void> {
   const { open, leaving: fading } = await snapshot($)
   if (fading[id] !== undefined || !open.some(question => question.id === id)) return
-  await update($, wizardAtom, prev => flow.submittedOther(prunedWizard(prev, open), id, text))
+  await changeWizard($, prev => flow.submittedOther(prunedWizard(prev, open), id, text))
 }
 
 // Records every pending Other text through submitOther, one after another. An entry whose question is no longer open is
@@ -703,6 +751,8 @@ export const register: Register = on => {
     await update($, whoAtom, () => (typeof storedWho === 'string' ? storedWho : null))
     await update($, turn, () => ({ isBusy: false }))
     await update($, wizardAtom, () => flow.EMPTY_WIZARD)
+    // A session starts with no draft seen: the awaited first poll below applies the picks the folder holds.
+    draftTs = 0
     const folder = await folderOf($)
     poller?.cancel()
     if (folder !== undefined) {

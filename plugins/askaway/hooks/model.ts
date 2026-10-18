@@ -213,6 +213,24 @@ export function parseAway(raw: unknown): boolean {
   return isRecord(raw) && raw.on === true
 }
 
+// The picks every session shares (draft.json): the ts they were written at and each question's pick. Any other shape
+// reads as no draft, so a malformed file changes nothing.
+type Draft = { ts: number; picks: Record<string, { key: string; text?: string }> }
+
+export function parseDraft(raw: unknown): Draft | undefined {
+  const ts = isRecord(raw) ? raw.ts : undefined
+  const rawPicks = isRecord(raw) ? raw.picks : undefined
+  if (typeof ts !== 'number' || !isRecord(rawPicks)) return undefined
+  const picks: Draft['picks'] = {}
+  for (const [id, pick] of Object.entries(rawPicks)) {
+    if (!isRecord(pick) || typeof pick.key !== 'string') return undefined
+    const text = pick.text
+    if (text !== undefined && typeof text !== 'string') return undefined
+    picks[id] = text === undefined ? { key: pick.key } : { key: pick.key, text }
+  }
+  return { ts, picks }
+}
+
 export const isOpenIn = (board: Board, id: string): boolean =>
   board.questions.some(question => question.id === id) && !board.answers.some(answer => answer.id === id)
 

@@ -132,6 +132,8 @@ function stubHost(
 ) {
   const toasts: string[] = []
   const writes: string[] = []
+  // The shared picks (draft.json) of each change, kept apart from `writes`, which lists the answers and the state files.
+  const drafts: string[] = []
   const submits: string[] = []
   const calls: { argv: string[]; env?: Record<string, string> }[] = []
   const ended = new Set<string>()
@@ -179,6 +181,11 @@ function stubHost(
       files.set(e.path, e.text) // the panel's one-shot credential: never held, never counted as an answer
       return { value: undefined }
     }
+    if (e.path === `${STATE}/draft.json`) {
+      drafts.push(e.text)
+      files.set(e.path, e.text)
+      return { value: undefined }
+    }
     await holds.write
     writes.push(e.path)
     files.set(e.path, e.text)
@@ -214,7 +221,7 @@ function stubHost(
     writes.push(path('a', id))
     return cliReply(JSON.stringify({ id, key, written: true }))
   })
-  return { toasts, writes, submits, clock, calls, ended, tokenCalls }
+  return { toasts, writes, drafts, submits, clock, calls, ended, tokenCalls }
 }
 
 // The hook's reply with the result `$.process.run` gives for a child that exited (the fields the pane reads).
@@ -948,6 +955,101 @@ test('a second press on another option replaces the pick; the answer is written 
   await ui.press({ key: 'submit-all' })
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa')])
   expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ key: 'A' })
+  await ui.unmount()
+})
+
+test('a pick is written to draft.json with its ts, and no answer is written until Submit all', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { writes, drafts } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
+  expect(writes).toEqual([])
+  expect(drafts).toHaveLength(1)
+  expect(JSON.parse(drafts[0] ?? '{}')).toEqual({ ts: expect.any(Number), picks: { 'q-l1-aaaaaa': { key: 'B' } } })
+  await ui.unmount()
+})
+
+test('a draft.json another session wrote with a newer ts is applied on the next poll: the pick shows and Submit all is primary', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { writes, drafts, clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect((await ui.find({ type: 'Button', key: 'submit-all' }))?.props.dimColor).toBe(true)
+  files.set(`${STATE}/draft.json`, JSON.stringify({ ts: 100, picks: { 'q-l1-aaaaaa': { key: 'B' } } }))
+  await clock.advance(5000)
+  expect((await ui.find({ type: 'Button', key: 'opt-q-l1-aaaaaa-B' }))?.props.variant).toBe('primary')
+  expect((await ui.find({ type: 'Button', key: 'submit-all' }))?.props.variant).toBe('primary')
+  expect((await ui.find({ type: 'Button', key: 'submit-all' }))?.props.dimColor).toBe(false)
+  // Applying a draft writes nothing back, and no answer is written.
+  expect(drafts).toEqual([])
+  expect(writes).toEqual([])
+  await ui.unmount()
+})
+
+test('a draft.json no newer than the one this session last wrote is not applied', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  const { drafts, clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await clock.advance(1000)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
+  const own = JSON.parse(drafts[0] ?? '{}') as { ts: number }
+  // An older draft from another session, with a pick for the question the card shows after the press.
+  files.set(`${STATE}/draft.json`, JSON.stringify({ ts: own.ts - 1, picks: { 'q-l2-bbbbbb': { key: 'A' } } }))
+  await clock.advance(5000)
+  expect((await ui.find({ type: 'Button', key: 'submit-all' }))?.props.dimColor).toBe(true)
+  await ui.unmount()
+})
+
+test('a pick merges into the picks another session wrote since the last poll, instead of replacing them', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  const { drafts, clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await clock.advance(1000)
+  // The other session's write lands after this session's last poll, so this session has not applied it yet.
+  files.set(`${STATE}/draft.json`, JSON.stringify({ ts: 100, picks: { 'q-l2-bbbbbb': { key: 'A' } } }))
+  await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
+  expect(JSON.parse(drafts[0] ?? '{}')).toEqual({
+    ts: expect.any(Number),
+    picks: { 'q-l2-bbbbbb': { key: 'A' }, 'q-l1-aaaaaa': { key: 'B' } },
+  })
+  await ui.unmount()
+})
+
+test('Submit all writes draft.json with the submitted questions dropped', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  const { writes, drafts } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
+  await ui.press({ key: 'opt-q-l2-bbbbbb-A' })
+  expect(writes).toEqual([])
+  await ui.press({ key: 'submit-all' })
+  expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb')])
+  expect(JSON.parse(drafts[drafts.length - 1] ?? '{}')).toEqual({ ts: expect.any(Number), picks: {} })
+  await ui.unmount()
+})
+
+test('a malformed draft.json is read as no draft: a pick of the wrong shape changes nothing', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { clock, drafts } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  files.set(`${STATE}/draft.json`, JSON.stringify({ ts: 100, picks: { 'q-l1-aaaaaa': { key: 7 } } }))
+  await clock.advance(5000)
+  expect((await ui.find({ type: 'Button', key: 'submit-all' }))?.props.dimColor).toBe(true)
+  expect(drafts).toEqual([])
   await ui.unmount()
 })
 
