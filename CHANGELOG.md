@@ -2,8 +2,18 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.20, set by the beta.20 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.21, set by the beta.21 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.21] - 2026-10-18
+
+### Changed
+
+- The root session of a family draws no session row: its questions sit right under the family's title, before the derived sessions (`├`/`└`), so the title is never drawn twice (`renderBranch`, `renderRootRows` in `hooks/pane.tsx`). The same holds for the History tree.
+- The History block is drawn as the open tree is: a heading row with the logo and "History", a blank line, then the tree (`renderHistory` in `hooks/pane.tsx`).
+- A History row is one line, shaped as a picked row of the open tree: `○ <title> ✓ - <answer line>`; the dim line under the title is gone. Where the question is known with a `desktop_session`, the title is a Markdown link to that session, which the Desktop opens itself (`renderHistoryEntry` in `hooks/pane.tsx`; `HistoryEntry.session` in `hooks/model.ts`).
+- A pending History line ends at its sent time: "waiting to be read" ("aguardando leitura") is gone, and the line only grows once the session answers back (`lineStateOf` in `hooks/model.ts`; `history.waiting` removed from `hooks/i18n.ts`).
+- The card's session link reads "See session ↗" ("Ver sessão ↗"): the Desktop draws no underline on a link, so the arrow marks it (`card.session` in `hooks/i18n.ts`).
 
 ## [0.4.0-beta.20] - 2026-10-18
 
