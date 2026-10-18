@@ -45,7 +45,7 @@ Write each question in this order. The reader has not seen the conversation.
 
 ## Fields
 
-The CLI cuts longer text to the limit, with a trailing `…`. Keep each field within it.
+The CLI refuses longer text as `too long (n/limit)` and names the field, so keep each field within its limit. Only a missing title falls back to the question, cut to 60.
 
 | Field | Required | Limit | Rule |
 |---|---|---|---|
@@ -60,7 +60,7 @@ The CLI cuts longer text to the limit, with a trailing `…`. Keep each field wi
 | `urgency` | yes | 300 | `Blocks in ~8 min` or `Can wait`. |
 | `undo` | yes | 300 | For example `changing later ≈ 10 min`. |
 | `recommended` | yes | | One of the option keys. |
-| `risk` | no | | `low` (default), `medium` or `high`. |
+| `risk` | yes | | `low`, `medium` or `high`. |
 | `options` | yes | | At least 2. Keys are consecutive uppercase letters from A, in order (A, B, C). Each has `key`, `label` (300), `does`, `pros`, `cons` (300 each, all required), `tradeoff` (300, one line, required) and `fit` (integer 0 to 100, required). |
 
 Do not pass `session` or `project`: the CLI fills them from the environment and the working directory.

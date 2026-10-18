@@ -60,6 +60,7 @@ import time
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Final, NamedTuple, NoReturn
 
@@ -67,6 +68,7 @@ HookOutput = dict[str, Any] | None
 
 DEFAULT_HOME: Final = Path.home() / ".claude" / "state" / "askaway"
 SCRIPT_PATH: Final = Path(__file__).resolve()
+MIRROR_SCRIPT: Final = Path.home() / ".claude" / "mods" / "plugins" / "askaway" / "scripts" / "askaway.py"
 ID_PATTERN: Final = re.compile(r"q-[0-9a-z]+-[0-9a-f]{6}")
 BASE36: Final = string.digits + string.ascii_lowercase
 RUN_KINDS: Final = frozenset({"main", "subagent", "goal", "loop", "bash", "codex"})
@@ -107,26 +109,74 @@ PRUNE_INTERVAL_S: Final = 86_400
 RELEASED_SUFFIX: Final = ".desktop-released.json"
 TEMP_STALE_S: Final = 86_400
 CLOSED_STATUSES: Final = frozenset({"delivered", "expired"})
+STATUS_DAMAGED: Final = "damaged"  # q/<id>.json does not read as a JSON object
+STATUS_DAMAGED_ANSWER: Final = "damaged answer"  # a/<id>.json does not read: answered, key unknown, still pauses
+PAUSE_ENDED: Final = CLOSED_STATUSES
 WAIT_DEFAULT_S: Final = 300.0
 WAIT_POLL_S: Final = 0.5
+MIN_WORDS: Final = 3
+PLACEHOLDER_WORDS: Final = frozenset({"tbd", "todo", "n/a", "lorem"})
+MISSING: Final = "missing"
+PLACEHOLDER: Final = "placeholder"
+KEY_RULE: Final = "option keys must be consecutive uppercase letters starting at A, in order (A, B, C...)"
+FOREIGN_RECHECK_S: Final = 60
+FOREIGN_STAMP: Final = "foreign_check"  # touched when unread answers of other sessions were last re-checked
+WAIT_ANSWERED: Final = frozenset({"answered", "delivered"})
 DURATION: Final = re.compile(r"([0-9]+)([mhd])")
 DURATION_MS: Final = {"m": 60_000, "h": 3_600_000, "d": DAY_MS}
-# Read-only MCP tools (mcp__<server>__<tool>): one read verb in the tool name and no write verb.
-READ_ONLY_WORDS: Final = frozenset({"get", "list", "read", "search", "query", "find", "describe", "show"})
+# Read-only MCP tools (mcp__<server>__<tool>): the tool name starts with one of these prefixes, no write word.
+READ_ONLY_PREFIXES: Final = ("get_", "list_", "read_", "search_", "find_", "describe_", "show_")
 WRITE_WORDS: Final = frozenset({
     "add", "apply", "create", "delete", "edit", "exec", "execute", "insert", "keep", "kill", "move",
     "patch", "post", "purge", "push", "put", "register", "remove", "reset", "run", "save", "send",
     "set", "start", "stop", "update", "write"})
-# One simple `askaway.py ask|status|list|wait|export` call. The path token excludes shell metacharacters,
-# so a command substitution in the path never matches. The path may be quoted, and a quoted path
-# may start with the literal ${CLAUDE_PLUGIN_ROOT} (the form the Askaway skill teaches).
-_PATH_CHARS = r"[^\s;&|`$<>()\"]*"
-_QUOTED_CHARS = r"[^;&|`$<>()\"\\\n]*"
+# One simple `askaway.py ask|status|list|wait|export` call of the installed script: its path is SCRIPT_PATH
+# (symlinks resolved), its mirror under ~/.claude/mods (spelled out, or with ~, $HOME or ${HOME}), or the
+# plugin-root form the Askaway skill teaches (a quoted path only). A planted path such as /x/askaway.py never matches.
+_HOME_PREFIX: Final = r"(?:~|\$HOME|\$\{HOME\})"
+_MIRROR_PATH: Final = rf"(?:{re.escape(str(MIRROR_SCRIPT))}|{_HOME_PREFIX}/\.claude/mods/plugins/askaway/scripts/askaway\.py)"
+_FIXED_SCRIPTS: Final = "|".join([re.escape(str(SCRIPT_PATH)), _MIRROR_PATH])
+_PLUGIN_ROOT_SCRIPT: Final = re.escape("${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py")
 INBOX_CALL: Final = re.compile(
     r"^\s*(?:/usr/bin/)?python3(?:\.\d+)?\s+"
-    rf"(?:{_PATH_CHARS}askaway\.py|\"(?:\$\{{CLAUDE_PLUGIN_ROOT\}})?{_QUOTED_CHARS}askaway\.py\")"
+    rf"(?:(?:{_FIXED_SCRIPTS})|\"(?:{_FIXED_SCRIPTS}|{_PLUGIN_ROOT_SCRIPT})\")"
     r"\s+(?:ask|status|list|wait|export)\b[^;&|`$<>\n]*$"
 )
+# The Bash guard (a deterrent, SPEC.md): each command is read word by word as the shell reads it, and the words
+# are checked in command or write position. It does not model xargs, find -exec or a script file's own code.
+TMP_ROOT: Final = os.path.realpath("/tmp")
+HOME_VAR: Final = "ASKAWAY_HOME"
+ANSWER_DENIED: Final = ("Denied: an Askaway question is answered only by the user, in the Askaway panel, never "
+                        "from a shell command. Keep working on the recommended option or end the turn.")
+STATE_DENIED: Final = ("Denied: the Askaway state folder is written only by askaway.py itself. The user answers "
+                       "in the Askaway panel, so a shell command or a file edit must not write into that folder.")
+FILE_TOOLS: Final = frozenset({"Edit", "Write", "NotebookEdit"})
+SHELL_OPERATORS: Final = frozenset({";", "&&", "||", "|", "&", "(", ")", "\n"})
+WRITE_REDIRECTS: Final = frozenset({">", ">>", ">&", ">|", "&>", "<>"})
+SHELL_WORD: Final = (r"(?:\$\((?:[^()]|\([^()]*\))*\)|\\.|'[^']*'|\"(?:\\.|[^\"\\])*\""
+                     r"|[^\s;&|<>()'\"\\]|\\.)+")
+SHELL_TOKEN: Final = re.compile(
+    rf"[ \t]*(?:(?P<op>&&|\|\||>>|>&|>\||<<-?|<>|&>|[;&|<>()\n])|(?P<word>{SHELL_WORD}))")
+WRITE_COMMANDS: Final = frozenset({"cp", "mv", "tee", "touch", "ln", "install", "truncate", "rsync"})
+DELETE_COMMANDS: Final = frozenset({"rm", "unlink", "shred", "rmdir"})
+PYTHON_NAME: Final = re.compile(r"python(?:3(?:\.\d+)?)?")
+CODE_RUNNERS: Final = frozenset({"perl", "ruby", "node", "bun", "deno", "php"})
+SHELL_NAMES: Final = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
+SHELL_C_FLAG: Final = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
+WRAPPER_NAMES: Final = frozenset({"command", "env", "exec", "nice", "nohup", "time", "timeout"})
+PREFIX_WORDS: Final = frozenset({"!", "{", "do", "elif", "else", "if", "then", "until", "while"})
+WRAPPER_ARG: Final = re.compile(r"-\S*|[0-9.]+[smhd]?")
+ASSIGNMENT: Final = re.compile(r"([A-Za-z_]\w*)=(.*)", re.DOTALL)
+SUBSTITUTION: Final = re.compile(r"\$\(((?:[^()]|\([^()]*\))*)\)|`([^`]*)`")
+SED_IN_PLACE: Final = re.compile(r"-[A-Za-z]*i|--in-place")
+PY_VALUE_OPTIONS: Final = frozenset({"-W", "-X"})
+MKTEMP_HOME: Final = re.compile(r"\$\(mktemp(?:\s[^()]*)?\)")
+EXPANSION: Final = re.compile(r"[$`*?\[{]")
+GLOB: Final = re.compile(r"[*?\[]")
+STATE_MENTION: Final = re.compile(r"state[\W_]*askaway|ASKAWAY_HOME")
+WRITE_CODE: Final = re.compile(r"open\(.*?(?:['\"][wax+]|>)|write|unlink|remove|rename|replace\(|rmtree|copy|move"
+                               r"|touch|truncate|\b(?:rm|mv|cp|tee)\b")
+ANSWER_CODE: Final = re.compile(r"cmd_answer|answer\(|['\"]answer['\"]")
 
 
 class Origin(NamedTuple):
@@ -204,12 +254,18 @@ def write_atomic(target: Path, data: Mapping[str, Any]) -> None:
 
 
 def create_once(target: Path, data: Mapping[str, Any]) -> bool:
-    """Publish data at target unless it exists; os.link fails atomically on existence."""
+    """Publish data at target unless a readable file is there; a damaged file (not a JSON object) is replaced.
+
+    os.link fails atomically on existence, so writers racing on a readable file cannot both publish. A damaged
+    file holds nothing to keep, so it is replaced in place; racing writers on a damaged file are not atomic."""
     tmp = _write_temp(target, data)
     try:
-        os.link(tmp, target)
-    except FileExistsError:
-        return False
+        try:
+            os.link(tmp, target)
+        except FileExistsError:
+            if read_json(target) is not None:
+                return False
+            os.replace(tmp, target)
     finally:
         tmp.unlink(missing_ok=True)
     _fsync_dir(target.parent)
@@ -224,13 +280,18 @@ def read_json(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def load_questions() -> list[dict[str, Any]]:
-    loaded = []
+def load_questions() -> tuple[list[dict[str, Any]], list[str]]:
+    """The readable questions, newest first, and the ids of the q/ files that do not read: one pass over q/."""
+    loaded: list[dict[str, Any]] = []
+    damaged: list[str] = []
     for path in (state_home() / "q").glob("*.json"):
         entry = read_json(path)
-        if entry and entry.get("id") == path.stem and isinstance(entry.get("ts"), int):
+        if entry is None:
+            if ID_PATTERN.fullmatch(path.stem):
+                damaged.append(path.stem)
+        elif entry.get("id") == path.stem and isinstance(entry.get("ts"), int):
             loaded.append(entry)
-    return sorted(loaded, key=lambda entry: (entry["ts"], entry["id"]), reverse=True)
+    return sorted(loaded, key=lambda entry: (entry["ts"], entry["id"]), reverse=True), sorted(damaged)
 
 
 def answer_lapsed(answer: Mapping[str, Any]) -> bool:
@@ -246,7 +307,9 @@ def item_status(item_id: str) -> tuple[str, str | None]:
         marker = read_json(item_path("d", item_id)) or {}
         return ("expired" if marker.get("expired") is True else "delivered"), key
     if item_path("a", item_id).exists():
-        return ("expired" if answer and answer_lapsed(answer) else "answered"), key
+        if answer is None:  # answered, but the answer file does not read: the key is unknown
+            return STATUS_DAMAGED_ANSWER, None
+        return ("expired" if answer_lapsed(answer) else "answered"), key
     return "open", None
 
 
@@ -268,28 +331,22 @@ def away_on() -> bool:
 
 
 def is_away(permission_mode: object) -> bool:
+    """Whether the user is away. A bypassPermissions run always counts as away, whatever away.json says:
+    nobody is there to answer, so an "away off" flag must never let a question skip the inbox."""
     return (permission_mode == "bypassPermissions" or away_on()
             or os.environ.get("CLAUDE_CODE_SESSION_ATTENDED") == "0")
 
 
 # ---- entry validation --------------------------------------------------
 
+OPTION_TEXT: Final = (("label", TEXT_MAX), ("tradeoff", TEXT_MAX), *((name, TEXT_MAX) for name in REQUIRED_OPTION_TEXT))
+# Long texts need MIN_WORDS words; the short ones (urgency, undo, tradeoff, label, title) may have one or two.
+LONG_TEXT: Final = frozenset({"question", "what", "problem", "analogy", "why", "how", "gains", "losses", "context",
+                              "does", "pros", "cons"})
+
+
 def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
-
-
-def _text(value: object, limit: int) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ValueError("text fields must be strings")  # noqa: TRY004 - CLI validation channel
-    text = value.strip()
-    return _clip(text, limit) if text else None
-
-
-def _strict_text(value: object, limit: int) -> str | None:
-    """A required text field: None when it is missing, blank or not a string."""
-    return _text(value, limit) if isinstance(value, str) else None
 
 
 def _strict_fit(value: object) -> int | None:
@@ -298,92 +355,165 @@ def _strict_fit(value: object) -> int | None:
     return value
 
 
-def _flag(value: object) -> bool:
-    if value is None:
-        return False
-    if not isinstance(value, bool):
-        raise ValueError("pause must be true or false")  # noqa: TRY004 - CLI validation channel
-    return value
-
-
-def _choice(value: object, allowed: frozenset[str], name: str) -> str:
-    if not isinstance(value, str) or value not in allowed:
-        raise ValueError(f"{name} must be one of: {', '.join(sorted(allowed))}")
-    return value
-
-
-def _option(raw: object) -> dict[str, Any]:
-    if not isinstance(raw, dict):
-        raise ValueError("each option must be an object")  # noqa: TRY004 - CLI validation channel
-    key = raw.get("key")
-    if not isinstance(key, str) or not key.strip():
-        raise ValueError("option key must be a non-empty string")
-    label = _text(raw.get("label"), TEXT_MAX)
-    if label is None:
-        raise ValueError("option label is required")
-    return {"key": key.strip(), "label": label,
-            "tradeoff": _strict_text(raw.get("tradeoff"), TEXT_MAX),
-            "fit": _strict_fit(raw.get("fit")),
-            **{name: _strict_text(raw.get(name), TEXT_MAX) for name in REQUIRED_OPTION_TEXT}}
-
-
-def _options(raw_options: object) -> list[dict[str, Any]]:
-    if not isinstance(raw_options, list) or len(raw_options) < MIN_OPTIONS:
-        raise ValueError(f"options must be a list of at least {MIN_OPTIONS} items")
-    options = [_option(raw) for raw in raw_options]
-    keys = [option["key"] for option in options]
-    if keys != list(string.ascii_uppercase[:len(keys)]):
-        raise ValueError("option keys must be consecutive uppercase letters starting at A, in order (A, B, C...)")
-    return options
-
-
 def _sentence_count(text: str) -> int:
     """Sentences as the non-empty runs between terminators ('.', '!', '?' before a space or the end)."""
     return sum(1 for part in SENTENCE_END.split(text) if part.strip())
 
 
-def _sentence_gaps(texts: Mapping[str, str | None]) -> list[str]:
-    what = texts["what"]
-    if what is None or _sentence_count(what) >= MIN_SENTENCES:
+def _words(text: str) -> list[str]:
+    """The words of a text, lower-cased, with the punctuation at their ends dropped."""
+    return [word for word in (raw.strip(string.punctuation) for raw in text.lower().split()) if word]
+
+
+def _read_text(name: str, raw: object, limit: int) -> tuple[str | None, str | None]:
+    """The stripped text, or None with the reason it is refused: missing, too long or a placeholder."""
+    if not isinstance(raw, str) or not raw.strip():
+        return None, MISSING
+    text = raw.strip()
+    if len(text) > limit:
+        return None, f"too long ({len(text)}/{limit})"
+    words = _words(text)
+    if all(word in PLACEHOLDER_WORDS for word in words) or (name in LONG_TEXT and len(words) < MIN_WORDS):
+        return None, PLACEHOLDER
+    return text, None
+
+
+def _checked(scope: dict[str, str], name: str, raw: object, limit: int) -> str | None:
+    text, reason = _read_text(name, raw, limit)
+    if reason is not None:
+        scope[name] = reason
+    return text
+
+
+class Gaps:
+    """Every gap of one entry, collected before it is refused, so the agent fixes them in one pass."""
+
+    def __init__(self) -> None:
+        self.top: dict[str, str] = {}  # top-level field -> reason
+        self.options: dict[str, dict[str, str]] = {}  # option key -> field -> reason
+        self.notes: list[str] = []  # gaps that are no single field: sentences, keys, recommended
+        self.keys: list[str] = []  # the option keys as received
+
+    def failed(self) -> bool:
+        return bool(self.top or self.notes or self.options)
+
+    def message(self) -> str:
+        """Missing fields first, then the other refused fields, the notes, and each option grouped by key."""
+        missing = [name for name, reason in self.top.items() if reason == MISSING]
+        parts = [f"missing fields: {', '.join(missing)}"] if missing else []
+        parts += [f"{name}: {reason}" for name, reason in self.top.items() if reason != MISSING]
+        parts += self.notes
+        for key, fields in self.options.items():
+            parts += _option_parts(key, fields)
+        return "; ".join(parts)
+
+
+def _option_parts(key: str, fields: Mapping[str, str]) -> list[str]:
+    """One option's gaps: its missing fields grouped on one line, then each refused field with its reason."""
+    names = [name for name, reason in fields.items() if reason == MISSING]
+    parts = [f"option {key}: {', '.join(names)}"] if names else []
+    return parts + [f"option {key}: {name}: {reason}" for name, reason in fields.items() if reason != MISSING]
+
+
+class EntryError(ValueError):
+    """An entry to refile: the message names every gap, and `gaps` carries them for the reply."""
+
+    def __init__(self, gaps: Gaps) -> None:
+        super().__init__(gaps.message())
+        self.gaps = gaps
+
+
+def _top_texts(raw: Mapping[str, Any], gaps: Gaps) -> dict[str, str | None]:
+    texts: dict[str, str | None] = {}
+    for name, limit in (("question", QUESTION_MAX), *((name, TEXT_CAPS.get(name, TEXT_MAX))
+                                                     for name in REQUIRED_TEXT)):
+        texts[name] = _checked(gaps.top, name, raw.get(name), limit)
+    return texts
+
+
+def _title(raw: Mapping[str, Any], question: str | None, gaps: Gaps) -> str:
+    text, reason = _read_text("title", raw.get("title"), TITLE_MAX)
+    if reason is not None and reason != MISSING:
+        gaps.top["title"] = reason
+    return text or _clip(question or "", TITLE_MAX)
+
+
+def _risk(raw: Mapping[str, Any], gaps: Gaps) -> str | None:
+    risk = raw.get("risk")
+    if risk is None:
+        gaps.top["risk"] = MISSING
+    elif not isinstance(risk, str) or risk not in RISKS:
+        gaps.top["risk"] = f"must be one of: {', '.join(sorted(RISKS))}"
+    return risk if isinstance(risk, str) else None
+
+
+def _run_kind(raw: Mapping[str, Any], origin: Origin, gaps: Gaps) -> str:
+    run_kind = raw.get("run_kind") or origin.run_kind
+    if not isinstance(run_kind, str) or run_kind not in RUN_KINDS:
+        gaps.top["run_kind"] = f"must be one of: {', '.join(sorted(RUN_KINDS))}"
+        return origin.run_kind
+    return run_kind
+
+
+def _pause_gap(raw: Mapping[str, Any], gaps: Gaps) -> None:
+    pause = raw.get("pause")
+    if pause is not None and not isinstance(pause, bool):
+        gaps.top["pause"] = "must be true or false"  # type-checked; only risk "high" pauses (SPEC: ask)
+
+
+def _option_key(raw: object) -> str:
+    if not isinstance(raw, dict):
+        raise ValueError("each option must be an object")  # noqa: TRY004 - CLI validation channel
+    key = raw.get("key")
+    if not isinstance(key, str) or not key.strip():
+        raise ValueError("option key must be a non-empty string")
+    return key.strip()
+
+
+def _option(raw: Mapping[str, Any], key: str, gaps: Gaps) -> dict[str, Any]:
+    fields: dict[str, str] = {}
+    texts = {name: _checked(fields, name, raw.get(name), limit) for name, limit in OPTION_TEXT}
+    fit = _strict_fit(raw.get("fit"))
+    if fit is None:
+        fields["fit"] = MISSING
+    if fields:
+        gaps.options.setdefault(key, {}).update(fields)
+    return {"key": key, **texts, "fit": fit}
+
+
+def _options(raw_options: object, gaps: Gaps) -> list[dict[str, Any]]:
+    if not isinstance(raw_options, list) or len(raw_options) < MIN_OPTIONS:
+        gaps.notes.append(f"options must be a list of at least {MIN_OPTIONS} items")
         return []
-    return [f"what needs at least {MIN_SENTENCES} sentences"]
-
-
-def _option_gaps(options: Sequence[Mapping[str, Any]]) -> list[str]:
-    return [f"option {option['key']}: {name}" for option in options
-            for name in ("tradeoff", "fit", *REQUIRED_OPTION_TEXT) if option[name] is None]
-
-
-def _entry_gaps(texts: Mapping[str, str | None], options: Sequence[Mapping[str, Any]]) -> list[str]:
-    missing = [name for name in REQUIRED_TEXT if texts[name] is None]
-    gaps = [f"missing fields: {', '.join(missing)}"] if missing else []
-    return gaps + _sentence_gaps(texts) + _option_gaps(options)
+    keys = [_option_key(raw) for raw in raw_options]
+    gaps.keys = keys
+    if keys != list(string.ascii_uppercase[:len(keys)]):
+        gaps.notes.append(f"{KEY_RULE}; keys received: {', '.join(keys)}")
+    return [_option(raw, key, gaps) for raw, key in zip(raw_options, keys, strict=True)]
 
 
 def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
-    question = _text(raw.get("question"), QUESTION_MAX)
-    if question is None:
-        raise ValueError("question is required")
-    title = _text(raw.get("title"), TITLE_MAX) or _clip(question, TITLE_MAX)
-    options = _options(raw.get("options"))
+    gaps = Gaps()
+    risk = _risk(raw, gaps)
+    run_kind = _run_kind(raw, origin, gaps)
+    _pause_gap(raw, gaps)
+    texts = _top_texts(raw, gaps)
+    title = _title(raw, texts["question"], gaps)
+    options = _options(raw.get("options"), gaps)
     recommended = raw.get("recommended")
-    if recommended not in [option["key"] for option in options]:
-        raise ValueError("recommended must be one of the option keys")
-    risk = _choice(raw.get("risk") or "low", RISKS, "risk")
-    run_kind = _choice(raw.get("run_kind") or origin.run_kind, RUN_KINDS, "run_kind")
-    texts = {name: _strict_text(raw.get(name), TEXT_CAPS.get(name, TEXT_MAX))
-             for name in REQUIRED_TEXT}
-    gaps = _entry_gaps(texts, options)
-    if gaps:
-        raise ValueError("; ".join(gaps))
-    _flag(raw.get("pause"))  # still type-checked; only risk "high" pauses (SPEC: ask)
+    if options and recommended not in [option["key"] for option in options]:
+        gaps.notes.append("recommended must be one of the option keys")
+    what = texts["what"]
+    if what is not None and _sentence_count(what) < MIN_SENTENCES:
+        gaps.notes.append(f"what needs at least {MIN_SENTENCES} sentences")
+    if gaps.failed():
+        raise EntryError(gaps)
     now = now_ms()
     return {
         "v": 1, "id": new_id(now), "ts": now,
         "project": origin.project, "session": origin.session, "run_kind": run_kind,
         "session_title": session_title(origin.session, origin.project),
-        "title": title, "question": question,
-        "options": options, "recommended": recommended,
+        "title": title, "options": options, "recommended": recommended,
         **texts,
         "risk": risk, "pause": risk == "high",
         "source": origin.source,
@@ -515,17 +645,44 @@ def _given_text(raw: object, name: str) -> str | None:
     return given if isinstance(given, str) else None
 
 
+def _question_key(text: object) -> str:
+    """A question text as duplicates compare it: case and spacing ignored."""
+    return " ".join(text.lower().split()) if isinstance(text, str) else ""
+
+
+def open_twin(entry: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The open question this session already asked with the same text, or None. Sessionless asks never match."""
+    session = entry.get("session")
+    if not session:
+        return None
+    wanted = _question_key(entry["question"])
+    return next((other for other in load_questions()[0]
+                 if other.get("session") == session and _question_key(other.get("question")) == wanted
+                 and item_status(other["id"])[0] == "open"), None)
+
+
+def _refile(raw: object, error: str, gaps: Gaps) -> dict[str, Any]:
+    """The reply that sends the agent back to fix its entry, with every gap grouped by field and option."""
+    return {"action": "refile", "recommended": _given_text(raw, "recommended"), "error": error,
+            "missing": list(gaps.top), "by_option": {key: list(fields) for key, fields in gaps.options.items()},
+            "keys_received": gaps.keys}
+
+
 def cmd_ask(json_text: str | None) -> dict[str, Any]:
     raw: object = None
     try:
         raw = json.loads(json_text if json_text is not None else sys.stdin.read())
         if not isinstance(raw, dict):
             raise ValueError("the entry must be a JSON object")  # noqa: TRY004 - CLI validation channel
-        origin = cli_origin()
-        entry = build_entry(raw, origin)
+        entry = build_entry(raw, cli_origin())
+        twin = open_twin(entry)
+        if twin is not None:
+            return {"id": twin["id"], "recommended": twin["recommended"], "action": "open", "duplicate": True}
         store_entry(entry)
-    except ValueError as exc:  # the entry is incomplete or invalid: the agent files it again
-        return {"action": "refile", "recommended": _given_text(raw, "recommended"), "error": str(exc)}
+    except EntryError as exc:  # the entry has gaps: the agent completes them and files again
+        return _refile(raw, str(exc), exc.gaps)
+    except ValueError as exc:  # the entry is unreadable or invalid: the agent files it again
+        return _refile(raw, str(exc), Gaps())
     except Exception:  # noqa: BLE001 - the agent always gets an answer; a high-risk one never continues
         high = _given_text(raw, "risk") == "high"
         return {"action": "pause" if high else "continue",
@@ -534,16 +691,26 @@ def cmd_ask(json_text: str | None) -> dict[str, Any]:
             "action": "pause" if entry["pause"] else "continue"}
 
 
+def canonical_key(key: str) -> str:
+    """Option keys are upper-case letters; the Other key is the word other, in any case."""
+    return OTHER_KEY if key.lower() == OTHER_KEY else key.upper()
+
+
+def answer_refusal(entry: Mapping[str, Any], by: str) -> str | None:
+    """Why a shell answer is refused: it must come from the question's own session. None when it may be written."""
+    asked = entry.get("session")
+    if by == "cli" and asked and caller_session() != asked:
+        return ("answer refused: this question belongs to another session; answer it "
+                "from the Askaway panel or from its own session")
+    return None
+
+
 def answer_session(entry: Mapping[str, Any], by: str) -> str | None:
-    """The session an answer is bound to. A shell answer must come from the question's own session."""
+    """The session an answer is bound to: the caller's for a shell answer, else the question's own."""
     asked = entry.get("session")
     if by != "cli":
         return asked  # the panel answers for the user, so no shell session is required
-    caller = caller_session()
-    if asked and caller != asked:
-        raise ValueError("answer refused: this question belongs to another session; answer it "
-                         "from the Askaway panel or from its own session")
-    return caller or asked
+    return caller_session() or asked
 
 
 def _who_text(raw: str) -> str | None:
@@ -583,9 +750,13 @@ def cmd_answer(item_id: str, key: str, by: str, text: str | None) -> dict[str, A
     entry = read_json(item_path("q", item_id))
     if entry is None:
         raise ValueError("unknown inbox id")
+    key = canonical_key(key)
     kept = answer_text(key, text)
     if key != OTHER_KEY and key not in option_keys(entry):
         raise ValueError("unknown option key")
+    refusal = answer_refusal(entry, by)
+    if refusal is not None:
+        return {"error": refusal}
     record = {"id": item_id, "key": key, "by": by, "who": answerer_name(),
               "session": answer_session(entry, by), "ts": now_ms()}
     if kept is not None:
@@ -596,11 +767,17 @@ def cmd_answer(item_id: str, key: str, by: str, text: str | None) -> dict[str, A
     return {"id": item_id, "key": stored.get("key"), "written": False}
 
 
-def cmd_status(item_id: str) -> dict[str, Any]:
+def question_status(item_id: str) -> tuple[str, str | None]:
+    """The status and key of a question, as status and wait report them. An unknown id is a usage error."""
     if read_json(item_path("q", item_id)) is None:
-        raise ValueError("unknown inbox id")
-    status, key = item_status(item_id)
-    result = {"id": item_id, "status": status, "key": key}
+        if not item_path("q", item_id).exists():
+            raise ValueError("unknown inbox id")
+        return STATUS_DAMAGED, None
+    return item_status(item_id)
+
+
+def _status_reply(item_id: str, status: str, key: str | None) -> dict[str, Any]:
+    result: dict[str, Any] = {"id": item_id, "status": status, "key": key}
     answer = read_json(item_path("a", item_id))
     text = other_text(answer)
     if text:
@@ -609,6 +786,10 @@ def cmd_status(item_id: str) -> dict[str, Any]:
     if who:
         result["who"] = who
     return result
+
+
+def cmd_status(item_id: str) -> dict[str, Any]:
+    return _status_reply(item_id, *question_status(item_id))
 
 
 def _list_row(entry: Mapping[str, Any]) -> dict[str, Any]:
@@ -626,7 +807,7 @@ def _list_row(entry: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def cmd_list(only_open: bool) -> dict[str, Any]:
-    items = [_list_row(entry) for entry in load_questions()]
+    items = [_list_row(entry) for entry in load_questions()[0]]
     return {"items": [item for item in items if not only_open or item["status"] == "open"]}
 
 
@@ -653,7 +834,7 @@ def cmd_answered(since: str | None) -> dict[str, Any]:
     """Answered items whose answer is at or after --since, newest question first."""
     cutoff = since_cutoff(since) if since is not None else 0
     items = []
-    for entry in load_questions():
+    for entry in load_questions()[0]:
         answered = answered_at(entry["id"])
         if answered is not None and answered >= cutoff:
             items.append(_list_row(entry))
@@ -696,13 +877,17 @@ def prune_days() -> int:
     return int(text) if PRUNE_DAYS_TEXT.fullmatch(text) else DEFAULT_PRUNE_DAYS
 
 
-def cmd_prune(days: int) -> dict[str, Any]:
-    if days < 0:
-        raise ValueError("--days must not be negative")
-    _remove_stale_temps()
+def _remove_damaged(damaged: Sequence[str]) -> int:
+    """Clear damaged q/ files with their answer and delivery files, whatever the window: the user's way out of a pause."""
+    for item_id in damaged:
+        _remove_item(item_id)
+    return len(damaged)
+
+
+def _remove_closed(days: int, entries: Sequence[Mapping[str, Any]]) -> int:
     cutoff = now_ms() - days * DAY_MS
     removed = 0
-    for entry in load_questions():
+    for entry in entries:
         status = item_status(entry["id"])[0]
         # Only closed items: an undelivered or unexpired record is never pruned, whatever the window.
         if status not in CLOSED_STATUSES:
@@ -711,25 +896,45 @@ def cmd_prune(days: int) -> dict[str, Any]:
         if settled is not None and settled < cutoff:
             _remove_item(entry["id"])
             removed += 1
-    return {"removed": removed}
+    return removed
+
+
+def cmd_prune(days: int) -> dict[str, Any]:
+    if days < 0:
+        raise ValueError("--days must not be negative")
+    _remove_stale_temps()
+    entries, damaged = load_questions()
+    return {"removed": _remove_damaged(damaged) + _remove_closed(days, entries)}
+
+
+def _mark_delivered(item_id: str) -> None:
+    """Write the delivery marker the deliver hook writes, so the pane, status and the hook agree.
+
+    Only the asking session closes its answer (any caller may, for a question with no session): another session's
+    wait returns the answer and leaves the delivery to the asking session."""
+    question = read_json(item_path("q", item_id)) or {}
+    asked = question.get("session")
+    if asked and asked != caller_session():
+        return
+    with contextlib.suppress(OSError):  # a marker that did not land is retried by the deliver hook
+        create_once(item_path("d", item_id), {"id": item_id, "session": asked or caller_session(), "ts": now_ms()})
 
 
 def cmd_wait(item_id: str, timeout: float) -> dict[str, Any]:
     if not 0 <= timeout < math.inf:
         raise ValueError("--timeout must be a finite number of seconds, zero or more")
-    if read_json(item_path("q", item_id)) is None:
-        return {"id": item_id, "status": "unknown id"}
     deadline = time.monotonic() + timeout
-    while (answer := read_json(item_path("a", item_id))) is None:
+    status, key = question_status(item_id)
+    while status == "open":
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return {"id": item_id, "status": "timeout"}
         time.sleep(min(WAIT_POLL_S, remaining))
-    result = {"id": item_id, "status": "answered", "key": answer.get("key")}
-    text = other_text(answer)
-    if text:
-        result["text"] = text
-    return result
+        status, key = question_status(item_id)
+    reply = _status_reply(item_id, status, key)
+    if status == "answered":
+        _mark_delivered(item_id)
+    return reply
 
 
 def cmd_export(since: str | None, fmt: str) -> str:
@@ -737,11 +942,28 @@ def cmd_export(since: str | None, fmt: str) -> str:
     cutoff = since_cutoff(since) if since is not None else 0
     rows = [{"id": entry["id"], "status": item_status(entry["id"])[0], "question": entry,
              "answer": read_json(item_path("a", entry["id"]))}
-            for entry in load_questions() if entry["ts"] >= cutoff]
+            for entry in load_questions()[0] if entry["ts"] >= cutoff]
     return render_export(rows, fmt)
 
 
-EXPORT_COLUMNS: Final = ("id", "status", "question", "answer")
+CSV_COLUMNS: Final = ("asked_at", "project", "title", "recommended", "answered_key", "label", "who", "by",
+                      "answered_at", "delivered")
+
+
+def _utc_text(ms: object) -> str:
+    """A millisecond timestamp as UTC ISO 8601 to the second, or an empty cell."""
+    if isinstance(ms, bool) or not isinstance(ms, int):
+        return ""
+    return datetime.fromtimestamp(ms / 1000, timezone.utc).isoformat(timespec="seconds")
+
+
+def _csv_cells(row: Mapping[str, Any]) -> list[str]:
+    question, answer = row["question"], row["answer"] or {}
+    key = answer.get("key")
+    return [_utc_text(question.get("ts")), str(question.get("project") or ""), str(question.get("title") or ""),
+            str(question.get("recommended") or ""), str(key or ""), option_label(question, key) or "",
+            answer_who(answer) or "", str(answer.get("by") or ""), _utc_text(answer.get("ts")),
+            "true" if row["status"] == "delivered" else "false"]
 
 
 def render_export(rows: list[dict[str, Any]], fmt: str) -> str:
@@ -750,9 +972,8 @@ def render_export(rows: list[dict[str, Any]], fmt: str) -> str:
     if fmt == "csv":
         buffer = io.StringIO()
         writer = csv.writer(buffer, lineterminator="\n")
-        writer.writerow(EXPORT_COLUMNS)
-        writer.writerows([row["id"], row["status"], json.dumps(row["question"]), json.dumps(row["answer"])]
-                         for row in rows)
+        writer.writerow(CSV_COLUMNS)
+        writer.writerows(_csv_cells(row) for row in rows)
         return buffer.getvalue()
     return json.dumps(rows) + "\n"
 
@@ -813,6 +1034,7 @@ def build_parser() -> argparse.ArgumentParser:
     wait = commands.add_parser("wait")
     wait.add_argument("id")
     wait.add_argument("--timeout", type=float, default=WAIT_DEFAULT_S)
+    wait.add_argument("--strict", action="store_true")
     wait.set_defaults(run=lambda a: cmd_wait(a.id, a.timeout))
 
     export = commands.add_parser("export")
@@ -886,11 +1108,11 @@ def hook_ask_guard(event: Mapping[str, Any]) -> HookOutput:
 
 
 def is_read_only_mcp(tool_name: object) -> bool:
-    """An MCP tool with a read verb and no write verb in its name, e.g. mcp__graphify__get_node."""
+    """An MCP tool whose own name starts with a read prefix and has no write word, e.g. mcp__graphify__get_node."""
     if not isinstance(tool_name, str) or not tool_name.startswith("mcp__"):
         return False
-    words = set(tool_name.rsplit("__", 1)[-1].split("_"))
-    return bool(words & READ_ONLY_WORDS) and not (words & WRITE_WORDS)
+    tool = tool_name.rsplit("__", 1)[-1]
+    return tool.startswith(READ_ONLY_PREFIXES) and not (set(tool.split("_")) & WRITE_WORDS)
 
 
 def _exempt_call(tool: object, command: str) -> bool:
@@ -898,7 +1120,368 @@ def _exempt_call(tool: object, command: str) -> bool:
     return (tool == "Bash" and INBOX_CALL.match(command) is not None) or is_read_only_mcp(tool)
 
 
+def _unquote(raw: str) -> str:
+    """A shell word with its quotes removed and its backslashes read; $( ... ) stays as written."""
+    return re.sub(r"\\(.)|[\"']", lambda match: match[1] or "", raw, flags=re.DOTALL)
+
+
+def _quoted_text(raw: str) -> str:
+    """A word's text with only its outer quotes removed, so a code string keeps the quotes inside it."""
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "'\"":
+        return raw[1:-1]
+    return _unquote(raw)
+
+
+def _has_expansion(raw: str) -> bool:
+    return EXPANSION.search(raw) is not None
+
+
+def _command_name(argv: Sequence[str]) -> str:
+    return os.path.basename(_unquote(argv[0])) if argv else ""
+
+
+def _shell_tokens(text: str) -> list[tuple[str, str]] | None:
+    """(kind, value) pairs, kind "op" or "word"; None when a quote or a bracket is left open."""
+    found: list[tuple[str, str]] = []
+    pos = 0
+    while True:
+        match = SHELL_TOKEN.match(text, pos)
+        if match is None:
+            return found if not text[pos:].strip(" \t") else None
+        found.append(("op", match["op"]) if match["op"] else ("word", match["word"]))
+        pos = match.end()
+
+
+class _Simple(NamedTuple):
+    words: list[str]  # raw words of one simple command: assignments, wrappers, the command and its arguments
+    writes: list[str]  # raw targets of its write redirections
+
+
+def _simple_commands(tokens: Sequence[tuple[str, str]]) -> list[_Simple]:
+    commands: list[_Simple] = []
+    words: list[str] = []
+    writes: list[str] = []
+    redirect: str | None = None  # the redirection operator whose target is the next word
+    for kind, value in tokens:
+        if kind == "op" and value in SHELL_OPERATORS:
+            commands.append(_Simple(words, writes))
+            words, writes, redirect = [], [], None
+        elif kind == "op":
+            redirect = value
+        elif redirect is None:
+            words.append(value)
+        else:
+            if redirect in WRITE_REDIRECTS and not value.isdigit():
+                writes.append(value)
+            redirect = None
+    commands.append(_Simple(words, writes))
+    return commands
+
+
+def _drop_wrapper_args(words: list[str]) -> list[str]:
+    """The options and numbers a wrapper (env, nice, timeout) takes before the command it runs."""
+    rest = list(words)
+    while rest and WRAPPER_ARG.fullmatch(_unquote(rest[0])):
+        rest.pop(0)
+    return rest
+
+
+def _strip_prefix(words: list[str]) -> tuple[dict[str, str], list[str]]:
+    """The assignments before a command, as a dict, and the command words after assignments and wrappers."""
+    env: dict[str, str] = {}
+    while words:
+        head = _unquote(words[0])
+        assignment = ASSIGNMENT.fullmatch(head)
+        if assignment is not None:
+            env[assignment[1]] = assignment[2]
+            words = words[1:]
+        elif head in PREFIX_WORDS:
+            words = words[1:]
+        elif head in WRAPPER_NAMES:
+            words = _drop_wrapper_args(words[1:])
+        else:
+            break
+    return env, words
+
+
+def _assignments(words: Sequence[str]) -> dict[str, str]:
+    found: dict[str, str] = {}
+    for word in words:
+        assignment = ASSIGNMENT.fullmatch(_unquote(word))
+        if assignment is not None:
+            found[assignment[1]] = assignment[2]
+    return found
+
+
+def _substitutions(raw: str) -> list[str]:
+    """The text of each $(...) and `...` in a word: the shell runs it as a command too."""
+    return [match[1] if match[1] is not None else (match[2] or "") for match in SUBSTITUTION.finditer(raw)]
+
+
+def _script_texts(argv: Sequence[str]) -> list[str]:
+    """The text an sh -c or eval runs, so the scan reads it as a command line of its own."""
+    name = _command_name(argv)
+    args = [_quoted_text(word) for word in argv[1:]]
+    if name == "eval":
+        return [" ".join(args)]
+    if name not in SHELL_NAMES:
+        return []
+    return next(([args[index + 1]] for index, arg in enumerate(args[:-1]) if SHELL_C_FLAG.fullmatch(arg)), [])
+
+
+def _is_askaway_name(name: str) -> bool:
+    """Is a file name the askaway script, or a glob that could expand to it (ask*.py, *.py)?"""
+    return fnmatchcase("askaway.py", name) or fnmatchcase(name, "askaway*.py")
+
+
+def _maybe_script(raw: str) -> bool:
+    return _has_expansion(raw) or _is_askaway_name(os.path.basename(_unquote(raw)))
+
+
+def _maybe_module(raw: str) -> bool:
+    return _has_expansion(raw) or fnmatchcase("askaway", _unquote(raw))
+
+
+def _python_args(args: Sequence[str]) -> list[str] | None:
+    """The arguments after the askaway script or module that a python command runs, or None."""
+    index = 0
+    while index < len(args):
+        word = _unquote(args[index])
+        if word == "-c":
+            return None
+        if word == "-m":
+            module = args[index + 1] if index + 1 < len(args) else ""
+            return list(args[index + 2:]) if _maybe_module(module) else None
+        if word in PY_VALUE_OPTIONS:
+            index += 2
+        elif word.startswith("-"):
+            index += 1
+        else:
+            return list(args[index + 1:]) if _maybe_script(args[index]) else None
+    return None
+
+
+def _askaway_args(argv: Sequence[str]) -> list[str] | None:
+    """The arguments after the askaway script or module that argv runs, or None when it runs something else."""
+    if not argv:
+        return None
+    if PYTHON_NAME.fullmatch(_command_name(argv)):
+        return _python_args(argv[1:])
+    return list(argv[1:]) if _is_askaway_name(_command_name(argv)) else None
+
+
+def _answer_reason(argv: Sequence[str], sandboxed: bool) -> str | None:
+    """An answer typed in a shell: the first word after the askaway script that is not an option is answer, or could be."""
+    args = _askaway_args(argv)
+    if args is None or sandboxed:
+        return None
+    first = next((word for word in args if not _unquote(word).startswith("-")), None)
+    if first is not None and (_unquote(first) == "answer" or _has_expansion(first)):
+        return ANSWER_DENIED
+    return None
+
+
+def _inline_code(argv: Sequence[str]) -> str | None:
+    """The code string of python -c (or a runner's -e), when argv runs one."""
+    name = _command_name(argv)
+    if not (PYTHON_NAME.fullmatch(name) or name in CODE_RUNNERS):
+        return None
+    args = [_quoted_text(word) for word in argv[1:]]
+    return next((args[index + 1] for index, arg in enumerate(args[:-1]) if arg in ("-c", "-e")), None)
+
+
+def _code_reason(code: str, *, sandboxed: bool) -> str | None:
+    """Code that writes the state folder, or that answers a question (an answer into a sandbox home is fine)."""
+    if STATE_MENTION.search(code) and WRITE_CODE.search(code):
+        return STATE_DENIED
+    if not sandboxed and "askaway" in code and ANSWER_CODE.search(code):
+        return ANSWER_DENIED
+    return None
+
+
+def _edits_in_place(name: str, args: Sequence[str]) -> bool:
+    return name == "sed" and any(SED_IN_PLACE.fullmatch(arg) for arg in args)
+
+
+def _command_targets(name: str, args: Sequence[str]) -> list[str]:
+    """The operands a command writes to: a write or delete command's operands, sed -i's and dd's of= targets."""
+    if name == "dd":
+        return [arg[3:] for arg in args if arg.startswith("of=")]
+    if name in WRITE_COMMANDS or name in DELETE_COMMANDS or _edits_in_place(name, args):
+        return [arg for arg in args if not arg.startswith("-")]
+    return []
+
+
+def _write_targets(argv: Sequence[str], writes: Sequence[str]) -> tuple[list[str], bool]:
+    """The unquoted words a command writes to (redirections and operands), and whether it deletes."""
+    name = _command_name(argv)
+    targets = [_unquote(word) for word in writes]
+    return targets + _command_targets(name, [_unquote(word) for word in argv[1:]]), name in DELETE_COMMANDS
+
+
+def _state_roots() -> tuple[str, ...]:
+    """The real state folders the guard protects: the default one, and ASKAWAY_HOME when it lies outside /tmp."""
+    roots = {os.path.realpath(DEFAULT_HOME), os.path.realpath(state_home())}
+    return tuple(sorted(root for root in roots if not root.startswith(TMP_ROOT + os.sep)))
+
+
+def _inside(path: str, roots: Sequence[str]) -> bool:
+    return any(path == root or path.startswith(root + os.sep) for root in roots)
+
+
+def _above(path: str, roots: Sequence[str]) -> bool:
+    """Is path an ancestor of a state folder, so that deleting it would delete the folder?"""
+    prefix = path.rstrip(os.sep) + os.sep
+    return any(root.startswith(prefix) for root in roots)
+
+
+def _expand(text: str, askaway_home: str) -> str:
+    """A word with ~, $HOME and $ASKAWAY_HOME expanded: the forms a path into the state folder takes."""
+    home = str(Path.home())
+    text = re.sub(r"\$\{HOME\}|\$HOME\b", lambda _: home, text)
+    text = re.sub(r"\$\{ASKAWAY_HOME\}|\$ASKAWAY_HOME\b", lambda _: askaway_home, text)
+    return re.sub(r"^~(?=/|$)", lambda _: home, text)
+
+
+def _sandbox_value(value: str, cwd: str) -> bool:
+    """A value that keeps ASKAWAY_HOME in a scratch folder: $(mktemp ...), or a literal path under /tmp."""
+    if MKTEMP_HOME.fullmatch(value):
+        return True
+    if "$" in value or "`" in value:
+        return False
+    return os.path.realpath(os.path.join(cwd, value)).startswith(TMP_ROOT + os.sep)
+
+
+def _unreadable_reason(command: str) -> str | None:
+    """A command that does not read (an open quote): refused when it names the state folder or an answer."""
+    if STATE_MENTION.search(command):
+        return STATE_DENIED
+    return ANSWER_DENIED if "askaway" in command and "answer" in command else None
+
+
+class _ShellScan:
+    """One Bash command read as the shell runs it: the working directory and the ASKAWAY_HOME it exports."""
+
+    def __init__(self, cwd: str, exported: Mapping[str, str], roots: tuple[str, ...]) -> None:
+        self.cwd = cwd
+        self.exported = dict(exported)
+        self.roots = roots
+
+    def text(self, command: str) -> str | None:
+        tokens = _shell_tokens(command)
+        if tokens is None:
+            return _unreadable_reason(command)
+        if "<<" in command and (reason := _code_reason(command, sandboxed=False)) is not None:
+            return reason  # a heredoc body is code too
+        return next((reason for reason in map(self._simple, _simple_commands(tokens)) if reason is not None), None)
+
+    def _simple(self, simple: _Simple) -> str | None:
+        env, argv = _strip_prefix(simple.words)
+        name = _command_name(argv)
+        if name == "export":
+            exported = _assignments(argv[1:])
+            self.exported.update(exported)
+            env = {**env, **exported}
+        if HOME_VAR in env and self._hits_state(env[HOME_VAR], str(DEFAULT_HOME), delete=False):
+            return STATE_DENIED
+        reason = self._checks(simple, argv, env, env.get(HOME_VAR, self.exported.get(HOME_VAR, "")))
+        if reason is None and name == "cd":
+            self.cwd = self._cd_target(argv)
+        return reason
+
+    def _checks(self, simple: _Simple, argv: Sequence[str], env: Mapping[str, str], home: str) -> str | None:
+        sandboxed = bool(home) and _sandbox_value(home, self.cwd)
+        askaway_home = home if sandboxed else str(DEFAULT_HOME)
+        checks = [_answer_reason(argv, sandboxed), self._write_reason(simple, argv, askaway_home),
+                  self._nested(simple, env, argv)]
+        code = _inline_code(argv)
+        if code is not None:
+            checks.append(_code_reason(code, sandboxed=sandboxed))
+        return next((reason for reason in checks if reason is not None), None)
+
+    def _write_reason(self, simple: _Simple, argv: Sequence[str], askaway_home: str) -> str | None:
+        targets, delete = _write_targets(argv, simple.writes)
+        hit = any(self._hits_state(target, askaway_home, delete=delete) for target in targets)
+        return STATE_DENIED if hit else None
+
+    def _hits_state(self, text: str, askaway_home: str, *, delete: bool) -> bool:
+        """Does an unquoted word name a path inside a state folder (or above one, when it deletes)?"""
+        literal = GLOB.split(_expand(text, askaway_home), maxsplit=1)[0]
+        path = os.path.realpath(os.path.join(self.cwd, literal))
+        return _inside(path, self.roots) or (delete and _above(path, self.roots))
+
+    def _nested(self, simple: _Simple, env: Mapping[str, str], argv: Sequence[str]) -> str | None:
+        """Text the command runs on its own: $(...) or `...` (with the exports so far), sh -c or eval (with the prefix)."""
+        scans = [(self.exported, text) for word in simple.words for text in _substitutions(word)]
+        scans += [({**self.exported, **env}, text) for text in _script_texts(argv)]
+        for exported, text in scans:
+            reason = _ShellScan(self.cwd, exported, self.roots).text(text)
+            if reason is not None:
+                return reason
+        return None
+
+    def _cd_target(self, argv: Sequence[str]) -> str:
+        target = _expand(_unquote(argv[1]), str(DEFAULT_HOME)) if len(argv) > 1 else str(Path.home())
+        return os.path.realpath(os.path.join(self.cwd, target))
+
+
+def bash_tamper_reason(command: str) -> str | None:
+    """Why a Bash command may not answer a question or write the state folder, or None.
+
+    A deterrent against the agent's own shell, not a guarantee (SPEC.md, the Bash guard)."""
+    return _ShellScan(os.getcwd(), {}, _state_roots()).text(command)
+
+
+def _file_tamper_reason(tool_input: Mapping[str, Any]) -> str | None:
+    raw = tool_input.get("file_path") or tool_input.get("notebook_path")
+    if not isinstance(raw, str) or not raw:
+        return None
+    path = os.path.realpath(os.path.join(os.getcwd(), os.path.expanduser(raw)))
+    return STATE_DENIED if _inside(path, _state_roots()) else None
+
+
+def _tamper_denial(event: Mapping[str, Any]) -> HookOutput:
+    """The deny for a Bash command, or a file tool call, that touches the state folder against the rules."""
+    tool_input = event.get("tool_input") or {}
+    if event.get("tool_name") == "Bash":
+        reason = bash_tamper_reason(str(tool_input.get("command", "")))
+    elif event.get("tool_name") in FILE_TOOLS:
+        reason = _file_tamper_reason(tool_input)
+    else:
+        return None
+    return deny(reason) if reason else None
+
+
+def damaged_question_session(item_id: str) -> str | None:
+    """The session a damaged question names in its raw text, or None when no valid one can be read."""
+    try:
+        text = item_path("q", item_id).read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return None
+    found = re.search(r'"session"\s*:\s*"([^"]*)"', text)
+    return found[1] if found and SESSION_PATTERN.fullmatch(found[1]) else None
+
+
+def _holding_question(session: str) -> tuple[str, str | None] | None:
+    """The (id, title) of the question that pauses this session, or None; the title is None for a damaged file.
+
+    A high-risk question holds until its answer is delivered (or lapses). A damaged q/ file cannot show its risk,
+    so it holds the session its raw text names, while it is open: only `prune` clears it."""
+    entries, damaged = load_questions()
+    for entry in entries:
+        if (entry.get("pause") is True and entry.get("session") == session
+                and item_status(entry["id"])[0] not in PAUSE_ENDED):
+            return entry["id"], entry["title"]
+    for item_id in damaged:
+        if damaged_question_session(item_id) == session and item_status(item_id)[0] == "open":
+            return item_id, None
+    return None
+
+
 def hook_pause_guard(event: Mapping[str, Any]) -> HookOutput:
+    tampering = _tamper_denial(event)  # runs in every session, away or not
+    if tampering is not None:
+        return tampering
     session = event.get("session_id")
     if not session:
         return None
@@ -906,15 +1489,16 @@ def hook_pause_guard(event: Mapping[str, Any]) -> HookOutput:
     command = str((event.get("tool_input") or {}).get("command", ""))
     if _exempt_call(tool, command):
         return None
-    # A pause holds until the answer is delivered (or lapses): an answered, undelivered item still blocks.
-    blocking = next((entry for entry in load_questions()
-                     if entry.get("pause") is True and entry.get("session") == session
-                     and item_status(entry["id"])[0] not in CLOSED_STATUSES), None)
+    blocking = _holding_question(session)
     if blocking is None:
         return None
-    return deny(f"Paused: Askaway question {blocking['id']} ({blocking['title']}) needs the "
+    item_id, title = blocking
+    if title is None:
+        return deny(f"Paused: Askaway question {item_id} is damaged (its file does not read), so it cannot be "
+                    f"answered. The user clears it with `python3 {SCRIPT_PATH} prune`. Do read-only work or end the turn.")
+    return deny(f"Paused: Askaway question {item_id} ({title}) needs the "
                 "user's answer. Do read-only work or end the turn; check with "
-                f"`python3 {SCRIPT_PATH} status {blocking['id']}`.")
+                f"`python3 {SCRIPT_PATH} status {item_id}`.")
 
 
 def answered_ids() -> list[str]:
@@ -982,9 +1566,10 @@ def _deliver_one(item_id: str, session: str | None, cwd: object,
     return line
 
 
-def _prune_due(marker: Path) -> bool:
+def _stamp_due(marker: Path, interval_s: float) -> bool:
+    """Is there no stamp yet, or has its mtime aged past interval_s?"""
     try:
-        return time.time() - marker.stat().st_mtime >= PRUNE_INTERVAL_S
+        return time.time() - marker.stat().st_mtime >= interval_s
     except FileNotFoundError:
         return True
 
@@ -992,11 +1577,45 @@ def _prune_due(marker: Path) -> bool:
 def _maybe_prune() -> None:
     """Opportunistic prune from the deliver slow path, at most once a day. Best effort."""
     marker = state_home() / "last_prune"
-    if not _prune_due(marker):
+    if not _stamp_due(marker, PRUNE_INTERVAL_S):
         return
     with contextlib.suppress(OSError):
-        cmd_prune(prune_days())
+        _remove_stale_temps()
+        _remove_closed(prune_days(), load_questions()[0])  # never a damaged file: the user clears those
         marker.touch()
+
+
+def _foreign_recheck_due() -> bool:
+    """Are unread answers of other sessions due a re-check? At most once per FOREIGN_RECHECK_S, across hook runs."""
+    stamp = state_home() / FOREIGN_STAMP
+    if not _stamp_due(stamp, FOREIGN_RECHECK_S):
+        return False
+    with contextlib.suppress(OSError):
+        stamp.touch()
+    return True
+
+
+def _foreign(item_id: str, session: str | None, cwd: object) -> bool:
+    """An open answer that another session (or project) receives: only a re-check can close it."""
+    if item_path("d", item_id).exists():
+        return False  # already closed: _deliver_one returns at once
+    entry = read_json(item_path("q", item_id))
+    return entry is not None and not _receives(entry, session, cwd)
+
+
+def _deliver_lines(item_ids: Sequence[str], session: str | None, cwd: object, recheck: bool) -> list[str]:
+    released = ReleasedScan()  # one folder-wide scan for every answer of this run, at most
+    lines: list[str] = []
+    for item_id in item_ids:
+        if not recheck and _foreign(item_id, session, cwd):
+            continue  # another session's unread answer: re-checked at most once a minute
+        try:
+            line = _deliver_one(item_id, session, cwd, released)
+        except OSError:
+            continue  # no marker was written, so the next run retries this answer
+        if line:
+            lines.append(line)
+    return lines
 
 
 def hook_deliver(event: Mapping[str, Any]) -> HookOutput:
@@ -1009,17 +1628,7 @@ def hook_deliver(event: Mapping[str, Any]) -> HookOutput:
     if not item_ids or not isinstance(event_name, str):
         return None
     _maybe_prune()
-    session = event.get("session_id") or None
-    cwd = event.get("cwd")
-    released = ReleasedScan()  # one folder-wide scan for every answer of this run, at most
-    lines: list[str] = []
-    for item_id in item_ids:
-        try:
-            line = _deliver_one(item_id, session, cwd, released)
-        except OSError:
-            continue  # no marker was written, so the next run retries this answer
-        if line:
-            lines.append(line)
+    lines = _deliver_lines(item_ids, event.get("session_id") or None, event.get("cwd"), _foreign_recheck_due())
     if not lines:
         return None
     return {"hookSpecificOutput": {"hookEventName": event_name,
@@ -1056,8 +1665,19 @@ def dispatch(argv: Sequence[str]) -> dict[str, Any] | str:
 
 
 def _failed(result: dict[str, Any] | str) -> bool:
-    """A refile or an error: the outcomes that --strict turns into exit 1."""
+    """A refile or an error: the outcomes that --strict turns into a failure."""
     return isinstance(result, dict) and ("error" in result or result.get("action") == "refile")
+
+
+def _exit_code(result: dict[str, Any] | str, args: Sequence[str]) -> int:
+    """0, unless --strict makes a refile, an error or an unanswered wait a failure: 2 on a timeout, else 1."""
+    if isinstance(result, str) or "--strict" not in args:
+        return 0
+    if result.get("status") == "timeout":
+        return 2
+    if args[:1] == ["wait"] and result.get("status") not in WAIT_ANSWERED:
+        return 1
+    return 1 if _failed(result) else 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1065,18 +1685,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args[:1] == ["hook"]:
         run_hook(args[1] if len(args) > 1 else "")
         return 0
+    code = 0
     try:
         result: dict[str, Any] | str = dispatch(args)
-    except ValueError as exc:
-        result = {"error": str(exc)}
-    except Exception:  # noqa: BLE001 - the CLI always answers; exit 0 unless --strict
-        result = {"error": "internal error"}
+    except ValueError as exc:  # a usage error: unknown command, bad id or key, bad option value
+        result, code = {"error": str(exc)}, 1
+    except Exception:  # noqa: BLE001 - the CLI always answers, on one line
+        result, code = {"error": "internal error"}, 1
     if isinstance(result, str):
         sys.stdout.write(result)  # export writes its document as it is, not as a JSON line
     else:
         print(json.dumps(result))
-    # --strict is parsed by ask, answer and status; a usage error that names it exits 1 too.
-    return 1 if "--strict" in args and _failed(result) else 0
+    return code or _exit_code(result, args)
 
 
 if __name__ == "__main__":
