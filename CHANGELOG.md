@@ -2,8 +2,21 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.10, set by the beta.10 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.11, set by the beta.11 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.11] - 2026-10-18
+
+### Added
+
+- Ended-session card: an open question whose asking session has ended shows "The session that asked has ended; the agent stayed on <key>." instead of the options, with Back, Dismiss and Next. `list` rows carry `ended: true` for it and `prune --id <id>` removes the question; no answer can be sent (`askaway.py`, pane).
+- Panel credential: `answer --by panel`, `accept_all` and `accept_recommended` need a one-shot token that the panel mints in a mode-600 file under `panel-tokens/` and passes in `ASKAWAY_PANEL_TOKEN`; the CLI spends it. A second layer behind the Bash guard, not isolation (SPEC.md "Panel credential").
+- The panel asks once for the answerer's name (Save or Skip), keeps it in the plugin store and passes it as `ASKAWAY_WHO`; `/askaway who <name>` edits it. The name is declared, not verified (README).
+- `/askaway quiet on|off`: no toast per new question and no fade after an answer. Off by default.
+
+### Migration needed
+
+- A script or agent that answered with `--by panel`, `accept_all` or `accept_recommended` from a shell now gets `{"error": ...}`; use the panel, or `--by cli` from the asking session.
 
 ## [0.4.0-beta.10] - 2026-10-18
 

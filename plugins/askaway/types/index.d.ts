@@ -96,6 +96,12 @@ declare module 'claude-code' {
       expanded: Record<string, boolean>
       // Whether this session is inside a model turn of its own (turn.start to turn.complete; subagent turns excluded).
       turn: { isBusy: boolean }
+      // Ids of open questions whose asking session has ended (`list --open` marks them `ended`): their card shows a notice.
+      ended: string[]
+      // The answerer name (store key "who"): null before it was asked, '' after a skip, else the name.
+      who: string | null
+      // Quiet mode (store key "quiet", /askaway quiet on|off): no toast per new question and no fade after an answer.
+      quiet: boolean
       // The language in use: the stored choice, else the environment's. Set at session start and by /askaway lang.
       lang: 'en' | 'pt'
       // The question wizard: window key, step (0..total, total = review), picks by question id, the open "Other…"
