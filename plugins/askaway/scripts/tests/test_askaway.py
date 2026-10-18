@@ -208,6 +208,39 @@ def test_ask_invalid_entry_refiles_with_error_and_files_nothing(change, home, ca
     assert not (home / "q").exists() or list((home / "q").glob("*.json")) == []
 
 
+KEY_RULE = "option keys must be consecutive uppercase letters starting at A, in order (A, B, C...)"
+
+
+def entry_with_keys(keys: list[str]) -> dict:
+    template = base_entry()["options"][0]
+    options = [{**template, "key": key, "label": f"Option {key}"} for key in keys]
+    return base_entry(options=options, recommended=keys[0])
+
+
+@pytest.mark.parametrize("keys", [["A", "B"], ["A", "B", "C"]])
+def test_ask_accepts_option_keys_consecutive_from_a(keys, home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(entry_with_keys(keys)))
+    assert out["action"] == "continue"
+    assert [option["key"] for option in stored(home, "q", out["id"])["options"]] == keys
+
+
+@pytest.mark.parametrize("keys", [["B", "A"], ["A", "C"], ["1", "2"], ["a", "b"], ["A", "A"]])
+def test_ask_refiles_option_keys_not_consecutive_from_a(keys, home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(entry_with_keys(keys)))
+    assert out == {"action": "refile", "recommended": keys[0], "error": KEY_RULE}
+    assert not (home / "q").exists() or list((home / "q").glob("*.json")) == []
+
+
+def test_entries_on_disk_with_other_keys_still_list_and_report_status(home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry()))
+    entry = stored(home, "q", out["id"])
+    entry["options"] = [{**entry["options"][1], "key": "B"}, {**entry["options"][0], "key": "A"}]
+    entry["recommended"] = "B"
+    (home / "q" / f"{out['id']}.json").write_text(json.dumps(entry), encoding="utf-8")
+    assert cli(capsys, "list")["items"][0]["recommended"] == "B"
+    assert cli(capsys, "status", out["id"]) == {"id": out["id"], "status": "open", "key": None}
+
+
 @pytest.mark.parametrize("field", REQUIRED_TEXT)
 def test_ask_requires_every_text_field(field, home, capsys):
     entry = base_entry()

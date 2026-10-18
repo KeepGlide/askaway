@@ -104,7 +104,8 @@ writes its document instead); exit 0 always, unless `--strict` is given (below).
   `title` defaults to the question clipped to 60 chars. Fills `session` from env
   `CLAUDE_CODE_SESSION_ID`, `project` from the working directory, and `run_kind` defaults to `main`
   (`codex` when env `CODEX_*` vars exist and there is no session id). Validates: at least 2
-  options, unique keys, `recommended` among the keys. The required top-level fields are `what`, `problem`,
+  options, option keys consecutive uppercase letters starting at A, in order (A, B, C...),
+  `recommended` among the keys. The required top-level fields are `what`, `problem`,
   `context`, `why`, `how`, `gains`, `losses`, `analogy`, `urgency` and `undo` (non-blank strings). Each option
   requires `tradeoff` (non-blank), `fit` (integer 0-100), `does`, `pros` and `cons` (non-blank strings).
   `what` must hold at least 2 sentences, counted leniently: the non-empty runs between terminators, where a

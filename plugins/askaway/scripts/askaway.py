@@ -331,8 +331,8 @@ def _options(raw_options: object) -> list[dict[str, Any]]:
         raise ValueError(f"options must be a list of at least {MIN_OPTIONS} items")
     options = [_option(raw) for raw in raw_options]
     keys = [option["key"] for option in options]
-    if len(set(keys)) != len(keys):
-        raise ValueError("option keys must be unique")
+    if keys != list(string.ascii_uppercase[:len(keys)]):
+        raise ValueError("option keys must be consecutive uppercase letters starting at A, in order (A, B, C...)")
     return options
 
 
