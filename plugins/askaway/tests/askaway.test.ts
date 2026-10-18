@@ -1787,7 +1787,7 @@ test('a group answered from outside while another is open: the pane shows the fi
   await ui.unmount()
 })
 
-test('hotkeys: each option its digit, Other the next, then b, n and s on the terminal; none while the Other field is open', async ($, on) => {
+test('hotkeys: each option its digit, Other the next, then b, n and s on the terminal and p, f and e on the desktop; none while the Other field is open', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
@@ -1811,15 +1811,20 @@ test('hotkeys: each option its digit, Other the next, then b, n and s on the ter
   for (const button of buttons) expect(button.props.hotkey).toBeUndefined()
   await ui.press({ key: 'other-q-l1-aaaaaa' })
   await ui.unmount()
-  // The desktop keeps the digits and drops the letters: Back, Next and Submit all are clicked there.
+  // The desktop keeps the digits and takes p, f and e for Back, Next and Submit: none of them is a digit, an option key
+  // A to D or a terminal letter (b, n, s), so no shortcut clashes with another.
   const desk = await mountPane($, 'desktop')
   const deskHotkey = async (key: string): Promise<unknown> => (await desk.find({ type: 'Button', key }))?.props.hotkey
   expect(await deskHotkey('opt-q-l1-aaaaaa-A')).toBe('1')
   expect(await deskHotkey('other-q-l1-aaaaaa')).toBe('3')
-  expect(await deskHotkey('nav-back')).toBeUndefined()
-  expect(await deskHotkey('nav-next')).toBeUndefined()
+  expect(await deskHotkey('nav-back')).toBe('p')
+  expect(await deskHotkey('nav-next')).toBe('f')
   await desk.press({ key: 'nav-next' })
-  expect(await deskHotkey('submit-all')).toBeUndefined()
+  expect(await deskHotkey('submit-all')).toBe('e')
+  await desk.press({ key: 'nav-back' })
+  await desk.press({ key: 'other-q-l1-aaaaaa' })
+  for (const button of await desk.findAll({ type: 'Button' })) expect(button.props.hotkey).toBeUndefined()
+  await desk.press({ key: 'other-q-l1-aaaaaa' })
   await desk.unmount()
 })
 

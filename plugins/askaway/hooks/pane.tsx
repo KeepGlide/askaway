@@ -197,10 +197,18 @@ const digitOf = (position: number): string | undefined => (position <= 8 ? Strin
 // A hotkey is drawn only while the card's Other field is shut.
 const hotkeyFor = (card: CardContext, key: string | undefined): string | undefined => (card.isTyping ? undefined : key)
 
-// Back, Next and Submit all take a letter on the terminal only, where the keyboard is the way through the pane; the
-// desktop draws them without one, and its options keep their digits.
-const letterFor = (card: CardContext, key: string): string | undefined =>
-  card.surface === 'terminal' ? hotkeyFor(card, key) : undefined
+// Back, Next and Submit take a letter on each surface: b, n and s on the terminal, p, f and e on the desktop. The desktop
+// letters clash with no option digit, no option key A to D and no terminal letter. A surface not listed draws none.
+type NavKey = 'back' | 'next' | 'submit'
+const NAV_LETTERS: Partial<Record<RenderSurface, Record<NavKey, string>>> = {
+  terminal: { back: 'b', next: 'n', submit: 's' },
+  desktop: { back: 'p', next: 'f', submit: 'e' },
+}
+
+const letterFor = (card: CardContext, key: NavKey): string | undefined => {
+  const letters = NAV_LETTERS[card.surface]
+  return letters === undefined ? undefined : hotkeyFor(card, letters[key])
+}
 
 // One question on screen: the title in bold with the risk and age beside it, the bold lead line under it (what the agent
 // does about the question), the question, the explanation box, two blank lines, the numbered options with "Other…", a
@@ -351,13 +359,13 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
 
 // Back, and forward: Next on every question but the last; on the last one, Submit all, which writes every answer of the
 // group and needs every question picked, with the KeepGlide mark beside it on the desktop. A dim button does nothing when
-// pressed. Back, Next and Submit all carry their letters on the terminal only (letterFor).
+// pressed. Back, Next and Submit carry their letters on the terminal and on the desktop (letterFor).
 function renderNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: Screen): RenderElement {
   const { Box, Button } = ui
   const { question, isLeaving, held } = card
   const isBackOff = !screen.canBack || isLeaving
   const label = t(lang, 'nav.back')
-  const hotkey = letterFor(card, 'b')
+  const hotkey = letterFor(card, 'back')
   const onPress = () => {
     if (isBackOff) return
     actions.back()
@@ -376,7 +384,7 @@ function renderNext(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext,
   const { Button } = ui
   const isOff = !screen.canNext || card.isLeaving
   const label = t(lang, 'nav.next')
-  const hotkey = letterFor(card, 'n')
+  const hotkey = letterFor(card, 'next')
   const onPress = () => {
     if (isOff) return
     actions.next()
@@ -390,7 +398,7 @@ function renderSubmitAll(ui: Ui, lang: Lang, actions: PaneActions, card: CardCon
   const { Box, Button } = ui
   const isOff = !screen.canSubmit || card.isLeaving
   const label = t(lang, 'review.submit', { n: screen.total })
-  const hotkey = letterFor(card, 's')
+  const hotkey = letterFor(card, 'submit')
   const onPress = () => {
     if (isOff) return
     actions.submit()
