@@ -2617,3 +2617,21 @@ def test_a_placeholder_word_tradeoff_or_title_is_refused(capsys):
     entry["options"][0]["tradeoff"] = "todo"
     out = cli(capsys, "ask", "--json", json.dumps(entry))
     assert out == refile_reply("title: placeholder; option A: tradeoff: placeholder", missing=["title"], by_option={"A": ["tradeoff"]})
+
+
+@pytest.mark.parametrize("command", [
+    "python3 - <<'EOF'\nfrom pathlib import Path\np = Path('plugins/askaway/SPEC.md')\ns = p.read_text()\n"
+    "s = s.replace('the answer record', 'the \"answer\" record under ~/.claude/state/askaway')\np.write_text(s)\nEOF",
+    "python3 -c \"print('askaway answer(' )\"",
+])
+def test_code_that_edits_docs_mentioning_askaway_is_allowed(command, capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+@pytest.mark.parametrize("command", [
+    "python3 - <<'EOF'\nimport askaway\naskaway.cmd_answer('q-1-abcdef', 'A', 'panel', None)\nEOF",
+    "python3 -c \"import os; open(os.path.expanduser('~/.claude/state/askaway/a/q-1.json'), 'w').write('{}')\"",
+])
+def test_code_that_answers_or_writes_the_state_folder_is_denied(command, capsys, monkeypatch):
+    out = hook_json(capsys, monkeypatch, "pause-guard", bash_event(command))
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"

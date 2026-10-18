@@ -182,9 +182,10 @@ MKTEMP_HOME: Final = re.compile(r"\$\(mktemp(?:\s[^()]*)?\)")
 EXPANSION: Final = re.compile(r"[$`*?\[{]")
 GLOB: Final = re.compile(r"[*?\[]")
 STATE_MENTION: Final = re.compile(r"state[\W_]*askaway|ASKAWAY_HOME")
-WRITE_CODE: Final = re.compile(r"open\(.*?(?:['\"][wax+]|>)|write|unlink|remove|rename|replace\(|rmtree|copy|move"
+WRITE_CODE: Final = re.compile(r"open\(.*?(?:['\"][wax+]|>)|write|unlink|remove|rename|os\.replace\(|rmtree|copy|move"
                                r"|touch|truncate|\b(?:rm|mv|cp|tee)\b")
 ANSWER_CODE: Final = re.compile(r"cmd_answer|answer\(|['\"]answer['\"]")
+ASKAWAY_CODE: Final = re.compile(r"import\s+askaway|from\s+askaway\s+import|askaway\.py")
 
 
 class Origin(NamedTuple):
@@ -1319,10 +1320,15 @@ def _inline_code(argv: Sequence[str]) -> str | None:
 
 
 def _code_reason(code: str, *, sandboxed: bool) -> str | None:
-    """Code that writes the state folder, or that answers a question (an answer into a sandbox home is fine)."""
-    if STATE_MENTION.search(code) and WRITE_CODE.search(code):
+    """Code that writes the state folder, or that answers a question (an answer into a sandbox home is fine).
+
+    Judged line by line, so prose inside a heredoc that edits a document (a README line that names the state
+    folder next to the word "write") does not count: the mention and the write must share a line of code, and
+    an answer needs the askaway module or script named in the code.
+    """
+    if any(STATE_MENTION.search(line) and WRITE_CODE.search(line) for line in code.splitlines()):
         return STATE_DENIED
-    if not sandboxed and "askaway" in code and ANSWER_CODE.search(code):
+    if not sandboxed and ASKAWAY_CODE.search(code) and ANSWER_CODE.search(code):
         return ANSWER_DENIED
     return None
 
