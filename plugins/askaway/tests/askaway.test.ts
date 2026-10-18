@@ -521,7 +521,7 @@ test('model: the History tree groups answers by family, then session, newest fir
   expect(tree[0]?.sessions[0]?.entries.map(entry => entry.line)).toEqual(['Answer B · sent 14:35'])
   expect(tree[0]?.sessions[1]?.entries.map(entry => entry.title)).toEqual(['Title q-h-000001'])
   expect(tree[1]?.sessions[0]?.entries).toEqual([
-    { id: 'q-h-000009', title: 'q-h-000009', line: 'Answer A · sent 13:58', clearable: false },
+    { id: 'q-h-000009', title: 'q-h-000009', session: undefined, line: 'Answer A · sent 13:58' },
   ])
 })
 
@@ -553,7 +553,7 @@ test('model: the Other answer names its letter and its text; an agent or a named
   expect(lineOf({ key: 'A', by: 'panel', who: 'Ana' })).toBe('Answer A · sent 14:32')
 })
 
-test('model: Clear removes only delivered, ended and expired lines; a pending line stays; a delivered line leaves 30 s after the pane first saw it', () => {
+test('model: Clear all removes every row drawn, pending ones included, and a cleared id hides its row; a delivered line leaves 30 s after the pane first saw it', () => {
   const board: Board = {
     questions: [parsedQuestion('q-h-000001', 10), parsedQuestion('q-h-000002', 20), parsedQuestion('q-h-000003', 30)],
     answers: [answerOf('q-h-000001', 'A', 100), answerOf('q-h-000002', 'B', 200), answerOf('q-h-000003', 'C', 300)],
@@ -566,12 +566,12 @@ test('model: Clear removes only delivered, ended and expired lines; a pending li
     const tree = historyOf('en', board, { ...NO_STATUS, now: 1000, ...context })
     return tree.flatMap(group => group.sessions.flatMap(session => session.entries.map(entry => entry.id)))
   }
-  expect(clearableIdsOf(historyOf('en', board, { ...NO_STATUS, now: 1000 }))).toEqual(['q-h-000002', 'q-h-000001'])
-  expect(clearableIdsOf(historyOf('en', board, { ...NO_STATUS, now: 1000, cleared: ['q-h-000002'] }))).toEqual(['q-h-000001'])
+  expect(clearableIdsOf(historyOf('en', board, { ...NO_STATUS, now: 1000 }))).toEqual(['q-h-000003', 'q-h-000002', 'q-h-000001'])
+  expect(clearableIdsOf(historyOf('en', board, { ...NO_STATUS, now: 1000, cleared: ['q-h-000002', 'q-h-000003'] }))).toEqual(['q-h-000001'])
   expect(idsOf({ now: 31_000, shownAt: { 'q-h-000001': 0 } })).toEqual(['q-h-000003', 'q-h-000002'])
 })
 
-test('model: a session that ended keeps its line, clearable, under the family of its project', () => {
+test('model: a session that ended keeps its line under the family of its project', () => {
   const ended: Board = {
     questions: [parsedQuestion('q-m-000001', 10)],
     answers: [answerOf('q-m-000001', 'B', 1)],
@@ -579,19 +579,19 @@ test('model: a session that ended keeps its line, clearable, under the family of
   }
   const [group] = historyOf('en', ended, NO_STATUS)
   expect(group?.label).toBe('App')
-  expect(group?.sessions[0]?.entries[0]).toMatchObject({ id: 'q-m-000001', title: 'Title q-m-000001', clearable: true })
+  expect(group?.sessions[0]?.entries[0]).toMatchObject({ id: 'q-m-000001', title: 'Title q-m-000001' })
   expect(group?.sessions[0]?.entries[0]?.line).toContain('the session ended before reading it')
   const orphan: Board = { questions: [], answers: [answerOf('q-m-000001', 'B', 1)], delivered: [] }
   expect(historyOf('pt', orphan, NO_STATUS)[0]?.label).toBe('a sessão')
   expect(historyOf('pt', orphan, NO_STATUS)[0]?.sessions[0]?.entries[0]?.line).toContain('Resposta B · enviada ')
 })
 
-test('model: an answer unread past the 7-day TTL reads as expired and clearable, and one inside the TTL still reads as pending', () => {
+test('model: an answer unread past the 7-day TTL reads as expired, and one inside the TTL still reads as pending', () => {
   const board: Board = { questions: [parsedQuestion('q-m-000001', 10)], answers: [answerOf('q-m-000001', 'B', 1000)], delivered: [] }
   const entriesAt = (now: number) =>
     historyOf('en', board, { ...NO_STATUS, now }).flatMap(group => group.sessions.flatMap(session => session.entries))
-  expect(entriesAt(1000 + ANSWER_TTL_MS).map(entry => entry.clearable)).toEqual([false])
-  expect(entriesAt(1000 + ANSWER_TTL_MS + 1)).toMatchObject([{ id: 'q-m-000001', clearable: true }])
+  expect(entriesAt(1000 + ANSWER_TTL_MS)[0]?.line).toMatch(/^Answer B · sent [\d/ :]+$/)
+  expect(entriesAt(1000 + ANSWER_TTL_MS + 1)).toMatchObject([{ id: 'q-m-000001' }])
   expect(entriesAt(1000 + ANSWER_TTL_MS + 1)[0]?.line).toContain('expired unread')
 })
 
@@ -3305,7 +3305,7 @@ test('History: an Other text with Markdown in it never makes a link or a style; 
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  const row = await ui.find({ type: 'Markdown', text: /\(#local_abc\)/ })
+  const row = await ui.find({ type: 'Markdown', text: /^○ .*\(#local_abc\)/ })
   const text = String(row?.props.text)
   expect(text).not.toContain('](#local_evil)')
   expect(text).not.toContain('*x*')
@@ -3313,6 +3313,81 @@ test('History: an Other text with Markdown in it never makes a link or a style; 
   // The group of a question with no project and no family is keyed ''; its session row (null session, key '') still draws, as "└ a sessão".
   const texts = await textsOf(ui)
   expect(texts).toContain('└ a sessão')
+  await ui.unmount()
+})
+
+test('History: the family label and a derived session row link to their Desktop sessions; the root rows sit under the label; the heading carries the History icon', async ($, on) => {
+  const family = { family: 'local_root', family_title: 'release checklist review' }
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'cli-1', desktop_session: 'local_root', session_title: 'release checklist review', ...family })],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'A')],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { session: 'cli-2', desktop_session: 'local_child', session_title: 'child session', ...family })],
+    [path('a', 'q-l2-bbbbbb'), answer('q-l2-bbbbbb', 'B')],
+    [path('q', 'q-l3-cccccc'), question('q-l3-cccccc', 3000)],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($, 'desktop')
+  const icon = nodesOf(await ui.drawn()).find(node => node.type === 'Svg' && (node.props as Record<string, unknown>).alt === 'History')
+  expect(icon?.props).toMatchObject({ alt: 'History', width: 16, height: 16 })
+  expect(await ui.find({ type: 'Markdown', text: '**[Release Checklist Review](#local_root)**' })).toBeDefined()
+  expect(await ui.find({ type: 'Markdown', text: '└ [Child Session](#local_child)' })).toBeDefined()
+  // The root's row sits under the family label with no lead; the child's row under its session row.
+  expect(await ui.find({ type: 'Markdown', text: /^○ \[Title q-l1-aaaaaa\]\(#local_root\) ✓ - / })).toBeDefined()
+  expect(await ui.find({ type: 'Markdown', text: /^○ \[Title q-l2-bbbbbb\]\(#local_child\) ✓ - / })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '├ Release Checklist Review' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('History: a record filed before desktop_session existed counts as the root when its session title is its family title', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'cli-1', session_title: 'old root', family: 'local_old', family_title: 'old root' })],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'A')],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  const texts = await textsOf(ui)
+  expect(texts.some(text => /^[├└] (\[)?Old Root/.test(text))).toBe(false)
+  expect(await ui.find({ type: 'Markdown', text: '**[Old Root](#local_old)**' })).toBeDefined()
+  expect(texts.some(text => text.startsWith('○ Title q-l1-aaaaaa ✓ - '))).toBe(true)
+  await ui.unmount()
+})
+
+test('History: a family id that is not a well-formed Desktop id draws a plain bold label, never a link; a legacy derived session with its own title keeps its row', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'cli-1', session_title: 'odd fam', family: 'local_x) [pay](https://evil.example', family_title: 'odd fam' })],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'A')],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { session: 'cli-2', session_title: 'child session', family: 'local_old', family_title: 'old root' })],
+    [path('a', 'q-l2-bbbbbb'), answer('q-l2-bbbbbb', 'B')],
+    [path('q', 'q-l3-cccccc'), question('q-l3-cccccc', 3000)],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  const markdowns = nodesOf(await ui.drawn()).filter(node => node.type === 'Markdown').map(node => String((node.props as Record<string, unknown>).text))
+  expect(markdowns.some(text => text.includes('](https://') || text.includes('Odd Fam'))).toBe(false)
+  expect(await ui.find({ type: 'Text', text: 'Odd Fam' })).toBeDefined()
+  // The legacy derived session (no desktop_session, title unlike the family's) is a "└" row under its family's label.
+  expect(await ui.find({ type: 'Markdown', text: '**[Old Root](#local_old)**' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '└ Child Session' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('History: Clear all touches no state file: the a/ file of a cleared pending reply stays for its session', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B')],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'history-clear' })
+  expect(files.has(path('a', 'q-l1-aaaaaa'))).toBe(true)
+  expect(files.has(path('q', 'q-l1-aaaaaa'))).toBe(true)
+  expect(await ui.find({ type: 'Button', key: 'history-clear' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -3909,7 +3984,7 @@ test('quiet off keeps the toast and the fade', async ($, on) => {
   expect(toasts).toEqual(['Nova pergunta: Pick a parser'])
 })
 
-test('History: Clear counts the rows it removes, keeps a pending row, and is gone once nothing can go', async ($, on) => {
+test('History: Clear all counts every row, the pending one included, removes them all and is gone once nothing is left', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B')],
@@ -3920,14 +3995,14 @@ test('History: Clear counts the rows it removes, keeps a pending row, and is gon
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  // The Clear link counts the one expired row; no per-line dismiss button is drawn any more.
-  expect(String((await ui.find({ type: 'Button', key: 'history-clear' }))?.props.label)).toContain('(1')
+  // Clear all counts the expired row and the pending one; no per-line dismiss button is drawn any more.
+  expect(String((await ui.find({ type: 'Button', key: 'history-clear' }))?.props.label)).toBe('Limpar tudo (2)')
   expect(await ui.find({ type: 'Button', key: 'dismiss-q-l1-aaaaaa' })).toBeUndefined()
   await ui.press({ key: 'history-clear' })
   expect(await ui.find({ type: 'Button', key: 'history-clear' })).toBeUndefined()
   const drawn = JSON.stringify(await ui.drawn())
   expect(drawn).not.toMatch(/expirou sem ser lida/)
-  expect(drawn).toMatch(/Resposta A · /)
+  expect(drawn).not.toMatch(/Resposta A · /)
   await ui.unmount()
 })
 

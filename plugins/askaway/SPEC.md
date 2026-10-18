@@ -18,7 +18,8 @@ Terms:
   asking session, and its family's other sessions). A question with no `family` (filed before the field existed) groups by
   its project (`project`). The group's label is the root's title (`family_title`), or the project's name when there is none.
 - **Session**: the questions of a group that were asked by one session (`session`). The root session of a family (its
-  `desktop_session` is the group's `family`; `isRootSession`, `hooks/model.ts`) is the group itself: its questions sit right under the group's label, with no session
+  `desktop_session` is the group's `family`, or, for a record filed before `desktop_session` existed, its `session_title` is
+  its `family_title`; `isRootSession`, `hooks/model.ts`) is the group itself: its questions sit right under the group's label, with no session
   row, so the family's title is never drawn twice. The other sessions of the family are derived sessions, drawn as rows under
   the root's questions. A question with no session sits in its group under the session label "the session" ("a sessão").
 - **Round**: the open questions of one group; Submit all writes the round of the group on screen.
@@ -312,7 +313,7 @@ Brazilian Portuguese, with identical key sets). The model-facing lines are alway
 
 Pane id `askaway`, title "Askaway" (`hooks/pane.tsx`, `hooks/register.tsx`). Colors are in `hooks/look.ts`.
 
-Draw order, top to bottom: header, tree of the open questions, question card, History, footer, Clear link. The History block and the Clear link come
+Draw order, top to bottom: header, tree of the open questions, question card, History, footer, Clear all button. The History block and the Clear link come
 last because they change height as answers are delivered. On the desktop a Button drawn below a block that grows lost
 its presses (the first click was dropped); this is the same finding as another mod's (comment above its
 status list). `hooks/pane.tsx`, `renderPane`.
@@ -439,9 +440,13 @@ status list). `hooks/pane.tsx`, `renderPane`.
   card then shows the first question of the first group still open.
 - **Picks** survive a re-poll. Picks, and an open Other field, of questions that are no longer open are dropped.
 - **History** (under the card, above the footer; `historyOf`, `hooks/model.ts`; `renderHistory`, `hooks/pane.tsx`): the answers
-  of the last while, drawn as the open tree is: a heading row with the logo and "History" ("Histórico"), a blank line, then
-  the tree. Each family is a bold row, the rows of its root session sit right under it and its derived sessions are "├" or
-  "└" rows (as in the open tree), and each answer is one row "○ <title> ✓ - <line>", shaped as a picked row of the open tree
+  of the last while, drawn as the open tree is: a heading row with the History icon (a clock with an arrow turning back,
+  `historySvg` in `hooks/logo.ts`, the glyph "⟲" on the terminal; not the Askaway logo) and "History" ("Histórico"), a
+  blank line, then the tree. Each family is a bold row, the rows of its root session sit right under it and its derived
+  sessions are "├" or "└" rows (as in the open tree). Where the surface draws Markdown, the family label is a bold link to
+  the family root's Desktop session ("**[<title>](#<family>)**") and a derived session's row a link to its Desktop session
+  ("└ [<title>](#<desktop_session>)", `sessionLink`, `hooks/pane.tsx`); the surface opens them itself. The open tree draws
+  no such links. Each answer is one row "○ <title> ✓ - <line>", shaped as a picked row of the open tree
   (the same ○ every history row carries, plain; the state is only in the line). Where the surface draws Markdown and the
   question is still known with a `desktop_session`, the row is a Markdown line whose title is a link to `#<desktop_session>`,
   which the surface opens itself (no `onLinkPress`), as the card's See session link; else the row is plain Text. The line reads
@@ -453,13 +458,13 @@ status list). `hooks/pane.tsx`, `renderPane`.
   answer was not given by the person. Times are local: "14:32" on the day of the pane, "17/10 14:32" on another day. The delivered
   time is the `ts` of the delivery marker (`d/<id>.json`); an expired marker carries a ts, which the History line does not show.
   A question's title is never a jump link: an answered question is no longer open, so no card can be jumped to.
-  A delivered line leaves DELIVERED_SHOWN_MS (30 s) after the pane first saw it (`deliveredAt`). A pending line never leaves; an
-  ended or expired line stays until it is cleared.
-- **Clear history** (the last row of the pane, after a divider, right-aligned; `renderHistoryClear`): a secondary Button, as the card's Back is, labelled "Clear history (N)",
-  where N counts the rows it would remove (the delivered, ended and expired rows drawn now); hidden when N is 0. Its press
+  A delivered line leaves DELIVERED_SHOWN_MS (30 s) after the pane first saw it (`deliveredAt`). A pending, ended or
+  expired line stays until it is cleared.
+- **Clear all** (the last row of the pane, after a divider, right-aligned; `renderHistoryClear`): a secondary Button, as the card's Back is, labelled "Clear all (N)"
+  ("Limpar tudo (N)"), where N counts every row drawn now, pending ones included; hidden when N is 0. Its press
   (`clearHistory`, `hooks/register.tsx`) records those answers' ids in `$.store` key `cleared` (non-destructive: no q/, a/ or d/
-  file changes). A pending row stays. It replaces the per-line ✕ of earlier versions.
-- **Footer** (`footerText`, `hooks/model.ts`; pt "Nada aguardando" first): drawn under the History block, above the Clear link, only while no
+  file changes, so a cleared pending answer is still read by its session). It replaces the per-line ✕ of earlier versions.
+- **Footer** (`footerText`, `hooks/model.ts`; pt "Nada aguardando" first): drawn under the History block, above the Clear all button, only while no
   question is open. It counts the answers given in the last 24 h, names the last answer (its question's title cut to 40
   characters, its key and its age), and counts the answers not yet read and the expired ones. Absent while a question is open. Its counts are read on the pane's clock (the tick, `tickClock`), which the poll rewrites
   whenever the footer text changes, so the 24 h window and the 7-day TTL move the counts with no status line change.
@@ -485,7 +490,7 @@ How (`hooks/held.ts`, `heldButtons()`):
   (a new pick, a new question) still runs its current handler.
 - One table per site: `heldFor(surface, requestId)` (`hooks/register.tsx`). The pane's table goes to
   `renderPane` (`hooks/pane.tsx`) and the band's to `renderBand` (`hooks/band.tsx`). Every Button goes
-  through `hold`: each option, Other…, each tree link (`treeLink`), Back, Next, Submit all, the band's Answer and the Clear link.
+  through `hold`: each option, Other…, each tree link (`treeLink`), Back, Next, Submit all, the band's Answer and the Clear all bunk.
 - The Other field is an Input. The engine matches an Input by its key, so the field is not held.
 
 Verification: `tests/askaway.test.ts` tests the table on its own (`heldButtons`), and the engine tests

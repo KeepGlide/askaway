@@ -14,6 +14,21 @@ const LOGO_COLOR = '#8B5CF6'
 // The terminal's stand-in for the logo.
 export const LOGO_GLYPH = '?'
 
+// The History icon: a clock with an arrow turning back, the answers already given. Same violet, same stroke.
+const HISTORY_PATHS = ['M3 12a9 9 0 1 0 2.6 -6.4', 'M3 4v4h4', 'M12 7v5l3 2']
+
+// The terminal's stand-in for the History icon.
+export const HISTORY_GLYPH = '⟲'
+
+// The History icon as an SVG document for the `Svg` element, `size` CSS pixels square.
+export function historySvg({ size = 16 }: { size?: number } = {}): string {
+  const paths = HISTORY_PATHS.map(d => `<path d="${d}"/>`).join('')
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" ` +
+    `stroke="${LOGO_COLOR}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`
+  )
+}
+
 // The logo as an SVG document for the `Svg` element, `size` CSS pixels square.
 export function askawaySvg({ size = 16 }: { size?: number } = {}): string {
   const paths = PATHS.map(d => `<path d="${d}"/>`).join('')

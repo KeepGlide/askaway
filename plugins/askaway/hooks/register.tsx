@@ -434,8 +434,8 @@ async function endFade($: EngineInterface, id: string): Promise<void> {
   await update($, leaving, prev => Object.fromEntries(Object.entries(prev).filter(([key]) => key !== id)))
 }
 
-// Clears the History lines that can go as the pane draws them now (delivered, ended or expired): their ids go into the
-// plugin's store, no state file is touched. A waiting line (no delivery marker yet) stays.
+// Clear all: every History row drawn now, pending ones included, goes into the plugin's store by id; no state file is
+// touched, so a cleared pending reply is still read by its session.
 async function clearHistory($: EngineInterface): Promise<void> {
   const lang = await read($, langAtom)
   const drawn = historyOf(lang, await read($, board), {

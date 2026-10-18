@@ -9,7 +9,7 @@ import { t, type Lang } from './i18n'
 import type { HeldButtons } from './held'
 import { DIVIDER_COLUMNS, DIVIDER_HEIGHT, DIVIDER_PX, dividerSvg } from './divider'
 import { DETAILS_FILL, LINK_MARK, URGENCY_COLOR, type ThemeFamily } from './look'
-import { KEEPGLIDE_HEADER_SIZE, KEEPGLIDE_SUBMIT_SIZE, renderKeepGlide, renderLogo } from './logo-element'
+import { KEEPGLIDE_HEADER_SIZE, KEEPGLIDE_SUBMIT_SIZE, renderHistoryIcon, renderKeepGlide, renderLogo } from './logo-element'
 import {
   urgencyGradeOf,
   OTHER_INPUT_PREFIX,
@@ -92,7 +92,7 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
   const clearCount = clearableIdsOf(view.history).length
   held.begin()
   // The History block sits under the card, where it changes height as answers are delivered: a Button drawn below a block
-  // that grows lost its presses on the desktop (the first click was dropped). The Clear link therefore comes last.
+  // that grows lost its presses on the desktop (the first click was dropped). The Clear all button therefore comes last.
   const pane = (
     <Box flexDirection="column" gap={1}>
       <Box flexDirection="row" justifyContent="space-between">
@@ -161,8 +161,10 @@ type RowPlace = { lead: string; indent: number }
 type TreeRow = (place: RowPlace) => RenderElement
 // A session of a branch. The root session of a family (`isRoot`: its Desktop session is the family root) draws no row of its own: its
 // rows sit right under the group's label, before the derived sessions, so the family's title is never drawn twice.
-type TreeSession = { key: string; label: string; isRoot: boolean; rows: readonly TreeRow[] }
-type TreeBranch = { key: string; label: string; sessions: readonly TreeSession[] }
+// `href`: a Desktop session id (local_<uuid>) the label links to, as "#<id>", where the surface draws Markdown; the
+// surface opens it itself. Absent, the label is plain text.
+type TreeSession = { key: string; label: string; isRoot: boolean; href?: string; rows: readonly TreeRow[] }
+type TreeBranch = { key: string; label: string; href?: string; sessions: readonly TreeSession[] }
 const ROOT_PLACE: RowPlace = { lead: '', indent: 1 }
 export const placeUnder = (isFinal: boolean): RowPlace => (isFinal ? { lead: '', indent: 4 } : { lead: '│  ', indent: 1 })
 
@@ -205,11 +207,20 @@ function renderBranch(ui: Ui, branch: TreeBranch): RenderElement {
   const lastSession = derived.length - 1
   return (
     <Box key={branch.key} flexDirection="column">
-      <Text bold>{branch.label}</Text>
+      {sessionLink(ui, branch.href, branch.label, true) ?? <Text bold>{branch.label}</Text>}
       {branch.sessions.filter(session => session.isRoot).map(session => renderRootRows(ui, session))}
       {derived.map((session, index) => renderBranchSession(ui, session, index === lastSession))}
     </Box>
   )
+}
+
+// A label linked to a Desktop session, "[label](#<id>)", bold for a group's label, after its lead ("├ " or "└ "), where
+// the surface draws Markdown and the id is known; else undefined, and the caller draws the plain label.
+function sessionLink(ui: Ui, href: string | undefined, label: string, bold: boolean, lead = ''): RenderElement | undefined {
+  if (href === undefined || !('Markdown' in ui)) return undefined
+  const { Markdown } = ui
+  const anchor = `[${escapeMarkdown(label)}](#${href})`
+  return <Markdown text={`${lead}${bold ? `**${anchor}**` : anchor}`} />
 }
 
 // The rows of a family's root session: no session row, each row one step under the group's label.
@@ -228,7 +239,9 @@ function renderBranchSession(ui: Ui, session: TreeSession, isFinal: boolean): Re
   return (
     <Box key={session.key} flexDirection="column">
       <Box paddingLeft={1}>
-        <Text>{`${isFinal ? '└' : '├'} ${session.label}`}</Text>
+        {sessionLink(ui, session.href, session.label, false, `${isFinal ? '└' : '├'} `) ?? (
+          <Text>{`${isFinal ? '└' : '├'} ${session.label}`}</Text>
+        )}
       </Box>
       {session.rows.map(row => row(placeUnder(isFinal)))}
     </Box>
@@ -242,7 +255,7 @@ function renderHistory(tree: TreeContext, history: readonly HistoryGroup[]): Ren
   return (
     <Box key="history" flexDirection="column" gap={1}>
       <Box flexDirection="row" gap={1}>
-        {renderLogo(tree.ui, tree.view.surface)}
+        {renderHistoryIcon(tree.ui, tree.view.surface)}
         <Text bold>{t(tree.lang, 'history.heading')}</Text>
       </Box>
       <Box flexDirection="column" gap={1}>
@@ -250,10 +263,12 @@ function renderHistory(tree: TreeContext, history: readonly HistoryGroup[]): Ren
           renderBranch(tree.ui, {
             key: `history-group-${group.key}`,
             label: group.label,
+            href: group.href,
             sessions: group.sessions.map(session => ({
               key: `history-session-${session.key}`,
               label: session.label,
               isRoot: session.isRoot,
+              href: session.href,
               rows: session.entries.map(entry => (place: RowPlace) => renderHistoryEntry(tree.ui, entry, place)),
             })),
           }),
@@ -488,7 +503,7 @@ function renderDetailsBlock(ui: Ui, lang: Lang, card: CardContext, sections: Sec
 }
 
 // A divider rule: a 1px SVG rule on the desktop, a row of '─' on the terminal. It separates the options from the nav row,
-// and the history from its Clear link.
+// and the history from its Clear all button.
 function renderDivider(ui: Ui, surface: RenderSurface, key: string): RenderElement {
   if (surface === 'desktop' && 'Svg' in ui) {
     const { Svg } = ui

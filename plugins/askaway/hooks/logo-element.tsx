@@ -3,7 +3,7 @@
 import type { Elements, RenderElement, RenderSurface } from 'claude-code'
 
 import { KEEPGLIDE_ALT, keepglideSvg } from './keepglide'
-import { LOGO_GLYPH, askawaySvg } from './logo'
+import { HISTORY_GLYPH, LOGO_GLYPH, askawaySvg, historySvg } from './logo'
 
 type Ui = Elements[RenderSurface]
 
@@ -21,6 +21,20 @@ export function renderLogo(ui: Ui, surface: RenderSurface): RenderElement {
   return (
     <Text key="logo" bold>
       {LOGO_GLYPH}
+    </Text>
+  )
+}
+
+// The History icon beside the History heading, drawn as the logo is: the SVG on the desktop, the glyph elsewhere.
+export function renderHistoryIcon(ui: Ui, surface: RenderSurface): RenderElement {
+  if (surface === 'desktop' && 'Svg' in ui) {
+    const { Svg } = ui
+    return <Svg key="history-icon" source={historySvg({ size: LOGO_SIZE })} alt="History" width={LOGO_SIZE} height={LOGO_SIZE} />
+  }
+  const { Text } = ui
+  return (
+    <Text key="history-icon" bold>
+      {HISTORY_GLYPH}
     </Text>
   )
 }

@@ -34,12 +34,14 @@ export type Leaving = Readonly<Partial<Record<string, number>>>
 // One answer's row of the History tree: its question's title and the line that says how the answer stands. The pane draws
 // the ○ of a waiting question row before every row; the line carries the state.
 // `session` is the Desktop session of the question (desktop_session), where the question is still known and has one.
-export type HistoryEntry = { id: string; title: string; session?: string; line: string; clearable: boolean }
+export type HistoryEntry = { id: string; title: string; session?: string; line: string }
 // The answers of one session of a family, newest first.
-// `isRoot`: the session is the root of its family (its `desktop_session` is the group's `family`).
-export type HistorySession = { key: string; label: string; isRoot: boolean; entries: HistoryEntry[] }
+// `isRoot`: the session is the root of its family (its `desktop_session` is the group's `family`). `href`: the Desktop
+// session of the rows' question (desktop_session), the link its row carries where it is known.
+export type HistorySession = { key: string; label: string; isRoot: boolean; href?: string; entries: HistoryEntry[] }
 // A family (or the fallback group of answers whose question is gone) with its sessions, in the order of its newest answer.
-export type HistoryGroup = { key: string; label: string; sessions: HistorySession[] }
+// `href`: the family root's Desktop session (family), the link the group's label carries where the group is a family.
+export type HistoryGroup = { key: string; label: string; href?: string; sessions: HistorySession[] }
 export type StatusContext = {
   cleared: readonly string[]
   shownAt: Readonly<Partial<Record<string, number>>>
@@ -340,9 +342,15 @@ export const escapeMarkdown = (text: string): string =>
   text.replace(/[\t\n\r]+/g, ' ').replace(MARKDOWN_PUNCTUATION, '\\$&')
 
 // Whether the question's session is the root of its family: its Desktop session (`desktop_session`, local_<uuid>) is the
-// family root (`family`, the same kind of id). The CLI session id (`session`) is never compared: it is a plain uuid.
-export function isRootSession(question: Pick<Question, 'desktop_session' | 'family'> | undefined, groupKey: string): boolean {
-  return question?.desktop_session !== undefined && question.family !== undefined && question.desktop_session === groupKey
+// family root (`family`, the same kind of id). The CLI session id (`session`) is never compared: it is a plain uuid. A
+// record filed before `desktop_session` existed counts as the root when its session title is its family title.
+export function isRootSession(
+  question: Pick<Question, 'desktop_session' | 'family' | 'session_title' | 'family_title'> | undefined,
+  groupKey: string,
+): boolean {
+  if (question?.family === undefined) return false
+  if (question.desktop_session !== undefined) return question.desktop_session === groupKey
+  return question.session_title !== undefined && question.session_title === question.family_title
 }
 
 export function groupKeyOf(question: Pick<Question, 'project' | 'family'>): string {
@@ -434,17 +442,14 @@ function deliveredNoteOf(lang: Lang, delivery: Delivery | undefined, now: number
   return `${t(lang, 'history.delivered', { time: timeOf(delivery.ts, now) })} ${readBy}`
 }
 
-type LineState = { note: string | undefined; clearable: boolean }
-
-// The note and whether Clear removes the line, by where the answer stands (SPEC.md, Status): pending until its delivery
-// marker appears (no note: the row says nothing until the session answers back), then delivered, or ended or expired.
-// Only a pending line stays through a Clear.
-function lineStateOf(lang: Lang, answer: Answer, delivery: Delivery | undefined, now: number): LineState {
+// The note of a line, by where the answer stands (SPEC.md, Status): none while pending (the row says nothing until its
+// delivery marker appears), then delivered, or ended or expired.
+function noteOf(lang: Lang, answer: Answer, delivery: Delivery | undefined, now: number): string | undefined {
   const status = answerStatusOf(answer, delivery, now)
-  if (status === 'answered') return { note: undefined, clearable: false }
-  if (status === 'delivered') return { note: deliveredNoteOf(lang, delivery, now), clearable: true }
+  if (status === 'answered') return undefined
+  if (status === 'delivered') return deliveredNoteOf(lang, delivery, now)
   const isEnded = delivery?.reason === 'session-ended'
-  return { note: t(lang, isEnded ? 'history.sessionEnded' : 'history.expired'), clearable: true }
+  return t(lang, isEnded ? 'history.sessionEnded' : 'history.expired')
 }
 
 // One answer's row: its question's title (its id when the question is gone), its Desktop session when known, and its
@@ -457,35 +462,40 @@ function historyEntryOf(
   delivery: Delivery | undefined,
   now: number,
 ): HistoryEntry {
-  const state = lineStateOf(lang, answer, delivery, now)
   const parts = [
     answerLabelOf(lang, answer, question),
     answeredByOf(lang, answer),
     t(lang, 'history.sent', { time: timeOf(answer.ts, now) }),
-    state.note,
+    noteOf(lang, answer, delivery, now),
   ]
   return {
     id: answer.id,
     title: question === undefined ? answer.id : questionLabel(question),
     session: question?.desktop_session,
     line: parts.filter((part): part is string => part !== undefined).join(' · '),
-    clearable: state.clearable,
   }
 }
 
-type HistoryBuild = { key: string; label: string; sessions: Map<string, HistorySession> }
+type HistoryBuild = { key: string; label: string; href?: string; sessions: Map<string, HistorySession> }
 
 // Places one row under its family and session. The family is the question's group key; an answer whose question is gone
 // goes to the fallback group ("the session"), and a question with no session title is named the same way.
 function placeEntry(groups: Map<string, HistoryBuild>, lang: Lang, question: Question | undefined, entry: HistoryEntry): void {
   const groupKey = question === undefined ? '' : groupKeyOf(question)
-  const group = groups.get(groupKey) ?? { key: groupKey, label: groupLabelOf(question, lang), sessions: new Map() }
+  const group = groups.get(groupKey) ?? {
+    key: groupKey,
+    label: groupLabelOf(question, lang),
+    // Only a well-formed Desktop id (local_<uuid>) becomes a link: `family` is stored as written.
+    href: desktopSessionOf(question?.family),
+    sessions: new Map(),
+  }
   groups.set(groupKey, group)
   const sessionKey = question?.session ?? ''
   const session = group.sessions.get(sessionKey) ?? {
     key: sessionKey,
     label: sessionLabelOf({ session_title: question?.session_title }, lang),
     isRoot: isRootSession(question, groupKey),
+    href: question?.desktop_session,
     entries: [],
   }
   group.sessions.set(sessionKey, session)
@@ -493,8 +503,8 @@ function placeEntry(groups: Map<string, HistoryBuild>, lang: Lang, question: Que
 }
 
 // The History tree, newest answer first: family, then session, then the answer's row. An answer is left out while its card
-// is still fading, when it is a delivered line past DELIVERED_SHOWN_MS on the pane, or when it is a cleared line that can
-// be cleared (`cleared`: the ids a Clear recorded).
+// is still fading, when it is a delivered line past DELIVERED_SHOWN_MS on the pane, or when it is a cleared line
+// (`cleared`: the ids a Clear all recorded).
 export function historyOf(lang: Lang, board: Board, context: StatusContext): HistoryGroup[] {
   const questions = new Map(board.questions.map(question => [question.id, question] as const))
   const deliveries = new Map(board.delivered.map(delivery => [delivery.id, delivery] as const))
@@ -507,16 +517,16 @@ export function historyOf(lang: Lang, board: Board, context: StatusContext): His
     const entry = historyEntryOf(lang, answer, question, delivery, context.now)
     const isPastShowTime =
       delivery?.expired === false && context.now - (context.shownAt[answer.id] ?? context.now) > DELIVERED_SHOWN_MS
-    if (isPastShowTime || (entry.clearable && hidden.has(answer.id))) continue
+    if (isPastShowTime || hidden.has(answer.id)) continue
     placeEntry(groups, lang, question, entry)
   }
-  return [...groups.values()].map(group => ({ key: group.key, label: group.label, sessions: [...group.sessions.values()] }))
+  return [...groups.values()].map(group => ({ key: group.key, label: group.label, href: group.href, sessions: [...group.sessions.values()] }))
 }
 
-// The ids a Clear removes: every row drawn that can be cleared (delivered, ended or expired). Pending rows stay.
+// The ids a Clear all removes: every row drawn, pending ones included (the a/ file stays, so the session still reads it).
 export const clearableIdsOf = (history: readonly HistoryGroup[]): string[] =>
   history.flatMap(group =>
-    group.sessions.flatMap(session => session.entries.filter(entry => entry.clearable).map(entry => entry.id)),
+    group.sessions.flatMap(session => session.entries.map(entry => entry.id)),
   )
 
 // The header counter: the open questions and the distinct groups (session families, or projects for old questions).
