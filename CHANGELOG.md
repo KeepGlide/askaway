@@ -2,8 +2,18 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.16, set by the beta.16 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.17, set by the beta.17 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.17] - 2026-10-18
+
+### Fixed
+
+- A click on Submit all right after typing an Other text, with no Enter and no focus move, records that text as the Other pick and answers when every question of the group then has a pick: the press runs even while the button is drawn off, the submit action records the pending text first and `submitGroup` checks the picks again, writing nothing while a question still has none (`renderSubmitAll` in `hooks/pane.tsx`).
+
+### Changed
+
+- The lead line under the question ("On A since 14:32…") is drawn dim (`dimColor`), not bold (`renderQuestion` in `hooks/pane.tsx`).
 
 ## [0.4.0-beta.16] - 2026-10-18
 

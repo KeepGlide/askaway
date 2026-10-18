@@ -21,7 +21,7 @@ A question card appears in the Askaway panel for each decision an agent filed wh
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Early access (0.4.0-beta.16):** the mod API moves between Claude Code releases, so expect changes until a stable release. The changes of this version are listed in [CHANGELOG.md](CHANGELOG.md).
+> ⚠️ **Early access (0.4.0-beta.17):** the mod API moves between Claude Code releases, so expect changes until a stable release. The changes of this version are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## 💡 What it is
 
