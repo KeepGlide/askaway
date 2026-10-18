@@ -339,7 +339,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
     of the last session are indented with `paddingLeft={4}` (`renderSession`, `renderTreeQuestion`, `hooks/pane.tsx`).
   - The card shows the questions of one group at a time (the group on screen); the other groups stay in the tree only,
     and the picks of every group are kept.
-  - **Pressing a question row**: each question row is a link. Where the surface draws Markdown it is a Markdown block, `<mark> <title>` with the link mark `▪` (`LINK_MARK`, `hooks/look.ts`) before the link `[<title>](file:///askaway/jump/<question id>)`, the title in `**…**` while the card on screen is that question; `pressableLinks` names only that href, and `onLinkPress` runs the jump. The Desktop draws the link dotted and underlined, as its own links. Where Markdown is not drawn it is the underlined plain Button it was (key `tree-jump-<question id>`, `treeLink`, `renderTreeQuestion`,
+  - **Pressing a question row**: each question row is a link. Where the surface draws Markdown it is a Markdown block, `<mark> [<title>](file:///askaway/jump/<question id>)`, the one mark being the row's state (● on screen, ○ waiting) and never the link mark `▪` (`LINK_MARK`, `hooks/look.ts`) beside it, the title in `**…**` while the card on screen is that question; `pressableLinks` names only that href, and `onLinkPress` runs the jump. The Desktop draws the link dotted and underlined, as its own links. Where Markdown is not drawn it is the underlined plain Button it was (key `tree-jump-<question id>`, `treeLink`, `renderTreeQuestion`,
     `hooks/pane.tsx`). Its press puts that question on the card, the same move as walking there with Next or Back
     (`jumpToQuestion`, `hooks/register.tsx`; `jumpTo`, `hooks/wizard.ts`): the question's group becomes the group on screen
     and its step is the question's place in that group. The card
@@ -444,7 +444,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
   A question's title is plain text: an answered question is no longer open, so no card can be jumped to.
   A delivered line leaves DELIVERED_SHOWN_MS (30 s) after the pane first saw it (`deliveredAt`). A pending line never leaves; an
   ended or expired line stays until it is cleared.
-- **Clear history** (the last row of the pane, after a divider, right-aligned; `renderHistoryClear`): "▪ Clear history (N)",
+- **Clear history** (the last row of the pane, after a divider, right-aligned; `renderHistoryClear`): a secondary Button, as the card's Back is, labelled "Clear history (N)",
   where N counts the rows it would remove (the delivered, ended and expired rows drawn now); hidden when N is 0. Its press
   (`clearHistory`, `hooks/register.tsx`) records those answers' ids in `$.store` key `cleared` (non-destructive: no q/, a/ or d/
   file changes). A pending row stays. It replaces the per-line ✕ of earlier versions.

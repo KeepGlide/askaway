@@ -253,20 +253,17 @@ function renderHistoryEntry(ui: Ui, entry: HistoryEntry, isFinal: boolean): Rend
   )
 }
 
-// The Clear link: the last row of the pane, right-aligned, under a divider. Its press clears every row that can go.
+// The Clear button: the last row of the pane, right-aligned, under a divider, drawn as the card's Back button is (a
+// secondary Button). Its press clears every row that can go.
 function renderHistoryClear(tree: TreeContext, count: number): RenderElement {
   const { ui, held, lang, actions } = tree
-  const { Box } = ui
+  const { Box, Button } = ui
+  const label = `${t(lang, 'history.clear')} (${count})`
   return (
     <Box key="history-clear-row" flexDirection="row" justifyContent="flex-end">
-      {treeLink(ui, held, {
-        key: 'history-clear',
-        lead: '',
-        label: `${t(lang, 'history.clear')} (${count})`,
-        href: CLEAR_HREF,
-        bold: false,
-        onPress: () => actions.clearHistory(),
-      })}
+      {held.hold('history-clear', [label], () => actions.clearHistory(), press => (
+        <Button key="history-clear" label={label} variant="secondary" onPress={press} />
+      ))}
     </Box>
   )
 }
@@ -276,18 +273,18 @@ function renderHistoryClear(tree: TreeContext, count: number): RenderElement {
 // (treeLink): its press jumps to the question's card (actions.jump), as walking there with Next or Back would. Its text
 // is bold while the card on screen is that question.
 // One question row of the tree: its link, then, once the question has a pick not yet submitted, " ✓ - " and its own
-// Submit link. The mark before the text is only the one on screen (●) or waiting (○): a state, not a link mark.
+// Submit link. The one mark before the text is the state: on screen (●) or waiting (○); no link mark joins it.
 export function renderTreeQuestion(tree: TreeContext, question: Question, isFinal: boolean): RenderElement {
   const { ui, view, actions, held } = tree
   const { Box, Text } = ui
   const isOnScreen = view.screen?.question.id === question.id
   const isPicked = view.wizard.picks[question.id] !== undefined
-  const mark = isOnScreen ? '●' : '○'
   return (
     <Box key={`tree-${question.id}`} paddingLeft={isFinal ? 4 : 1} flexDirection="row">
       {treeLink(ui, held, {
         key: `tree-jump-${question.id}`,
-        lead: `${isFinal ? '' : '│  '}${mark} `,
+        lead: isFinal ? '' : '│  ',
+        mark: isOnScreen ? '●' : '○',
         label: questionLabel(question),
         href: linkHref('jump', question.id),
         bold: isOnScreen,
@@ -312,15 +309,17 @@ function renderTreeSubmit(tree: TreeContext, question: Question): RenderElement 
   })
 }
 
-// A tree link, in two forms. Where the surface draws Markdown: the lead, the link mark and the link, which a press
-// answers through onLinkPress; pressableLinks names only this href, so no other link is answered. Else the underlined
-// plain Button these rows were before. Both keep their press handle across redraws (held).
-type TreeLink = { key: string; lead: string; label: string; href: string; bold: boolean; onPress: () => void }
+// A tree link, in two forms. Where the surface draws Markdown: the lead, one mark and the link, which a press answers
+// through onLinkPress; pressableLinks names only this href, so no other link is answered. The mark is the row's state
+// mark (`mark`: ● on screen, ○ waiting) where the row has one, else the dim link mark; a row never carries both. Else
+// the underlined plain Button these rows were before, with the state mark and no link mark. Both keep their press handle
+// across redraws (held).
+type TreeLink = { key: string; lead: string; mark?: string; label: string; href: string; bold: boolean; onPress: () => void }
 
 function treeLink(ui: Ui, held: HeldButtons, link: TreeLink): RenderElement {
   const { Button, Text } = ui
   if (!('Markdown' in ui)) {
-    const text = `${link.lead}${link.label}`
+    const text = `${link.lead}${link.mark === undefined ? '' : `${link.mark} `}${link.label}`
     return held.hold(link.key, [text, link.bold], link.onPress, press => (
       <Button key={link.key} label={text} plain onPress={press}>
         <Text underline bold={link.bold}>{text}</Text>
@@ -329,14 +328,11 @@ function treeLink(ui: Ui, held: HeldButtons, link: TreeLink): RenderElement {
   }
   const { Markdown } = ui
   const anchor = `[${escapeMarkdown(link.label)}](${link.href})`
-  const text = `${link.lead}${LINK_MARK} ${link.bold ? `**${anchor}**` : anchor}`
+  const text = `${link.lead}${link.mark ?? LINK_MARK} ${link.bold ? `**${anchor}**` : anchor}`
   return held.hold(link.key, [text], link.onPress, press => (
     <Markdown key={link.key} text={text} pressableLinks={[link.href]} onLinkPress={press} />
   ))
 }
-
-// The address of the Clear link.
-const CLEAR_HREF = 'file:///askaway/clear'
 
 // The address of a tree link. A link the plugin answers never opens; the scheme only has to be one a surface draws.
 const linkHref = (action: 'jump' | 'submit', id: string): string =>

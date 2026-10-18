@@ -813,13 +813,13 @@ test('the card is the oldest open question; the other open ones are tree rows; a
     expect(texts).toContain('Title q-l1-aaaaaa')
     expect(texts).toContain('Which way for q-l1-aaaaaa?')
     // q-l2 is open but not on screen: it is an unpicked row of the tree, and its card is not drawn.
-    expect(texts).toContain('○ ▪ Title q-l2-bbbbbb')
+    expect(texts).toContain('○ Title q-l2-bbbbbb')
     expect(texts).not.toContain('Which way for q-l2-bbbbbb?')
     // The answered (q-l3) and delivered (q-l4) questions draw no card and no tree row: they show as History rows only.
     expect(texts).not.toContain('Which way for q-l3-cccccc?')
     expect(texts).not.toContain('Which way for q-l4-dddddd?')
-    expect(texts).not.toContain('○ ▪ Title q-l3-cccccc')
-    expect(texts).not.toContain('○ ▪ Title q-l4-dddddd')
+    expect(texts).not.toContain('○ Title q-l3-cccccc')
+    expect(texts).not.toContain('○ Title q-l4-dddddd')
     const historyRow = nodesOf(await ui.drawn()).find(node => keyOfNode(node) === 'history-q-l3-cccccc')
     expect(nodesOf(historyRow).some(node => node.type === 'Text' && textOfNode(node) === '⏳')).toBe(true)
     // The broken file draws nothing.
@@ -1652,7 +1652,7 @@ test('an answer unread past the 7-day TTL expires with no marker, and its line c
   await $.session.start(SESSION)
   const ui = await mountPane($)
   expect(await textNodeWith(ui, 'expirou sem ser lida')).toBeDefined()
-  expect(await ui.find({ type: 'Markdown', key: 'history-clear' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'history-clear' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -1820,7 +1820,7 @@ test('an expired answer whose session ended stays until the person clears it, an
   await clock.advance(60_000)
   const ui = await mountPane($)
   expect(await textNodeWith(ui, warning)).toBeDefined()
-  await ui.press({ key: 'history-clear', link: { href: 'file:///askaway/clear' } })
+  await ui.press({ key: 'history-clear' })
   expect(await textNodeWith(ui, warning)).toBeUndefined()
   expect(writes).toEqual([])
   await ui.unmount()
@@ -2464,7 +2464,7 @@ test('a question with no title is named in the tree and on the card by its text,
   const ui = await mountPane($)
   // 25 characters: the first 23 and an ellipsis, 24 in all. The tree row carries the mark in front of it.
   expect(await textsOf(ui)).toContain('Cache it on the disk no…')
-  expect(await textsOf(ui)).toContain('● ▪ Cache it on the disk no…')
+  expect(await textsOf(ui)).toContain('● Cache it on the disk no…')
   await ui.press({ key: 'nav-next' })
   // 24 characters and a blank title: the text is whole.
   expect(await textsOf(ui)).toContain('Cache it on the disk now')
@@ -2922,9 +2922,9 @@ test('the tree draws the group row in bold, each session with ├ or └, and on
   expect(texts).toContain('├ Monta a Consulta')
   expect(texts).toContain('└ a sessão')
   // The question on screen is ● and bold; the others are ○.
-  expect((await ui.find({ type: 'Markdown', key: 'tree-jump-q-l1-aaaaaa' }))?.props.text).toBe('│  ● ▪ **[Title q-l1-aaaaaa](file:///askaway/jump/q-l1-aaaaaa)**')
-  expect(texts).toContain('│  ○ ▪ Title q-l2-bbbbbb')
-  expect(texts).toContain('○ ▪ Title q-l3-cccccc')
+  expect((await ui.find({ type: 'Markdown', key: 'tree-jump-q-l1-aaaaaa' }))?.props.text).toBe('│  ● **[Title q-l1-aaaaaa](file:///askaway/jump/q-l1-aaaaaa)**')
+  expect(texts).toContain('│  ○ Title q-l2-bbbbbb')
+  expect(texts).toContain('○ Title q-l3-cccccc')
   await ui.unmount()
 })
 
@@ -2934,12 +2934,12 @@ test('after a pick the ● moves to the next question, and the picked row shows 
   const ui = await mountPane($)
   await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
   const texts = await textsOf(ui)
-  expect(texts).toContain('│  ○ ▪ Title q-l1-aaaaaa')
+  expect(texts).toContain('│  ○ Title q-l1-aaaaaa')
   expect(texts).toContain(' ✓ - ')
-  expect(texts.indexOf(' ✓ - ')).toBeGreaterThan(texts.indexOf('│  ○ ▪ Title q-l1-aaaaaa'))
-  expect(texts).toContain('│  ● ▪ Title q-l2-bbbbbb')
-  expect(texts).not.toContain('│  ○ ▪ Title q-l2-bbbbbb')
-  expect((await ui.find({ type: 'Markdown', key: 'tree-jump-q-l2-bbbbbb' }))?.props.text).toBe('│  ● ▪ **[Title q-l2-bbbbbb](file:///askaway/jump/q-l2-bbbbbb)**')
+  expect(texts.indexOf(' ✓ - ')).toBeGreaterThan(texts.indexOf('│  ○ Title q-l1-aaaaaa'))
+  expect(texts).toContain('│  ● Title q-l2-bbbbbb')
+  expect(texts).not.toContain('│  ○ Title q-l2-bbbbbb')
+  expect((await ui.find({ type: 'Markdown', key: 'tree-jump-q-l2-bbbbbb' }))?.props.text).toBe('│  ● **[Title q-l2-bbbbbb](file:///askaway/jump/q-l2-bbbbbb)**')
   // Only the picked row has its own Submit.
   // The question row and its Submit are links the plugin answers, and only their own hrefs.
   expect(await ui.find({ type: 'Markdown', key: 'tree-jump-q-l1-aaaaaa' })).toMatchObject({ props: { pressableLinks: ['file:///askaway/jump/q-l1-aaaaaa'] } })
@@ -2994,7 +2994,7 @@ test('a question row of the tree is a link: its press puts that question on the 
   const texts = await textsOf(ui)
   expect(texts).toContain('Which way for q-l3-cccccc?')
   expect(texts).not.toContain('Which way for q-l1-aaaaaa?')
-  expect((await ui.find({ type: 'Markdown', key: 'tree-jump-q-l3-cccccc' }))?.props.text).toBe('● ▪ **[Title q-l3-cccccc](file:///askaway/jump/q-l3-cccccc)**')
+  expect((await ui.find({ type: 'Markdown', key: 'tree-jump-q-l3-cccccc' }))?.props.text).toBe('● **[Title q-l3-cccccc](file:///askaway/jump/q-l3-cccccc)**')
   expect(await ui.find({ type: 'Button', key: 'details-q-l3-cccccc' })).toBeUndefined()
   await ui.unmount()
 })
@@ -3028,12 +3028,12 @@ function fakeRow(options: {
   return renderTreeQuestion(tree as never, question, options.isFinal) as unknown as FakeElement
 }
 
-test('on a surface that draws Markdown, a tree row is a Markdown link: its lead, the link mark and the file: link, and its press runs the jump', () => {
+test('on a surface that draws Markdown, a tree row is a Markdown link: its lead, its state mark and the file: link, and its press runs the jump', () => {
   const jumped: string[] = []
   const [link] = childrenOf(fakeRow({ markdown: true, isFinal: false, onJump: id => jumped.push(id) }))
   expect(link?.tag).toBe('Markdown')
   expect(link?.props.key).toBe('tree-jump-q-l1-aaaaaa')
-  expect(link?.props.text).toBe(`│  ○ ${LINK_MARK} [Title q-l1-aaaaaa](file:///askaway/jump/q-l1-aaaaaa)`)
+  expect(link?.props.text).toBe(`│  ○ [Title q-l1-aaaaaa](file:///askaway/jump/q-l1-aaaaaa)`)
   expect(link?.props.pressableLinks).toEqual(['file:///askaway/jump/q-l1-aaaaaa'])
   const press = link?.props.onLinkPress as () => void
   press()
@@ -3043,7 +3043,7 @@ test('on a surface that draws Markdown, a tree row is a Markdown link: its lead,
 test('a title that writes markdown is escaped in its link, so it draws no link or autolink of its own', () => {
   const question = parsedQuestion('q-l1-aaaaaa', 1000, { title: 'See [docs](https://evil.example)' })
   const [link] = childrenOf(fakeRow({ markdown: true, isFinal: true, question }))
-  expect(link?.props.text).toBe(`○ ${LINK_MARK} [See \\[docs\\]\\(https\\://evil\\.example\\)](file:///askaway/jump/q-l1-aaaaaa)`)
+  expect(link?.props.text).toBe(`○ [See \\[docs\\]\\(https\\://evil\\.example\\)](file:///askaway/jump/q-l1-aaaaaa)`)
   expect(escapeMarkdown('a\tb\nc *d*')).toBe('a b c \\*d\\*')
 })
 
@@ -3165,9 +3165,9 @@ test('every open group is drawn in turn, one under the other, with its label as 
   expect(nodes.filter(node => node.type === 'Button' && String(keyOfNode(node) ?? '').startsWith('group-'))).toHaveLength(0)
   const texts = await textsOf(ui)
   // The app group's last question comes before the web label, and the web group's question comes after it.
-  expect(texts.indexOf('○ ▪ Title q-l3-cccccc')).toBeLessThan(texts.indexOf('Web'))
+  expect(texts.indexOf('○ Title q-l3-cccccc')).toBeLessThan(texts.indexOf('Web'))
   expect(texts.indexOf('App')).toBeLessThan(texts.indexOf('Web'))
-  expect(texts).toContain('○ ▪ Title q-l4-dddddd')
+  expect(texts).toContain('○ Title q-l4-dddddd')
   await ui.unmount()
 })
 
@@ -3826,10 +3826,10 @@ test('History: Clear counts the rows it removes, keeps a pending row, and is gon
   await $.session.start(SESSION)
   const ui = await mountPane($)
   // The Clear link counts the one expired row; no per-line dismiss button is drawn any more.
-  expect(String((await ui.find({ type: 'Markdown', key: 'history-clear' }))?.props.text)).toContain('(1')
+  expect(String((await ui.find({ type: 'Button', key: 'history-clear' }))?.props.label)).toContain('(1')
   expect(await ui.find({ type: 'Button', key: 'dismiss-q-l1-aaaaaa' })).toBeUndefined()
-  await ui.press({ key: 'history-clear', link: { href: 'file:///askaway/clear' } })
-  expect(await ui.find({ type: 'Markdown', key: 'history-clear' })).toBeUndefined()
+  await ui.press({ key: 'history-clear' })
+  expect(await ui.find({ type: 'Button', key: 'history-clear' })).toBeUndefined()
   const drawn = JSON.stringify(await ui.drawn())
   expect(drawn).not.toMatch(/expirou sem ser lida/)
   expect(drawn).toMatch(/Resposta A · /)
@@ -3846,7 +3846,7 @@ test('History: Clear drops a cleared id whose answer is gone from the board, and
   stubHost(on, files, true, { cleared: ['q-gone-eeeeee'] })
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  await ui.press({ key: 'history-clear', link: { href: 'file:///askaway/clear' } })
+  await ui.press({ key: 'history-clear' })
   await ui.unmount()
   // The stored list is read again at the next session start. The pruned id is no longer in it, so its answer, back on
   // the board, shows; the id still on the board stays hidden.
