@@ -58,7 +58,7 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   answer is delivered to the asking session, not when it is written. A `pause` value the caller sends
   for `low` or `medium` is type-checked (a non-boolean is refiled) and then ignored.
   id = `q-` + base36(ms) + `-` + 6 hex chars from os.urandom.
-- `a/<id>.json` — the answer: `{"id":"...","key":"B","by":"panel|accept_recommended|accept_all|cli","who":"<name>","ts":<ms>,"session":<session or null>}`.
+- `a/<id>.json` — the answer: `{"id":"...","key":"B","by":"panel|accept_recommended|accept_all|cli|agent","who":"<name>","ts":<ms>,"session":<session or null>}`.
   Full shape: `id`, `key`, `by`, `who`, `ts`, `text` (key `other` only), `session`.
   `by` names the channel that wrote the answer, not the person; `who` names the person. `answer` stamps `who`:
   env `ASKAWAY_WHO` when it holds a name, else the OS user name (`getpass.getuser()`), else `unknown`. The name is
@@ -142,9 +142,11 @@ writes its document instead). Exit codes: 0 for a reply; 1 for a usage error (un
   Session rule: a `cli` answer to a question with a session is refused unless the caller's
   `CLAUDE_CODE_SESSION_ID` equals that session (a shell with no session is refused too); the refusal
   prints `{"error":"answer refused: ..."}`, exit 0, and writes nothing, so the slot stays free. Panel
-  answers (`--by panel|accept_recommended|accept_all`) are not bound to a shell session.
-- `status <id>` — prints `{"id","status","key"|null}`, plus `"who"` when the item is answered and its answer record
-  carries one. `status` is `open`, `answered`, `delivered` or `expired`; `damaged` when the question file does not
+  answers (`--by panel|accept_recommended|accept_all`) are not bound to a shell session. A `cli` answer from the question's own session is stamped `by: "agent"`, the
+  agent's own answer, and its delivery line reads "Answered by the agent itself"; a `cli` answer from another session,
+  or to a question with no session, stays `cli`. `--by agent` is a usage error: the stamp is never typed.
+- `status <id>` — prints `{"id","status","key"|null}`, plus `"who"` and `"by"` when the item is answered and its answer record
+  carries them (`by` is the channel that answered: `panel`, `cli`, `agent`, `accept_all` or `accept_recommended`). `status` is `open`, `answered`, `delivered` or `expired`; `damaged` when the question file does not
   read (key null); `damaged answer` when the answer file does not read (answered, key unknown). An unknown id is a
   usage error (exit 1).
 - `--strict` (opt-in, on `ask`, `answer`, `status` and `wait`) — a refile or an error exits 1 instead of 0; `wait`
@@ -153,7 +155,7 @@ writes its document instead). Exit codes: 0 for a reply; 1 for a usage error (un
   first-writer race (`written:false`) is not an error.
 - `wait <id> [--timeout 300] [--strict]` — polls every 0.5 s until the question leaves `open` or the timeout (seconds,
   finite, zero or more; `0` checks once) passes. It returns the reply `status` gives for the item
-  (`{"id","status","key"?,"text"?,"who"?}`): an answer past the TTL reads `expired`, not `answered`; an answer
+  (`{"id","status","key"?,"text"?,"who"?,"by"?,"line"?}`; `line` is the delivery line of the answer, see "Hook modes"): an answer past the TTL reads `expired`, not `answered`; an answer
   already delivered reads `delivered`. `{"id","status":"timeout"}` when nothing arrives. When it returns an
   `answered` item, it writes the delivery marker `d/<id>.json` that the deliver hook writes, so the pane and `status`
   agree and the hook does not send the answer again. An unknown id is a usage error (exit 1). With `--strict`: exit 0
@@ -439,9 +441,19 @@ joined by "\n". The d/ markers (`via:"prompt"`) are written first, only where ab
 `_delivery_line` is one line: control characters and line breaks in the title, the labels and an
 Other text become spaces, so a title cannot start a second line of the delivery.
 
-- Answer: `The user answered Askaway question <id> (<title>): <key> · <label>.`, plus
-  ` (you were using <rec key> · <rec label>)` when the answer differs from the recommendation.
-- Free text (key `other`): `The user answered Askaway question <id> (<title>): their own answer (Other): "<text>".`
+The line opens with who answered, from the answer record's `by` and `who`, then the chosen option or Other text,
+then the question. The five wordings:
+
+- `by: panel`: `Answered via panel by <who>: <key> · <label>. Askaway question <id> (<title>).`
+- `by: cli` (a shell answer from another session, to a question with no session): `Answered by <who> (cli): <key> · <label>. Askaway question <id> (<title>).`
+- `by: agent` (a shell answer from the question's own session, stamped as the agent's own): `Answered by the agent itself: <key> · <label>. Askaway question <id> (<title>).`
+- `by: accept_all`: `Accepted all: <key> · <label>. Askaway question <id> (<title>).`
+- `by: accept_recommended`: `Accepted the recommended option: <key> · <label>. Askaway question <id> (<title>).`
+
+Then, when the answer differs from the recommendation, ` (you were using <rec key> · <rec label>)`. For key `other`,
+the chosen part is `their own answer (Other): "<text>"` in place of `<key> · <label>`. `<who>` is the record's `who`,
+or `unknown` when it has none. A record with no known `by` reads `Answered by <who>: ...`.
+`wait` returns the same line as `line` when its call writes the delivery marker; another session's `wait` returns no line.
 - Ask-guard and pause-guard reasons: see "Hook modes".
 
 The agent instruction lives in `skills/askaway-question-playbook/SKILL.md`: file a question with every required

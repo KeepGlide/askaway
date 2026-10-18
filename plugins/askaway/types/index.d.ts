@@ -1,7 +1,7 @@
 // The Askaway state folder contract (SPEC.md, "State folder"). The CLI writes questions and delivery
 // markers; this mod reads them and writes answers only. Field names follow the spec.
 
-export type AnswerBy = 'panel' | 'accept_recommended' | 'accept_all' | 'cli'
+export type AnswerBy = 'panel' | 'accept_recommended' | 'accept_all' | 'cli' | 'agent'
 
 // `tradeoff` is the one-line cost of choosing this option; absent or blank means no tradeoff line. `does` (what happens
 // if it is chosen), `pros` and `cons` are the three lines under the option; an entry from before they existed has none.

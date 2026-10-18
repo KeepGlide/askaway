@@ -74,6 +74,14 @@ BASE36: Final = string.digits + string.ascii_lowercase
 RUN_KINDS: Final = frozenset({"main", "subagent", "goal", "loop", "bash", "codex"})
 RISKS: Final = frozenset({"low", "medium", "high"})
 ANSWER_SOURCES: Final = frozenset({"panel", "accept_recommended", "accept_all", "cli"})
+# Who answered, in the words the model reads ({who} is the answerer). "agent" is stamped by the CLI, never typed.
+ANSWER_WORDING: Final = {
+    "agent": "Answered by the agent itself",
+    "accept_all": "Accepted all",
+    "accept_recommended": "Accepted the recommended option",
+    "panel": "Answered via panel by {who}",
+    "cli": "Answered by {who} (cli)",
+}
 WHO_ENV: Final = "ASKAWAY_WHO"
 WHO_MAX: Final = 40
 UNKNOWN_WHO: Final = "unknown"
@@ -705,6 +713,12 @@ def answer_refusal(entry: Mapping[str, Any], by: str) -> str | None:
     return None
 
 
+def answer_stamp(entry: Mapping[str, Any], by: str) -> str:
+    """The channel an answer is stamped with: a shell answer from the question's own session is the agent's own."""
+    asked = entry.get("session")
+    return "agent" if by == "cli" and asked and caller_session() == asked else by
+
+
 def answer_session(entry: Mapping[str, Any], by: str) -> str | None:
     """The session an answer is bound to: the caller's for a shell answer, else the question's own."""
     asked = entry.get("session")
@@ -757,8 +771,9 @@ def cmd_answer(item_id: str, key: str, by: str, text: str | None) -> dict[str, A
     refusal = answer_refusal(entry, by)
     if refusal is not None:
         return {"error": refusal}
-    record = {"id": item_id, "key": key, "by": by, "who": answerer_name(),
-              "session": answer_session(entry, by), "ts": now_ms()}
+    stamp = answer_stamp(entry, by)
+    record = {"id": item_id, "key": key, "by": stamp, "who": answerer_name(),
+              "session": answer_session(entry, stamp), "ts": now_ms()}
     if kept is not None:
         record["text"] = kept
     if create_once(item_path("a", item_id), record):
@@ -785,6 +800,9 @@ def _status_reply(item_id: str, status: str, key: str | None) -> dict[str, Any]:
     who = answer_who(answer)
     if who:
         result["who"] = who
+    by = (answer or {}).get("by")
+    if isinstance(by, str) and by:
+        result["by"] = by
     return result
 
 
@@ -907,17 +925,25 @@ def cmd_prune(days: int) -> dict[str, Any]:
     return {"removed": _remove_damaged(damaged) + _remove_closed(days, entries)}
 
 
-def _mark_delivered(item_id: str) -> None:
+def _mark_delivered(item_id: str) -> bool:
     """Write the delivery marker the deliver hook writes, so the pane, status and the hook agree.
 
     Only the asking session closes its answer (any caller may, for a question with no session): another session's
-    wait returns the answer and leaves the delivery to the asking session."""
+    wait returns the answer and leaves the delivery to the asking session. True when this call wrote the marker."""
     question = read_json(item_path("q", item_id)) or {}
     asked = question.get("session")
     if asked and asked != caller_session():
-        return
+        return False
     with contextlib.suppress(OSError):  # a marker that did not land is retried by the deliver hook
-        create_once(item_path("d", item_id), {"id": item_id, "session": asked or caller_session(), "ts": now_ms()})
+        return create_once(item_path("d", item_id), {"id": item_id, "session": asked or caller_session(), "ts": now_ms()})
+    return False
+
+
+def _answered_line(item_id: str) -> str | None:
+    entry, answer = read_json(item_path("q", item_id)), read_json(item_path("a", item_id))
+    if entry is None or answer is None:
+        return None
+    return _answer_line(entry, answer)
 
 
 def cmd_wait(item_id: str, timeout: float) -> dict[str, Any]:
@@ -932,8 +958,10 @@ def cmd_wait(item_id: str, timeout: float) -> dict[str, Any]:
         time.sleep(min(WAIT_POLL_S, remaining))
         status, key = question_status(item_id)
     reply = _status_reply(item_id, status, key)
-    if status == "answered":
-        _mark_delivered(item_id)
+    if status == "answered" and _mark_delivered(item_id):
+        line = _answered_line(item_id)  # the asking session receives the line with its answer
+        if line is not None:
+            reply["line"] = line
     return reply
 
 
@@ -1523,13 +1551,27 @@ def _one_line(text: str) -> str:
     return " ".join(flat.split())
 
 
-def _delivery_line(entry: Mapping[str, Any], key: object, other: str | None = None) -> str:
-    recommended = entry.get("recommended")
+def _answer_wording(answer: Mapping[str, Any]) -> str:
+    """Who gave the answer, in the words the model reads: the channel and its name, or the agent itself."""
+    who = answer_who(answer) or UNKNOWN_WHO
+    return ANSWER_WORDING.get(str(answer.get("by")), "Answered by {who}").format(who=who)
+
+
+def _delivery_line(entry: Mapping[str, Any], answer: Mapping[str, Any]) -> str:
+    key, recommended = answer.get("key"), entry.get("recommended")
+    other = other_text(answer)
     chosen = f'their own answer (Other): "{other}"' if other else _key_text(entry, key)
-    line = f"The user answered Askaway question {entry['id']} ({entry['title']}): {chosen}."
+    line = f"{_answer_wording(answer)}: {chosen}. Askaway question {entry['id']} ({entry['title']})."
     if key != recommended:
         line += f" (you were using {_key_text(entry, recommended)})"
     return _one_line(line)  # a title or label with a line break must not forge a second line
+
+
+def _answer_line(entry: Mapping[str, Any], answer: Mapping[str, Any]) -> str | None:
+    """The delivery line of an answer that names an option or carries free text, or None for neither."""
+    if answer.get("key") not in option_keys(entry) and not other_text(answer):
+        return None
+    return _delivery_line(entry, answer)
 
 
 def _lapse_reason(entry: Mapping[str, Any], answer: Mapping[str, Any],
@@ -1556,12 +1598,8 @@ def _deliver_one(item_id: str, session: str | None, cwd: object,
             create_once(marker, {"id": item_id, "session": None, "expired": True,
                                  "reason": reason, "ts": now_ms()})
         return None
-    key = answer.get("key")
-    other = other_text(answer)
-    if key not in option_keys(entry) and not other:
-        return None
-    line = _delivery_line(entry, key, other)
-    if not create_once(marker, {"id": item_id, "session": session, "ts": now_ms()}):
+    line = _answer_line(entry, answer)
+    if line is None or not create_once(marker, {"id": item_id, "session": session, "ts": now_ms()}):
         return None
     return line
 

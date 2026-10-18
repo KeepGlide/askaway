@@ -92,7 +92,7 @@ def test_twenty_concurrent_answers_write_exactly_one_answer(state):
     winner = written[0]
     assert {result["key"] for result in results} == {winner["key"]}
     stored = stored_answer(state, item)
-    assert stored["key"] == winner["key"] and stored["by"] == "cli" and stored["who"] == "racer"
+    assert stored["key"] == winner["key"] and stored["by"] == "agent" and stored["who"] == "racer"
     assert stored["session"] == SESSION
     assert [path.name for path in (state / "a").iterdir()] == [f"{item}.json"]
 

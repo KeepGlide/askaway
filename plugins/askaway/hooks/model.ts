@@ -5,7 +5,7 @@ import { plural, t, type Lang, type MessageKey } from './i18n'
 
 // The id shape askaway.py mints (q-<base36 ms>-<6 hex>). Checked before an id becomes part of a path.
 const ID_PATTERN = /^q-[0-9a-z]+-[0-9a-f]{6}$/
-const ANSWER_BY: readonly AnswerBy[] = ['panel', 'accept_recommended', 'accept_all', 'cli']
+const ANSWER_BY: readonly AnswerBy[] = ['panel', 'accept_recommended', 'accept_all', 'cli', 'agent']
 const DELIVERY_REASONS: readonly DeliveryReason[] = ['session-ended', 'ttl']
 // The legacy answer key of the old free-text answer (no longer written by the pane): its text is in the answer's `text`.
 export const OTHER_KEY = 'other'
@@ -198,16 +198,28 @@ const keyText = (question: Question, key: string): string => {
   return label ? `${key} · ${label}` : key
 }
 
-// The line askaway.py's deliver hook writes for an answer (its _delivery_line), so both paths tell the session the same
-// words. Model-facing, so always English: never localized. Undefined when the answer names no option and carries no
-// free text.
+// askaway.py's ANSWER_WORDING: who answered, from the answer's `by`. Model-facing, so always English.
+const ANSWER_WORDING: Readonly<Record<AnswerBy, (who: string) => string>> = {
+  panel: who => `Answered via panel by ${who}`,
+  cli: who => `Answered by ${who} (cli)`,
+  agent: () => 'Answered by the agent itself',
+  accept_all: () => 'Accepted all',
+  accept_recommended: () => 'Accepted the recommended option',
+}
+// askaway.py's _one_line: control characters and line breaks become spaces, so a title or label cannot start a second line.
+const singleLine = (text: string): string => text.replace(/[\p{Cc}\p{Zl}\p{Zp}]/gu, ' ').split(/\s+/).filter(part => part !== '').join(' ')
+
+// The line askaway.py's deliver hook writes for an answer (its _delivery_line), word for word, so both paths tell the
+// session the same thing. Model-facing, so always English: never localized. Undefined when the answer names no option and
+// carries no free text.
 export function deliveryLine(question: Question, answer: Answer): string | undefined {
   const other = otherTextOf(answer)
   const isListed = question.options.some(option => option.key === answer.key)
   if (other === undefined && !isListed) return undefined
   const chosen = other !== undefined ? `their own answer (Other): "${other}"` : keyText(question, answer.key)
-  const line = `The user answered Askaway question ${question.id} (${question.title}): ${chosen}.`
-  return answer.key === question.recommended ? line : `${line} (you were using ${keyText(question, question.recommended)})`
+  const line = `${ANSWER_WORDING[answer.by](answer.who ?? UNKNOWN_WHO)}: ${chosen}. Askaway question ${question.id} (${question.title}).`
+  const full = answer.key === question.recommended ? line : `${line} (you were using ${keyText(question, question.recommended)})`
+  return singleLine(full)
 }
 
 // The answers this session is to be handed now: its own questions, answered at least PROMPT_DELAY_MS ago, with no

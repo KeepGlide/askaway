@@ -249,13 +249,30 @@ test('model: parseQuestion keeps each option tradeoff, and a missing or blank on
 test('model: the delivery line is English, names the recommended option when another was chosen, and quotes Other text', () => {
   const q = parsedQuestion('q-m-000001', 10)
   expect(deliveryLine(q, answerOf('q-m-000001', 'B', 1))).toBe(
-    'The user answered Askaway question q-m-000001 (Title q-m-000001): B · Rewrite. (you were using A · Keep)',
+    'Answered via panel by unknown: B · Rewrite. Askaway question q-m-000001 (Title q-m-000001). (you were using A · Keep)',
   )
-  expect(deliveryLine(q, answerOf('q-m-000001', 'A', 1))).toBe('The user answered Askaway question q-m-000001 (Title q-m-000001): A · Keep.')
+  expect(deliveryLine(q, answerOf('q-m-000001', 'A', 1))).toBe('Answered via panel by unknown: A · Keep. Askaway question q-m-000001 (Title q-m-000001).')
   expect(deliveryLine(q, answerOf('q-m-000001', 'other', 1, '  Use a  queue '))).toBe(
-    'The user answered Askaway question q-m-000001 (Title q-m-000001): their own answer (Other): "Use a queue". (you were using A · Keep)',
+    'Answered via panel by unknown: their own answer (Other): "Use a queue". Askaway question q-m-000001 (Title q-m-000001). (you were using A · Keep)',
   )
   expect(deliveryLine(q, answerOf('q-m-000001', 'Z', 1))).toBeUndefined()
+})
+
+test('model: the delivery line names who answered in the five wordings askaway.py uses, on one line', () => {
+  const q = parsedQuestion('q-m-000001', 10, { title: 'Two\nlines' })
+  const line = (extra: Partial<Answer>) => deliveryLine(q, { ...answerOf('q-m-000001', 'A', 1), ...extra })
+  const tail = 'A · Keep. Askaway question q-m-000001 (Two lines).'
+  expect(line({ by: 'panel', who: 'Ana' })).toBe(`Answered via panel by Ana: ${tail}`)
+  expect(line({ by: 'cli', who: 'Ana' })).toBe(`Answered by Ana (cli): ${tail}`)
+  expect(line({ by: 'cli' })).toBe(`Answered by unknown (cli): ${tail}`)
+  expect(line({ by: 'agent', who: 'Ana' })).toBe(`Answered by the agent itself: ${tail}`)
+  expect(line({ by: 'accept_all' })).toBe(`Accepted all: ${tail}`)
+  expect(line({ by: 'accept_recommended' })).toBe(`Accepted the recommended option: ${tail}`)
+  expect(line({ by: 'agent' })).not.toContain('\n')
+})
+
+test('model: parseAnswer accepts the agent\'s own answer', () => {
+  expect(parseAnswer({ id: 'q-m-000001', key: 'A', by: 'agent', ts: 5, session: 's1' }, 'q-m-000001')?.by).toBe('agent')
 })
 
 test('model: the counter reads in English and Portuguese, singular and plural, with the group count', () => {
@@ -552,7 +569,7 @@ test('model: the due answers group by asking session, and a question with no ses
   expect(groups.map(group => group.session)).toEqual(['s1', 's2'])
   expect(groups[0]?.items.map(item => item.answer.id)).toEqual(['q-m-000001'])
   expect(groups[1]?.items.map(item => item.text)).toEqual([
-    'The user answered Askaway question q-m-000002 (Title q-m-000002): B · Rewrite. (you were using A · Keep)',
+    'Answered via panel by unknown: B · Rewrite. Askaway question q-m-000002 (Title q-m-000002). (you were using A · Keep)',
   ])
   expect(groupBySession({ ...board, delivered: [{ id: 'q-m-000002', expired: false }] }, 100_000).map(group => group.session)).toEqual(['s1'])
 })
@@ -1877,7 +1894,7 @@ test('an idle session is handed its own answer once, as a prompt, and the d/ mar
   await $.session.start(SESSION)
   expect(submits).toEqual([])
   await clock.advance(5000)
-  expect(submits).toEqual(['The user answered Askaway question q-l1-aaaaaa (Title q-l1-aaaaaa): B · Rewrite. (you were using A · Keep)'])
+  expect(submits).toEqual(['Answered via panel by unknown: B · Rewrite. Askaway question q-l1-aaaaaa (Title q-l1-aaaaaa). (you were using A · Keep)'])
   expect(readJson(files, path('d', 'q-l1-aaaaaa'))).toMatchObject({ id: 'q-l1-aaaaaa', session: SELF, via: 'prompt' })
   await clock.advance(5000)
   expect(submits).toHaveLength(1)
@@ -1894,8 +1911,8 @@ test('the answers of one session are handed as one prompt, their lines joined by
   await $.session.start(SESSION)
   await clock.advance(5000)
   expect(submits).toEqual([
-    'The user answered Askaway question q-l1-aaaaaa (Title q-l1-aaaaaa): B · Rewrite. (you were using A · Keep)\n' +
-      'The user answered Askaway question q-l2-bbbbbb (Title q-l2-bbbbbb): A · Keep.',
+    'Answered via panel by unknown: B · Rewrite. Askaway question q-l1-aaaaaa (Title q-l1-aaaaaa). (you were using A · Keep)\n' +
+      'Answered via panel by unknown: A · Keep. Askaway question q-l2-bbbbbb (Title q-l2-bbbbbb).',
   ])
   expect(writes).toEqual([path('d', 'q-l1-aaaaaa'), path('d', 'q-l2-bbbbbb')])
 })
