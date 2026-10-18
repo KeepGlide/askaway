@@ -1,9 +1,9 @@
 import type { UrgencyGrade } from '../types'
 
 // The Askaway palette. The pane takes the theme's own text colours and background, with no fill of its own, except the
-// details block of a card: it takes the fill of its theme family (DETAILS_FILL). The accent is never a text colour: it
-// marks only the status mark (✓, ⏳, ⚠️), a non-text mark that needs 3:1 (WCAG 2.2 1.4.11). The terminal logo glyph
-// (logo-element.tsx) still draws it as text.
+// details block of a card: it takes the fill of its theme family (DETAILS_FILL). The accent is never a text colour; no
+// element draws it today (the history rows that took it are plain since 0.4.0-beta.19). It stays measured for a non-text
+// mark, which needs 3:1 (WCAG 2.2 1.4.11).
 // Measured WCAG 2.x contrast, before (#1E40AF) and after (#3566C8):
 //   on #FFFFFF: 8.72:1 before, 5.40:1 after
 //   on #111827: 2.03:1 before, 3.28:1 after

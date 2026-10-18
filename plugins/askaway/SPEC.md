@@ -433,8 +433,8 @@ status list). `hooks/pane.tsx`, `renderPane`.
 - **Picks** survive a re-poll. Picks, and an open Other field, of questions that are no longer open are dropped.
 - **History** (under the card, above the footer; `historyOf`, `hooks/model.ts`; `renderHistory`, `hooks/pane.tsx`): the answers
   of the last while, as a tree like the open one. Each family is a bold row, its sessions are "├" or "└" rows under it, and each
-  answer is a row with its mark and its question's title, with its answer line under it, dim. Marks: "⏳" sent, not yet
-  delivered; "✓" delivered (read by the session); "⚠️" the session ended before reading it, or expired unread. The line reads
+  answer is a row "○ <title>" (the same ○ a waiting question row of the open tree has, plain, for every history row; the
+  state is only in the line), with its answer line under it, dim. The line reads
   "Answer <key> · sent <time> · delivered <time> (read by the session)" ("Resposta <key> · enviada <time> · entregue <time> (lida
   pela sessão)"); a pending line ends "waiting to be read" ("aguardando leitura"), an ended one "the session ended before reading
   it" ("a sessão encerrou antes de ler"), an expired one "expired unread" ("expirou sem ser lida"). An Other answer names its

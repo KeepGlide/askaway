@@ -8,7 +8,7 @@ import type { Question, QuestionOption } from '../types'
 import { t, type Lang } from './i18n'
 import type { HeldButtons } from './held'
 import { DIVIDER_COLUMNS, DIVIDER_HEIGHT, DIVIDER_PX, dividerSvg } from './divider'
-import { ACCENT_COLOR, DETAILS_FILL, LINK_MARK, URGENCY_COLOR, type ThemeFamily } from './look'
+import { DETAILS_FILL, LINK_MARK, URGENCY_COLOR, type ThemeFamily } from './look'
 import { KEEPGLIDE_HEADER_SIZE, KEEPGLIDE_SUBMIT_SIZE, renderKeepGlide, renderLogo } from './logo-element'
 import {
   urgencyGradeOf,
@@ -237,16 +237,15 @@ function renderHistory(tree: TreeContext, history: readonly HistoryGroup[]): Ren
   )
 }
 
-// One answer's row: its mark in the accent (as the status lines drew it) and its question's title. Its line sits under the
-// title, dim, starting in the title's column.
+// One answer's row: the ○ every history row carries, as a waiting question row does, and its question's title. Its line
+// sits under the title, dim, starting in the title's column.
 function renderHistoryEntry(ui: Ui, entry: HistoryEntry, isFinal: boolean): RenderElement {
   const { Box, Text } = ui
   return (
     <Box key={`history-${entry.id}`} flexDirection="column" paddingLeft={isFinal ? 4 : 1}>
       <Box flexDirection="row">
         {!isFinal && <Text>{'│  '}</Text>}
-        <Text color={ACCENT_COLOR}>{entry.mark}</Text>
-        <Text>{` ${entry.title}`}</Text>
+        <Text>{`○ ${entry.title}`}</Text>
       </Box>
       <Text dimColor>{`${isFinal ? '  ' : '│    '}${entry.line}`}</Text>
     </Box>

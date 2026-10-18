@@ -435,7 +435,7 @@ async function endFade($: EngineInterface, id: string): Promise<void> {
 }
 
 // Clears the History lines that can go as the pane draws them now (delivered, ended or expired): their ids go into the
-// plugin's store, no state file is touched. A pending line (⏳) stays.
+// plugin's store, no state file is touched. A waiting line (no delivery marker yet) stays.
 async function clearHistory($: EngineInterface): Promise<void> {
   const lang = await read($, langAtom)
   const drawn = historyOf(lang, await read($, board), {

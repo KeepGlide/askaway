@@ -518,7 +518,7 @@ test('model: the History tree groups answers by family, then session, newest fir
   expect(tree[0]?.sessions[0]?.entries.map(entry => entry.line)).toEqual(['Answer B · sent 14:35 · waiting to be read'])
   expect(tree[0]?.sessions[1]?.entries.map(entry => entry.title)).toEqual(['Title q-h-000001'])
   expect(tree[1]?.sessions[0]?.entries).toEqual([
-    { id: 'q-h-000009', mark: '⏳', title: 'q-h-000009', line: 'Answer A · sent 13:58 · waiting to be read', clearable: false },
+    { id: 'q-h-000009', title: 'q-h-000009', line: 'Answer A · sent 13:58 · waiting to be read', clearable: false },
   ])
 })
 
@@ -568,7 +568,7 @@ test('model: Clear removes only delivered, ended and expired lines; a pending li
   expect(idsOf({ now: 31_000, shownAt: { 'q-h-000001': 0 } })).toEqual(['q-h-000003', 'q-h-000002'])
 })
 
-test('model: a session that ended keeps its line, marked ⚠️ and clearable, under the family of its project', () => {
+test('model: a session that ended keeps its line, clearable, under the family of its project', () => {
   const ended: Board = {
     questions: [parsedQuestion('q-m-000001', 10)],
     answers: [answerOf('q-m-000001', 'B', 1)],
@@ -576,7 +576,7 @@ test('model: a session that ended keeps its line, marked ⚠️ and clearable, u
   }
   const [group] = historyOf('en', ended, NO_STATUS)
   expect(group?.label).toBe('App')
-  expect(group?.sessions[0]?.entries[0]).toMatchObject({ id: 'q-m-000001', mark: '⚠️', title: 'Title q-m-000001', clearable: true })
+  expect(group?.sessions[0]?.entries[0]).toMatchObject({ id: 'q-m-000001', title: 'Title q-m-000001', clearable: true })
   expect(group?.sessions[0]?.entries[0]?.line).toContain('the session ended before reading it')
   const orphan: Board = { questions: [], answers: [answerOf('q-m-000001', 'B', 1)], delivered: [] }
   expect(historyOf('pt', orphan, NO_STATUS)[0]?.label).toBe('a sessão')
@@ -587,8 +587,8 @@ test('model: an answer unread past the 7-day TTL reads as expired and clearable,
   const board: Board = { questions: [parsedQuestion('q-m-000001', 10)], answers: [answerOf('q-m-000001', 'B', 1000)], delivered: [] }
   const entriesAt = (now: number) =>
     historyOf('en', board, { ...NO_STATUS, now }).flatMap(group => group.sessions.flatMap(session => session.entries))
-  expect(entriesAt(1000 + ANSWER_TTL_MS).map(entry => entry.mark)).toEqual(['⏳'])
-  expect(entriesAt(1000 + ANSWER_TTL_MS + 1)).toMatchObject([{ id: 'q-m-000001', mark: '⚠️', clearable: true }])
+  expect(entriesAt(1000 + ANSWER_TTL_MS).map(entry => entry.clearable)).toEqual([false])
+  expect(entriesAt(1000 + ANSWER_TTL_MS + 1)).toMatchObject([{ id: 'q-m-000001', clearable: true }])
   expect(entriesAt(1000 + ANSWER_TTL_MS + 1)[0]?.line).toContain('expired unread')
 })
 
@@ -818,10 +818,11 @@ test('the card is the oldest open question; the other open ones are tree rows; a
     // The answered (q-l3) and delivered (q-l4) questions draw no card and no tree row: they show as History rows only.
     expect(texts).not.toContain('Which way for q-l3-cccccc?')
     expect(texts).not.toContain('Which way for q-l4-dddddd?')
-    expect(texts).not.toContain('○ Title q-l3-cccccc')
-    expect(texts).not.toContain('○ Title q-l4-dddddd')
+    expect(await ui.find({ type: 'Markdown', key: 'tree-jump-q-l3-cccccc' })).toBeUndefined()
+    expect(await ui.find({ type: 'Markdown', key: 'tree-jump-q-l4-dddddd' })).toBeUndefined()
     const historyRow = nodesOf(await ui.drawn()).find(node => keyOfNode(node) === 'history-q-l3-cccccc')
-    expect(nodesOf(historyRow).some(node => node.type === 'Text' && textOfNode(node) === '⏳')).toBe(true)
+    // The history row carries the same ○ a waiting question row does, and no state mark.
+    expect(nodesOf(historyRow).some(node => node.type === 'Text' && textOfNode(node) === '○ Title q-l3-cccccc')).toBe(true)
     // The broken file draws nothing.
     expect(texts.some(text => text.includes('q-l9'))).toBe(false)
     await ui.unmount()
@@ -1179,7 +1180,7 @@ test('the nav row has a separator after the options and Other…: an SVG rule on
   }
 })
 
-test('a status row has no fill and no border: its mark alone takes the accent, and its text is plain and dim', async ($, on) => {
+test('a status row has no fill and no border: it takes no colour of its own, and its text is plain and dim', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'A')],
@@ -1194,8 +1195,11 @@ test('a status row has no fill and no border: its mark alone takes the accent, a
   const pending = 'Resposta B · enviada'
   expect((await textNodeWith(ui, expired))?.props).toMatchObject({ dimColor: true })
   expect((await textNodeWith(ui, pending))?.props).toMatchObject({ dimColor: true })
-  expect((await ui.find({ type: 'Text', text: '⏳' }))?.props.color).toBe(ACCENT_COLOR)
-  expect((await ui.find({ type: 'Text', text: '⚠️' }))?.props.color).toBe(ACCENT_COLOR)
+  // The history rows draw the plain ○ of the open tree, in no colour of their own.
+  expect(await ui.find({ type: 'Text', text: /^○ / })).toBeDefined()
+  expect((await ui.find({ type: 'Text', text: /^○ / }))?.props.color).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: '⏳' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: '⚠️' })).toBeUndefined()
   // No node of the pane is filled: the status rows and the explanation sections sit on the card's own background. The only box is the details block's round border.
   const filled = nodesOf(await ui.drawn()).filter(node => {
     const props = node.props as Record<string, unknown> | undefined
@@ -2837,8 +2841,8 @@ test('draw order: every status line is drawn after the card\'s Back and Next but
   const propsOf = (node: Record<string, unknown>): Record<string, unknown> => (node.props ?? {}) as Record<string, unknown>
   const textOf = (node: Record<string, unknown>): string =>
     (Array.isArray(node.children) ? node.children : []).filter((child): child is string => typeof child === 'string').join('')
-  const STATUS_MARKS = ['⏳', '✓', '⚠️']
-  const statusAt = drawn.flatMap((node, index) => (node.type === 'Text' && STATUS_MARKS.includes(textOf(node)) ? [index] : []))
+  // A history row is the one Text that starts with the ○ and a title; the open tree's rows are Markdown links.
+  const statusAt = drawn.flatMap((node, index) => (node.type === 'Text' && textOf(node).startsWith('○ Title ') ? [index] : []))
   const navKeys = ['nav-back', 'nav-next', 'submit-all']
   const navAt = drawn.flatMap((node, index) => (node.type === 'Button' && navKeys.includes(String(propsOf(node).key)) ? [index] : []))
   const cardAt = drawn.findIndex(node => node.type === 'Text' && textOf(node) === 'Which way for q-l1-aaaaaa?')
@@ -3856,8 +3860,8 @@ test('History: Clear drops a cleared id whose answer is gone from the board, and
   await $.session.start(SESSION)
   const restarted = await mountPane($)
   const restartedTexts = await textsOf(restarted)
-  expect(restartedTexts).toContain(' Title q-gone-eeeeee')
-  expect(restartedTexts).not.toContain(' Title q-l1-aaaaaa')
+  expect(restartedTexts).toContain('○ Title q-gone-eeeeee')
+  expect(restartedTexts).not.toContain('○ Title q-l1-aaaaaa')
   await restarted.unmount()
 })
 

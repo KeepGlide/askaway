@@ -31,8 +31,9 @@ const RISK_KEYS: ReadonlyMap<string, MessageKey> = new Map<string, MessageKey>([
 export type Section = { heading: string; body: string }
 // The cards answered a moment ago that are still drawn dim before they leave: question id → press time (ms).
 export type Leaving = Readonly<Partial<Record<string, number>>>
-// One answer's row of the History tree: its mark, its question's title, and the line that says how the answer stands.
-export type HistoryEntry = { id: string; mark: string; title: string; line: string; clearable: boolean }
+// One answer's row of the History tree: its question's title and the line that says how the answer stands. The pane draws
+// the ○ of a waiting question row before every row; the line carries the state.
+export type HistoryEntry = { id: string; title: string; line: string; clearable: boolean }
 // The answers of one session of a family, newest first.
 export type HistorySession = { key: string; label: string; entries: HistoryEntry[] }
 // A family (or the fallback group of answers whose question is gone) with its sessions, in the order of its newest answer.
@@ -418,19 +419,19 @@ function deliveredNoteOf(lang: Lang, delivery: Delivery | undefined, now: number
   return `${t(lang, 'history.delivered', { time: timeOf(delivery.ts, now) })} ${readBy}`
 }
 
-type LineState = { mark: string; note: string; clearable: boolean }
+type LineState = { note: string; clearable: boolean }
 
-// The mark, the note and whether Clear removes the line, by where the answer stands (SPEC.md, Status): pending (⏳) until its
-// delivery marker appears, then delivered (✓), or ended or expired (⚠️). Only a pending line stays through a Clear.
+// The note and whether Clear removes the line, by where the answer stands (SPEC.md, Status): pending until its delivery
+// marker appears, then delivered, or ended or expired. Only a pending line stays through a Clear.
 function lineStateOf(lang: Lang, answer: Answer, delivery: Delivery | undefined, now: number): LineState {
   const status = answerStatusOf(answer, delivery, now)
-  if (status === 'answered') return { mark: '⏳', note: t(lang, 'history.waiting'), clearable: false }
-  if (status === 'delivered') return { mark: '✓', note: deliveredNoteOf(lang, delivery, now), clearable: true }
+  if (status === 'answered') return { note: t(lang, 'history.waiting'), clearable: false }
+  if (status === 'delivered') return { note: deliveredNoteOf(lang, delivery, now), clearable: true }
   const isEnded = delivery?.reason === 'session-ended'
-  return { mark: '⚠️', note: t(lang, isEnded ? 'history.sessionEnded' : 'history.expired'), clearable: true }
+  return { note: t(lang, isEnded ? 'history.sessionEnded' : 'history.expired'), clearable: true }
 }
 
-// One answer's row: its question's title (its id when the question is gone), its mark, and its line, for example
+// One answer's row: its question's title (its id when the question is gone) and its line, for example
 // "Answer A · sent 14:32 · delivered 14:33 (read by the session)".
 function historyEntryOf(
   lang: Lang,
@@ -448,7 +449,6 @@ function historyEntryOf(
   ]
   return {
     id: answer.id,
-    mark: state.mark,
     title: question === undefined ? answer.id : questionLabel(question),
     line: parts.filter((part): part is string => part !== undefined).join(' · '),
     clearable: state.clearable,
