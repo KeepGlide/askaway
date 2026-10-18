@@ -2,8 +2,15 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.17, set by the beta.17 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.18, set by the beta.18 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.18] - 2026-10-18
+
+### Changed
+
+- A question row of the tree carries one mark: ● for the question on screen, ○ for the others; the dim link mark `▪` no longer joins it (`renderTreeQuestion`, `treeLink` in `hooks/pane.tsx`). Submit and Other links keep the `▪`.
+- Clear history is a secondary Button, drawn as the card's Back is, instead of a link (`renderHistoryClear` in `hooks/pane.tsx`).
 
 ## [0.4.0-beta.17] - 2026-10-18
 
