@@ -14,6 +14,11 @@ const DELIVERED_SHOWN_MS = 30_000
 // An answer is handed to its own session's prompt only this long after it was given, so a busy session's own hook
 // (askaway.py, its deliver mode) gets it first.
 export const PROMPT_DELAY_MS = 5_000
+// An answer nobody has read for this long expires for every session (SPEC.md, the `ttl` reason), measured from its ts.
+export const ANSWER_TTL_MS = 7 * 24 * 60 * 60 * 1000
+// The footer counts the answers given in the last RECENT_MS, and cuts the last answer's title to FOOTER_TITLE_MAX characters.
+const RECENT_MS = 24 * 60 * 60 * 1000
+const FOOTER_TITLE_MAX = 40
 // The longest free text a delivery line quotes, in characters (askaway.py's OTHER_TEXT_MAX).
 const OTHER_TEXT_MAX = 500
 const RISK_KEYS: ReadonlyMap<string, MessageKey> = new Map<string, MessageKey>([
@@ -91,11 +96,15 @@ export function parseQuestion(raw: unknown, id: string): Question | undefined {
   }
 }
 
+// An answer as askaway.py writes it: `session` is the session the answer is bound to (SPEC.md). Absent (undefined, like
+// `text`) when the file has none, so an answer this mod wrote itself compares equal to the file it wrote.
+
 export function parseAnswer(raw: unknown, id: string): Answer | undefined {
   if (!isRecord(raw) || raw.id !== id || typeof raw.key !== 'string' || typeof raw.ts !== 'number') return undefined
   const by = ANSWER_BY.find(name => name === raw.by)
   if (by === undefined) return undefined
-  return { id, key: raw.key, by, ts: raw.ts, text: raw.key === OTHER_KEY ? optionalText(raw.text) : undefined }
+  const session = typeof raw.session === 'string' ? raw.session : undefined
+  return { id, key: raw.key, by, ts: raw.ts, text: raw.key === OTHER_KEY ? optionalText(raw.text) : undefined, session }
 }
 
 export function parseDelivery(raw: unknown, id: string): Delivery | undefined {
@@ -229,17 +238,33 @@ function basename(project: string): string {
   return parts[parts.length - 1] ?? project
 }
 
+type AnswerStatus = 'answered' | 'delivered' | 'expired'
+
+// Where an answer stands (SPEC.md, Status): expired when its marker is lapsed or it went unread past the TTL, delivered
+// when a marker is not lapsed, else answered and still unread.
+function answerStatusOf(answer: Answer, delivery: Delivery | undefined, now: number): AnswerStatus {
+  if (delivery !== undefined) return delivery.expired ? 'expired' : 'delivered'
+  return now - answer.ts > ANSWER_TTL_MS ? 'expired' : 'answered'
+}
+
 // The status line of one answer: pending until its delivery marker appears, then delivered, or expired.
-function statusOf(lang: Lang, answer: Answer, question: Question | undefined, delivery: Delivery | undefined): StatusLine {
+function statusOf(
+  lang: Lang,
+  answer: Answer,
+  question: Question | undefined,
+  delivery: Delivery | undefined,
+  now: number,
+): StatusLine {
   const { id, key } = answer
   const target = (question ? windowOf(question, lang) : '') || t(lang, 'status.target.session')
-  if (delivery === undefined) {
+  const status = answerStatusOf(answer, delivery, now)
+  if (status === 'answered') {
     return { id, text: t(lang, 'status.pending', { key, target }), dismissable: false }
   }
-  if (!delivery.expired) {
+  if (status === 'delivered') {
     return { id, text: t(lang, 'status.delivered', { key, target }), dismissable: false }
   }
-  if (delivery.reason === 'session-ended') {
+  if (delivery?.reason === 'session-ended') {
     return { id, text: t(lang, 'status.sessionEnded', { key, target }), dismissable: true }
   }
   return { id, text: t(lang, 'status.expired', { key }), dismissable: true }
@@ -256,7 +281,7 @@ export function statusLines(lang: Lang, board: Board, context: StatusContext): S
   for (const answer of [...board.answers].sort((a, b) => b.ts - a.ts)) {
     if (context.leaving[answer.id] !== undefined) continue
     const delivery = deliveries.get(answer.id)
-    const line = statusOf(lang, answer, questions.get(answer.id), delivery)
+    const line = statusOf(lang, answer, questions.get(answer.id), delivery, context.now)
     const isPastShowTime =
       delivery?.expired === false && context.now - (context.shownAt[answer.id] ?? context.now) > DELIVERED_SHOWN_MS
     if (isPastShowTime || (line.dismissable && hidden.has(answer.id))) continue
@@ -273,6 +298,38 @@ export function counterText(lang: Lang, questions: readonly Question[]): string 
     pending: plural(lang, questions.length, 'counter.pending.one', 'counter.pending.many'),
     groups: plural(lang, groups, 'count.group.one', 'count.group.many'),
   })
+}
+
+// The footer line shown while no question is open: counts from the same folders the poll reads. Answered covers the last
+// 24 h; unread and expired count the answers as they stand now. Undefined while a question is open.
+export function footerText(lang: Lang, board: Board, now: number): string | undefined {
+  if (openQuestions(board, {}).length > 0) return undefined
+  const questions = new Map(board.questions.map(question => [question.id, question] as const))
+  const deliveries = new Map(board.delivered.map(delivery => [delivery.id, delivery] as const))
+  const statuses = board.answers.map(answer => answerStatusOf(answer, deliveries.get(answer.id), now))
+  const answered = board.answers.filter(answer => now - answer.ts < RECENT_MS).length
+  const latest = [...board.answers].sort((a, b) => b.ts - a.ts)[0]
+  const parts = [
+    t(lang, 'footer.nothing'),
+    answered === 0 ? t(lang, 'footer.answered.none') : plural(lang, answered, 'footer.answered.one', 'footer.answered.many'),
+    latest === undefined ? undefined : lastAnswerText(lang, latest, questions.get(latest.id), now),
+    plural(lang, statuses.filter(status => status === 'answered').length, 'footer.unread.one', 'footer.unread.many'),
+    plural(lang, statuses.filter(status => status === 'expired').length, 'footer.expired.one', 'footer.expired.many'),
+  ]
+  return parts.filter((part): part is string => part !== undefined).join(' · ')
+}
+
+// The last answer as the footer names it: its question's title cut to FOOTER_TITLE_MAX characters (its id when the
+// question is gone), its key, and its age.
+function lastAnswerText(lang: Lang, answer: Answer, question: Question | undefined, now: number): string {
+  const title = question?.title.trim() ?? ''
+  const name = clipTitle(title === '' ? answer.id : title)
+  return t(lang, 'footer.last', { title: name, key: answer.key, age: ageLabel(lang, answer.ts, now) })
+}
+
+function clipTitle(text: string): string {
+  const chars = Array.from(text)
+  return chars.length > FOOTER_TITLE_MAX ? `${chars.slice(0, FOOTER_TITLE_MAX - 1).join('')}…` : text
 }
 
 export const riskLabel = (lang: Lang, risk: string): string => {

@@ -40,6 +40,8 @@ export type PaneView = {
   wizard: Wizard
   screen: Screen | undefined
   surface: RenderSurface
+  // The footer line (footerText, hooks/model.ts), set by the register only while no question is open.
+  footer?: string
 }
 
 export type PaneActions = {
@@ -87,10 +89,17 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
       {view.groups.length > 0 && renderTree(ui, lang, view)}
       {screen !== undefined && renderQuestion(ui, lang, view, actions, screen, held)}
       {view.lines.map(line => renderStatusLine(ui, actions, line, held))}
+      {view.footer !== undefined && view.questions.length === 0 && renderFooter(ui, view.footer)}
     </Box>
   )
   held.end()
   return pane
+}
+
+// The footer: one muted line under the status lines. Text only, never a row of the tree, and drawn only with no card up.
+function renderFooter(ui: Ui, text: string): RenderElement {
+  const { Text } = ui
+  return <Text key="footer" dimColor>{text}</Text>
 }
 
 // One status line of the answers: pending, delivered or expired. Expired lines carry a ✕ that dismisses them.

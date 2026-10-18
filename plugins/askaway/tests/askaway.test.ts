@@ -1,12 +1,16 @@
 import type { On, RenderElement } from 'claude-code'
 import { expect, mock, test, type Engine } from 'claude-code/testing'
 import {
+  ANSWER_TTL_MS,
+  EMPTY_BOARD,
   ageLabel,
   counterText,
   deliveryLine,
+  footerText,
   groupBySession,
   leadOf,
   listText,
+  parseAnswer,
   parseQuestion,
   piecesOf,
   projectLabel,
@@ -323,6 +327,87 @@ test('model: the status lines read in the chosen language, and a session that en
   }
   const [line] = statusLines('en', ended, NO_STATUS)
   expect(line).toEqual({ id: 'q-m-000001', text: '⚠️ App ended before reading answer B', dismissable: true })
+})
+
+test('model: an answer unread past the 7-day TTL reads as expired, and one inside the TTL still reads as pending', () => {
+  const board: Board = { questions: [parsedQuestion('q-m-000001', 10)], answers: [answerOf('q-m-000001', 'B', 1000)], delivered: [] }
+  expect(statusLines('en', board, { ...NO_STATUS, now: 1000 + ANSWER_TTL_MS }).map(line => line.text)).toEqual(['⏳ Answer B sent to App'])
+  expect(statusLines('en', board, { ...NO_STATUS, now: 1000 + ANSWER_TTL_MS + 1 })).toEqual([
+    { id: 'q-m-000001', text: '⚠️ Answer B expired unread', dismissable: true },
+  ])
+})
+
+test('model: parseAnswer keeps the session an answer is bound to, and a file without one reads as no session', () => {
+  expect(parseAnswer({ id: 'q-m-000001', key: 'A', by: 'cli', ts: 5, session: 's1' }, 'q-m-000001')?.session).toBe('s1')
+  expect(parseAnswer({ id: 'q-m-000001', key: 'A', by: 'panel', ts: 5 }, 'q-m-000001')?.session).toBeUndefined()
+  expect(parseAnswer({ id: 'q-m-000001', key: 'A', by: 'panel', ts: 5, session: null }, 'q-m-000001')?.session).toBeUndefined()
+  expect(parseAnswer({ id: 'q-m-000001', key: 'A', by: 'panel', ts: 5, session: 7 }, 'q-m-000001')?.session).toBeUndefined()
+})
+
+const FOOT_MIN = 60_000
+const FOOT_HOUR = 60 * FOOT_MIN
+const FOOT_DAY = 24 * FOOT_HOUR
+
+test('model: the footer reads the counts and the last answer in English and Portuguese, and is absent while a question is open', () => {
+  const now = 10 * FOOT_DAY
+  const board: Board = {
+    questions: [
+      parsedQuestion('q-f-000001', 1, { title: 'Pick the queue' }),
+      parsedQuestion('q-f-000002', 2),
+      parsedQuestion('q-f-000003', 3),
+      parsedQuestion('q-f-000004', 4),
+      parsedQuestion('q-f-000005', 5),
+    ],
+    answers: [
+      answerOf('q-f-000001', 'A', now - 12 * FOOT_MIN),
+      answerOf('q-f-000002', 'B', now - 2 * FOOT_HOUR),
+      answerOf('q-f-000003', 'A', now - 20 * FOOT_HOUR),
+      answerOf('q-f-000004', 'B', now - 3 * FOOT_DAY),
+      answerOf('q-f-000005', 'A', now - 8 * FOOT_DAY),
+    ],
+    delivered: [
+      { id: 'q-f-000002', expired: false },
+      { id: 'q-f-000003', expired: false },
+      { id: 'q-f-000004', expired: true, reason: 'session-ended' },
+    ],
+  }
+  expect(footerText('en', board, now)).toBe(
+    'Nothing waiting · 3 answered in the last 24 h · last: Pick the queue → A, 12 min ago · 1 not yet read · 2 expired',
+  )
+  expect(footerText('pt', board, now)).toBe(
+    'Nada aguardando · 3 respondidas nas últimas 24 h · última: Pick the queue → A, há 12 min · 1 ainda não lida · 2 expiradas',
+  )
+  const withOpen: Board = { ...board, questions: [...board.questions, parsedQuestion('q-f-000006', 6)] }
+  expect(footerText('en', withOpen, now)).toBeUndefined()
+})
+
+test('model: the footer reads the zero and the singular forms in both languages', () => {
+  expect(footerText('en', EMPTY_BOARD, FOOT_DAY)).toBe('Nothing waiting · none answered in the last 24 h · 0 not yet read · 0 expired')
+  expect(footerText('pt', EMPTY_BOARD, FOOT_DAY)).toBe(
+    'Nada aguardando · nenhuma respondida nas últimas 24 h · 0 ainda não lidas · 0 expiradas',
+  )
+  const one: Board = {
+    questions: [parsedQuestion('q-f-000001', 1)],
+    answers: [answerOf('q-f-000001', 'A', FOOT_DAY - FOOT_HOUR)],
+    delivered: [{ id: 'q-f-000001', expired: false }],
+  }
+  expect(footerText('en', one, FOOT_DAY)).toBe('Nothing waiting · 1 answered in the last 24 h · last: Title q-f-000001 → A, 1 h ago · 0 not yet read · 0 expired')
+  expect(footerText('pt', one, FOOT_DAY)).toBe(
+    'Nada aguardando · 1 respondida nas últimas 24 h · última: Title q-f-000001 → A, há 1 h · 0 ainda não lidas · 0 expiradas',
+  )
+  const expiredOne: Board = { questions: [], answers: [answerOf('q-f-000002', 'B', 1)], delivered: [] }
+  expect(footerText('pt', expiredOne, 8 * FOOT_DAY)).toContain('1 expirada')
+})
+
+test('model: the footer cuts a long title of the last answer, and names a question that is gone by its id', () => {
+  const long: Board = {
+    questions: [parsedQuestion('q-f-000001', 1, { title: 'a'.repeat(60) })],
+    answers: [answerOf('q-f-000001', 'A', FOOT_DAY - FOOT_MIN)],
+    delivered: [{ id: 'q-f-000001', expired: false }],
+  }
+  expect(footerText('en', long, FOOT_DAY)).toContain(`last: ${'a'.repeat(39)}… → A, 1 min ago`)
+  const gone: Board = { questions: [], answers: [answerOf('q-f-000009', 'B', FOOT_DAY - FOOT_MIN)], delivered: [] }
+  expect(footerText('en', gone, FOOT_DAY)).toContain('last: q-f-000009 → B, 1 min ago')
 })
 
 test('model: each explanation section reads in the chosen language and shows only the fields set', () => {
@@ -1162,6 +1247,20 @@ test('an expired answer with no reason reads as expired unread', async ($, on) =
   await $.session.start(SESSION)
   const ui = await mountPane($)
   expect(await ui.find({ type: 'Text', text: '⚠️ Resposta B expirou sem ser lida' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('an answer unread past the 7-day TTL expires with no marker, and its line is dismissable', async ($, on) => {
+  // Stamped more than the TTL before the clock's start, so the pane sees it expired at once (no long clock advance).
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B', -ANSWER_TTL_MS - 60_000)],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(await ui.find({ type: 'Text', text: '⚠️ Resposta B expirou sem ser lida' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'dismiss-q-l1-aaaaaa' })).toBeDefined()
   await ui.unmount()
 })
 

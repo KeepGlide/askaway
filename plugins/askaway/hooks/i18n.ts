@@ -70,6 +70,15 @@ const EN = {
   'list.head.many': 'Askaway: {n} open',
   'list.awayOn': ', away mode on',
   'list.row': 'open · {id} · {title} (recommended {rec})',
+  'footer.nothing': 'Nothing waiting',
+  'footer.answered.none': 'none answered in the last 24 h',
+  'footer.answered.one': '1 answered in the last 24 h',
+  'footer.answered.many': '{n} answered in the last 24 h',
+  'footer.last': 'last: {title} → {key}, {age}',
+  'footer.unread.one': '1 not yet read',
+  'footer.unread.many': '{n} not yet read',
+  'footer.expired.one': '{n} expired',
+  'footer.expired.many': '{n} expired',
 } as const
 
 export type MessageKey = keyof typeof EN
@@ -135,6 +144,15 @@ const PT: Record<MessageKey, string> = {
   'list.head.many': 'Askaway: {n} pendentes',
   'list.awayOn': ', modo ausente ligado',
   'list.row': 'pendente · {id} · {title} (recomendada {rec})',
+  'footer.nothing': 'Nada aguardando',
+  'footer.answered.none': 'nenhuma respondida nas últimas 24 h',
+  'footer.answered.one': '1 respondida nas últimas 24 h',
+  'footer.answered.many': '{n} respondidas nas últimas 24 h',
+  'footer.last': 'última: {title} → {key}, {age}',
+  'footer.unread.one': '1 ainda não lida',
+  'footer.unread.many': '{n} ainda não lidas',
+  'footer.expired.one': '{n} expirada',
+  'footer.expired.many': '{n} expiradas',
 }
 
 export const MESSAGES: Readonly<Record<Lang, Readonly<Record<MessageKey, string>>>> = { en: EN, pt: PT }
