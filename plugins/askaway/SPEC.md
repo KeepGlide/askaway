@@ -101,6 +101,18 @@ past the 7-day TTL), `delivered` (a d/ marker without `expired`), `expired` (an 
 `delivered` and `expired` are closed; `open` and `answered` are not.
 Readers skip unreadable or invalid JSON files silently (a file may be mid-write).
 
+## Panel credential
+
+`answer --by panel`, `--by accept_all` and `--by accept_recommended` are accepted only with a valid, unused one-shot token.
+The panel mints it before each answer: 32 random hex characters, recorded as `panel-tokens/<token>` (a mode 700 folder
+under the state folder, a mode 600 file holding `{"ts": <ms>}`), and passes the name to the CLI in `ASKAWAY_PANEL_TOKEN`.
+The CLI accepts it when the file is a regular file of the same user, mode 600, no older than 120 s, and renames it to
+`<token>.used` (atomic, so one token answers once). Otherwise it prints `{"error": "answer refused: --by <by> needs a
+valid panel token; ..."}` and writes nothing. `prune` clears token files older than a day. `--by cli` needs no token.
+
+This is a second layer behind the Bash guard that stops the agent from answering its own question, **not isolation**:
+any process of the same user that can write the state folder can mint a token.
+
 ## Away rule
 
 The user counts as away when ANY of: hook input `permission_mode == "bypassPermissions"`;

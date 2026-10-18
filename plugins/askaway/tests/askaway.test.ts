@@ -128,6 +128,7 @@ function stubHost(
   const submits: string[] = []
   const calls: { argv: string[]; env?: Record<string, string> }[] = []
   const ended = new Set<string>()
+  const tokenCalls: string[][] = []
   const clock = mock.clock(on)
   mock.env(on, { HOME, LANG: 'pt_BR.UTF-8', ...env })
   mock.store(on, stored)
@@ -162,6 +163,10 @@ function stubHost(
   on('fs.write', async (_$, e) => {
     // An answer goes through the CLI (process.run below); a direct write to a/ would bypass its first-writer-wins link.
     if (e.path.startsWith(`${STATE}/a/`)) throw new Error(`answer written directly: ${e.path}`)
+    if (e.path.includes('/panel-tokens/')) {
+      files.set(e.path, e.text) // the panel's one-shot credential: never held, never counted as an answer
+      return { value: undefined }
+    }
     await holds.write
     writes.push(e.path)
     files.set(e.path, e.text)
@@ -171,6 +176,11 @@ function stubHost(
   // and reports the stored key. The check runs when the call reaches its write, after any hold. `writes` records the
   // answers that land; `calls` records every call the pane makes.
   on('process.run', async (_$, e) => {
+    // The token folder and mode are set by two plain commands; only the calls to askaway.py are the pane's CLI calls.
+    if (e.argv[0] !== 'python3') {
+      tokenCalls.push([...e.argv])
+      return cliReply('')
+    }
     calls.push({ argv: [...e.argv], env: e.init?.env })
     // `list --open` reports the ids a test put in `ended`; `prune --id` removes the question file, as the CLI does for one.
     if (e.argv[2] === 'list') {
@@ -192,7 +202,7 @@ function stubHost(
     writes.push(path('a', id))
     return cliReply(JSON.stringify({ id, key, written: true }))
   })
-  return { toasts, writes, submits, clock, calls, ended }
+  return { toasts, writes, submits, clock, calls, ended, tokenCalls }
 }
 
 // The hook's reply with the result `$.process.run` gives for a child that exited (the fields the pane reads).
@@ -723,9 +733,25 @@ test('a panel answer leaves who to the CLI: the call names no who and sets no AS
   expect(calls).toEqual([
     {
       argv: ['python3', expect.stringMatching(/\/scripts\/askaway\.py$/), 'answer', 'q-l1-aaaaaa', 'B', '--by', 'panel', '--strict'],
-      env: { ASKAWAY_HOME: STATE },
+      env: { ASKAWAY_HOME: STATE, ASKAWAY_PANEL_TOKEN: expect.stringMatching(/^[0-9a-f]{32}$/) },
     },
   ])
+})
+
+test('a panel answer mints a one-shot token: a 700 folder, a 600 file, and its name goes to the CLI in the env', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { calls, tokenCalls } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-A' })
+  await ui.press({ key: 'submit-all' })
+  const token = calls[0]?.env?.ASKAWAY_PANEL_TOKEN ?? ''
+  expect(token).toMatch(/^[0-9a-f]{32}$/)
+  expect(tokenCalls).toEqual([
+    ['install', '-d', '-m', '700', `${STATE}/panel-tokens`],
+    ['chmod', '600', `${STATE}/panel-tokens/${token}`],
+  ])
+  expect(JSON.parse(files.get(`${STATE}/panel-tokens/${token}`) ?? '{}')).toHaveProperty('ts')
 })
 
 test('a click picks and advances; Submit all on the last question writes every answer of the window in one go', async ($, on) => {

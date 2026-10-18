@@ -83,6 +83,13 @@ ANSWER_WORDING: Final = {
     "cli": "Answered by {who} (cli)",
 }
 WHO_ENV: Final = "ASKAWAY_WHO"
+# Panel credential: the panel mints a one-shot token file (mode 600) and passes its name in this env var. A second layer
+# behind the Bash guard, not isolation: any process of the same user that can read the folder could mint one.
+TOKEN_ENV: Final = "ASKAWAY_PANEL_TOKEN"
+TOKEN_DIR: Final = "panel-tokens"
+TOKEN_PATTERN: Final = re.compile(r"[0-9a-f]{32}")
+TOKEN_TTL_MS: Final = 120_000
+TOKEN_SOURCES: Final = frozenset({"panel", "accept_all", "accept_recommended"})
 WHO_MAX: Final = 40
 UNKNOWN_WHO: Final = "unknown"
 CONTROL_CHARS: Final = re.compile(r"[\x00-\x1f\x7f-\x9f]")
@@ -759,6 +766,27 @@ def answer_text(key: str, text: str | None) -> str | None:
     return kept
 
 
+def consume_panel_token() -> bool:
+    """Spend the panel token in ASKAWAY_PANEL_TOKEN: a fresh file of this user, mode 600, never used before.
+
+    The file is renamed to <token>.used, which is atomic, so two replies cannot spend one token."""
+    token = os.environ.get(TOKEN_ENV, "")
+    if not TOKEN_PATTERN.fullmatch(token):
+        return False
+    path = state_home() / TOKEN_DIR / token
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_uid != os.getuid():
+            return False
+        minted = (read_json(path) or {}).get("ts")
+        if not isinstance(minted, int) or not 0 <= now_ms() - minted <= TOKEN_TTL_MS:
+            return False
+        os.rename(path, path.with_name(f"{token}.used"))
+    except OSError:
+        return False
+    return True
+
+
 def cmd_answer(item_id: str, key: str, by: str, text: str | None) -> dict[str, Any]:
     if by not in ANSWER_SOURCES:
         raise ValueError(f"--by must be one of: {', '.join(sorted(ANSWER_SOURCES))}")
@@ -772,6 +800,8 @@ def cmd_answer(item_id: str, key: str, by: str, text: str | None) -> dict[str, A
     refusal = answer_refusal(entry, by)
     if refusal is not None:
         return {"error": refusal}
+    if by in TOKEN_SOURCES and not consume_panel_token():
+        return {"error": f"answer refused: --by {by} needs a valid panel token; answer from the Askaway panel"}
     stamp = answer_stamp(entry, by)
     record = {"id": item_id, "key": key, "by": stamp, "who": answerer_name(),
               "session": answer_session(entry, stamp), "ts": now_ms()}
@@ -881,7 +911,7 @@ def _remove_item(item_id: str) -> None:
 def _remove_stale_temps() -> None:
     cutoff = time.time() - TEMP_STALE_S
     for folder in (state_home(), state_home() / "q", state_home() / "a", state_home() / "d"):
-        for tmp in folder.glob(".*.tmp"):
+        for tmp in [*folder.glob(".*.tmp"), *(folder.glob(f"{TOKEN_DIR}/*") if folder == state_home() else ())]:
             with contextlib.suppress(FileNotFoundError):
                 if tmp.stat().st_mtime < cutoff:
                     tmp.unlink()

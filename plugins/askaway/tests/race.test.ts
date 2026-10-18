@@ -77,10 +77,12 @@ function stubHost(on: On, files: Map<string, string>, holds: Holds = {}) {
   on('fs.exists', (_$, e) => ({ value: files.has(e.path) }))
   // The panel answers through the CLI (process.run below); a direct write to a/ would bypass its first-writer-wins link.
   on('fs.write', (_$, e) => {
+    if (e.path.includes('/panel-tokens/')) return { value: undefined } // the panel's one-shot credential
     throw new Error(`answer written directly: ${e.path}`)
   })
   // The CLI's `answer` (create_once): a call reaches the host, is held, then lands only if no answer exists yet.
   on('process.run', async (_$, e) => {
+    if (e.argv[0] !== 'python3') return cliReply('') // the token folder and mode
     const [, , , id, key] = e.argv
     attempts.push(path('a', id))
     await holds.write

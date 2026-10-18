@@ -82,10 +82,12 @@ function stubHost(on: On, files: Map<string, string>, hold: Hold = {}) {
   on('fs.exists', (_$, e) => ({ value: files.has(e.path) }))
   // The panel answers through the CLI (process.run below); a direct write to a/ would bypass its first-writer-wins link.
   on('fs.write', (_$, e) => {
+    if (e.path.includes('/panel-tokens/')) return { value: undefined } // the panel's one-shot credential
     throw new Error(`answer written directly: ${e.path}`)
   })
   // The CLI's `answer` (create_once): the call is held at its write, then lands only if no answer exists yet.
   on('process.run', async (_$, e) => {
+    if (e.argv[0] !== 'python3') return cliReply('') // the token folder and mode
     calls.push({ argv: [...e.argv], env: e.init?.env })
     const [, , , id, key] = e.argv
     await hold.write
@@ -145,7 +147,7 @@ test('a won race writes the pane answer through the CLI and the pane shows its o
   expect(calls).toEqual([
     {
       argv: ['python3', expect.stringMatching(/\/scripts\/askaway\.py$/), 'answer', QUESTION, 'B', '--by', 'panel', '--strict'],
-      env: { ASKAWAY_HOME: STATE },
+      env: { ASKAWAY_HOME: STATE, ASKAWAY_PANEL_TOKEN: expect.stringMatching(/^[0-9a-f]{32}$/) },
     },
   ])
   expect(writes).toEqual([path('a', QUESTION)])

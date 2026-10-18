@@ -378,6 +378,19 @@ async function writeAnswer($: EngineInterface, home: string, id: string, key: st
   return written
 }
 
+// The one-shot credential the CLI's panel answers demand (SPEC.md, "Panel credential"): a random token, recorded in a
+// mode-600 file in a mode-700 folder under the state folder, and passed to the CLI in ASKAWAY_PANEL_TOKEN. The CLI spends it.
+// A second layer behind the Bash guard, not isolation.
+async function mintPanelToken($: EngineInterface, home: string): Promise<string> {
+  const token = [...crypto.getRandomValues(new Uint8Array(16))].map(byte => byte.toString(16).padStart(2, '0')).join('')
+  const dir = `${home}/panel-tokens`
+  const file = `${dir}/${token}`
+  await $.process.run(['install', '-d', '-m', '700', dir])
+  await $.fs.write(file, `${JSON.stringify({ ts: await $.clock.now() })}\n`)
+  await $.process.run(['chmod', '600', file])
+  return token
+}
+
 // The panel's only writer of a/<id>.json is the CLI: `askaway.py answer --by panel` publishes with an exclusive link, so
 // the first answer from any process wins. The state folder goes in as ASKAWAY_HOME, so the CLI writes the folder the pane
 // reads. A run that cannot start, exits non-zero or prints no `written` throws, as a failed write did before. Returns
@@ -385,7 +398,8 @@ async function writeAnswer($: EngineInterface, home: string, id: string, key: st
 async function answerViaCli($: EngineInterface, home: string, id: string, key: string, text?: string): Promise<boolean> {
   const argv = ['python3', `${$.plugin.root}/scripts/askaway.py`, 'answer', id, key, '--by', 'panel', '--strict']
   if (text !== undefined) argv.push('--text', text)
-  const run = await $.process.run(argv, { env: { ASKAWAY_HOME: home } })
+  const token = await mintPanelToken($, home)
+  const run = await $.process.run(argv, { env: { ASKAWAY_HOME: home, ASKAWAY_PANEL_TOKEN: token } })
   const written = parseAnswerWritten(run.stdout)
   if (run.exitCode !== 0 || written === undefined) {
     throw new Error(`askaway answer failed: ${(run.stderr || run.stdout).trim()}`)

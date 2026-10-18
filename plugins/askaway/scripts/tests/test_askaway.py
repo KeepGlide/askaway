@@ -38,6 +38,14 @@ def home(tmp_path, monkeypatch):
     return state
 
 
+@pytest.fixture(autouse=True)
+def _clean_token_env():
+    """with_panel_token sets the env var directly; keep one test's token from reaching the next."""
+    os.environ.pop("ASKAWAY_PANEL_TOKEN", None)
+    yield
+    os.environ.pop("ASKAWAY_PANEL_TOKEN", None)
+
+
 @pytest.fixture
 def clock(monkeypatch):
     now = {"ms": 1_791_993_000_000}
@@ -80,7 +88,25 @@ REQUIRED_TEXT = ("what", "problem", "context", "why", "how", "gains", "losses", 
 REQUIRED_OPTION_TEXT = ("does", "pros", "cons")
 
 
+def mint_token(minted_ms: int | None = None, mode: int = 0o600) -> str:
+    """A panel token file as the panel writes it; returns the token."""
+    token = os.urandom(16).hex()
+    folder = askaway.state_home() / askaway.TOKEN_DIR
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / token
+    path.write_text(json.dumps({"ts": askaway.now_ms() if minted_ms is None else minted_ms}), encoding="utf-8")
+    path.chmod(mode)
+    return token
+
+
+def with_panel_token(args: tuple[str, ...]) -> None:
+    """Most tests answer as the panel; give such a call a fresh token, as the panel does."""
+    if "--by" in args and args[args.index("--by") + 1] in askaway.TOKEN_SOURCES:
+        os.environ[askaway.TOKEN_ENV] = mint_token()
+
+
 def cli(capsys, *args: str) -> dict:
+    with_panel_token(args)
     assert askaway.main(list(args)) == 0
     lines = capsys.readouterr().out.splitlines()
     assert len(lines) == 1
@@ -88,6 +114,7 @@ def cli(capsys, *args: str) -> dict:
 
 
 def usage_error(capsys, *args: str) -> dict:
+    with_panel_token(args)
     assert askaway.main(list(args)) == 1
     lines = capsys.readouterr().out.splitlines()
     assert len(lines) == 1
@@ -1865,6 +1892,7 @@ def test_wait_picks_up_an_answer_written_while_it_polls(home, capsys, monkeypatc
     item = ask_item(capsys)
 
     def answer_during_the_first_poll(_seconds: float) -> None:
+        monkeypatch.setenv(askaway.TOKEN_ENV, mint_token())
         askaway.cmd_answer(item, "A", "panel", None)
 
     monkeypatch.setattr(askaway.time, "sleep", answer_during_the_first_poll)
@@ -2635,6 +2663,61 @@ def test_code_that_edits_docs_mentioning_askaway_is_allowed(command, capsys, mon
 def test_code_that_answers_or_writes_the_state_folder_is_denied(command, capsys, monkeypatch):
     out = hook_json(capsys, monkeypatch, "pause-guard", bash_event(command))
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+# ---- panel credential --------------------------------------------------
+
+def refused_by_token(capsys, item: str, by: str = "panel") -> bool:
+    """Run answer --by <by> with the token env as the test left it; True when the credential refused it."""
+    assert askaway.main(["answer", item, "A", "--by", by]) == 0
+    reply = json.loads(capsys.readouterr().out)
+    return "panel token" in reply.get("error", "")
+
+
+@pytest.mark.parametrize("by", sorted(askaway.TOKEN_SOURCES))
+def test_a_panel_source_without_a_token_is_refused_and_writes_nothing(home, capsys, monkeypatch, by):
+    item = ask_item(capsys)
+    monkeypatch.delenv(askaway.TOKEN_ENV, raising=False)
+    assert refused_by_token(capsys, item, by)
+    assert cli(capsys, "status", item)["status"] == "open"
+
+
+def test_a_valid_token_answers_once_and_is_marked_used(home, capsys, monkeypatch):
+    item, other = ask_item(capsys, title="one"), ask_item(capsys, title="two")
+    token = mint_token()
+    monkeypatch.setenv(askaway.TOKEN_ENV, token)
+    assert askaway.main(["answer", item, "A", "--by", "panel"]) == 0
+    assert json.loads(capsys.readouterr().out)["written"] is True
+    assert not (home / askaway.TOKEN_DIR / token).exists()
+    assert (home / askaway.TOKEN_DIR / f"{token}.used").exists()
+    assert refused_by_token(capsys, other)  # the same token cannot answer a second question
+
+
+@pytest.mark.parametrize("make", [
+    lambda: mint_token(mode=0o644),
+    lambda: mint_token(minted_ms=askaway.now_ms() - askaway.TOKEN_TTL_MS - 1),
+    lambda: "0" * 32,
+    lambda: "not-a-token",
+])
+def test_a_token_that_is_loose_old_missing_or_malformed_is_refused(home, capsys, monkeypatch, make):
+    item = ask_item(capsys)
+    monkeypatch.setenv(askaway.TOKEN_ENV, make())
+    assert refused_by_token(capsys, item)
+
+
+def test_the_cli_channel_needs_no_token(home, capsys, monkeypatch):
+    item = ask_item(capsys)
+    monkeypatch.delenv(askaway.TOKEN_ENV, raising=False)
+    assert cli(capsys, "answer", item, "A")["written"] is True
+
+
+def test_prune_clears_stale_token_files(home, capsys):
+    token = mint_token()
+    path = home / askaway.TOKEN_DIR / token
+    old = time.time() - askaway.TEMP_STALE_S - 10
+    os.utime(path, (old, old))
+    cli(capsys, "prune")
+    assert not path.exists()
 
 
 # ---- ended-session card ------------------------------------------------
