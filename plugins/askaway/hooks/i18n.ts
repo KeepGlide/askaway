@@ -84,6 +84,8 @@ const EN = {
   'footer.unread.many': '{n} not yet read',
   'footer.expired.one': '{n} expired',
   'footer.expired.many': '{n} expired',
+  'details.hint': 'e · details',
+  'details.label': 'details',
 } as const
 
 export type MessageKey = keyof typeof EN
@@ -163,6 +165,8 @@ const PT: Record<MessageKey, string> = {
   'footer.unread.many': '{n} ainda não lidas',
   'footer.expired.one': '{n} expirada',
   'footer.expired.many': '{n} expiradas',
+  'details.hint': 'e · detalhes',
+  'details.label': 'detalhes',
 }
 
 export const MESSAGES: Readonly<Record<Lang, Readonly<Record<MessageKey, string>>>> = { en: EN, pt: PT }

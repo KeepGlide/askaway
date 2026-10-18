@@ -43,12 +43,15 @@ export type PaneView = {
   surface: RenderSurface
   // The footer line (footerText, hooks/model.ts), set by the register only while no question is open.
   footer?: string
+  // The questions whose details are open: question id → true. A question not listed keeps its details folded.
+  expanded: Readonly<Record<string, boolean>>
 }
 
 export type PaneActions = {
   dismiss: (id: string) => void
   pick: (id: string, key: string) => void
   toggleOther: (id: string) => void
+  toggleDetails: (id: string) => void
   submitOther: (id: string, text: string) => void
   back: () => void
   next: () => void
@@ -62,6 +65,7 @@ type CardContext = {
   wizard: Wizard
   isLeaving: boolean
   isTyping: boolean
+  isExpanded: boolean
   held: HeldButtons
   surface: RenderSurface
 }
@@ -225,13 +229,13 @@ const optionHotkey = (card: CardContext, key: string): string | undefined =>
 
 // Back, Next and Submit take the first free letters of their surface's pool, in that order. A letter that an option key
 // uses on this card is skipped, so no shortcut clashes with an option. The terminal pool avoids b, n and s, because
-// option B, N and S would clash with them; the desktop keeps p, f and e while no option uses them. A surface not listed
-// draws none.
+// option B, N and S would clash with them; the desktop keeps p and f while no option uses them. The letter e is the details
+// toggle's (DETAILS_KEY), so it is in no pool. A surface not listed draws none.
 type NavKey = 'back' | 'next' | 'submit'
 const NAV_ORDER: readonly NavKey[] = ['back', 'next', 'submit']
 const NAV_POOLS: Partial<Record<RenderSurface, readonly string[]>> = {
   terminal: ['z', 'x', 'w'],
-  desktop: ['p', 'f', 'e', 'z', 'x', 'w'],
+  desktop: ['p', 'f', 'w', 'z', 'x'],
 }
 
 const letterFor = (card: CardContext, key: NavKey): string | undefined => {
@@ -240,10 +244,10 @@ const letterFor = (card: CardContext, key: NavKey): string | undefined => {
   return hotkeyFor(card, free[NAV_ORDER.indexOf(key)])
 }
 
-// One question on screen: the title in bold with the risk and age beside it, the bold lead line under it (what the agent
-// does about the question), the box of What and Problem and Analogy, the question, the Urgency box, two blank lines, the
-// options with their key letters and "Other…", the box of Why to Context, a separator, and the Back / Next or Submit all
-// row. One blank line sits under the nav row.
+// One question on screen: the title in bold with the risk and age beside it, the bold lead line under it, the question, the
+// Urgency box, the options with their tradeoff and fit, "Other…", and the details toggle. The long sections (What, The
+// problem and Analogy above the question; Why to Context below the options, and each option's does, pros and cons) draw
+// only while the details are open. Then a separator, and the Back / Next or Submit all row. One blank line sits under it.
 function renderQuestion(
   ui: Ui,
   lang: Lang,
@@ -259,10 +263,11 @@ function renderQuestion(
     wizard: view.wizard,
     isLeaving: view.leaving[question.id] !== undefined,
     isTyping: view.wizard.other === question.id,
+    isExpanded: view.expanded[question.id] === true,
     held,
     surface: view.surface,
   }
-  const { isLeaving } = card
+  const { isLeaving, isExpanded } = card
   return (
     <Box key={`card-${question.id}`} flexDirection="column" gap={1} borderStyle="round" borderDimColor={isLeaving} paddingX={1} paddingBottom={1}>
       <Box flexDirection="row" flexWrap="wrap" gap={2}>
@@ -270,18 +275,46 @@ function renderQuestion(
         <Text dimColor>{`${riskLabel(lang, question.risk)} · ${ageLabel(lang, question.ts, view.now)}`}</Text>
       </Box>
       <Text bold dimColor={isLeaving}>{leadOf(lang, question)}</Text>
-      {renderExplanation(ui, 'before-question', sectionsOf(lang, question, 'before-question'), isLeaving)}
+      {isExpanded && renderExplanation(ui, 'before-question', sectionsOf(lang, question, 'before-question'), isLeaving)}
       <Text bold dimColor={isLeaving}>{question.question}</Text>
       {renderExplanation(ui, 'before-options', sectionsOf(lang, question, 'before-options'), isLeaving)}
       <Box flexDirection="column" gap={2} marginTop={1}>
         {question.options.map(option => renderOption(ui, lang, actions, card, option))}
         {renderOther(ui, lang, actions, card)}
       </Box>
-      {renderExplanation(ui, 'after-options', sectionsOf(lang, question, 'after-options'), isLeaving)}
+      {hasDetailsOf(lang, question) && renderDetailsToggle(ui, lang, actions, card)}
+      {isExpanded && renderExplanation(ui, 'after-options', sectionsOf(lang, question, 'after-options'), isLeaving)}
       {renderDivider(ui, view.surface)}
       {renderNav(ui, lang, actions, card, screen)}
     </Box>
   )
+}
+
+// The key of the details toggle: "e" opens and closes the long sections of the card.
+const DETAILS_KEY = 'e'
+
+// Whether the card has anything behind the details toggle: a section of the folded slots, or an option's does, pros or cons.
+const hasDetailsOf = (lang: Lang, question: Question): boolean =>
+  sectionsOf(lang, question, 'before-question').length > 0 ||
+  sectionsOf(lang, question, 'after-options').length > 0 ||
+  question.options.some(option => optionDetailsOf(lang, option).length > 0)
+
+// The one toggle of the long sections: labelled "e · details" and bound to the hotkey e. An option keyed E takes the letter,
+// so the toggle then draws the plain "details" label and binds no hotkey. The open sections show its state.
+function renderDetailsToggle(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext): RenderElement {
+  const { Button } = ui
+  const { question, isLeaving, held } = card
+  const takesKey = question.options.some(option => option.key.toLowerCase() === DETAILS_KEY)
+  const label = t(lang, takesKey ? 'details.label' : 'details.hint')
+  const hotkey = takesKey ? undefined : hotkeyFor(card, DETAILS_KEY)
+  const key = `details-${question.id}`
+  const onPress = () => {
+    if (isLeaving) return
+    actions.toggleDetails(question.id)
+  }
+  return held.hold(key, [label, isLeaving, hotkey], onPress, press => (
+    <Button key={key} label={label} variant="secondary" dimColor={isLeaving} hotkey={hotkey} onPress={press} />
+  ))
 }
 
 // The separator above the nav row: a 1px SVG rule on the desktop, a row of '─' on the terminal. It is drawn after the
@@ -319,7 +352,7 @@ function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContex
   const key = `opt-${question.id}-${option.key}`
   const hotkey = optionHotkey(card, option.key)
   const tradeoffLine = tradeoffLineOf(lang, option)
-  const details = optionDetailsOf(lang, option)
+  const details = card.isExpanded ? optionDetailsOf(lang, option) : []
   const onPress = () => {
     if (isLeaving) return
     actions.pick(question.id, option.key)

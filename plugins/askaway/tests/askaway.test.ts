@@ -970,6 +970,7 @@ test('only the recommended option says "(Recomendada)", and the card has no JEV 
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
+  await ui.press({ key: 'details-q-l1-aaaaaa' })
   expect(await ui.findAll({ type: 'Text', text: /\(Recomendada\)$/ })).toHaveLength(1)
   expect(await ui.findAll({ type: 'Text', text: '🎯' })).toHaveLength(0)
   const texts = await textsOf(ui)
@@ -989,6 +990,7 @@ test('each explanation section shows only when its field is set, in the box of i
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
+  await ui.press({ key: 'details-q-l1-aaaaaa' })
   const texts = await textsOf(ui)
   // A section is one Text, "heading: text": its whole line, and the bold heading as a Text of its own before the body.
   expect(texts.filter(text => text.startsWith('🧭'))).toEqual(['🧭 Contexto e origem: Why now.', '🧭 Contexto e origem: '])
@@ -1012,6 +1014,7 @@ test('the card draws urgency between the question and the options, and undo righ
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
+  await ui.press({ key: 'details-q-l3-cccccc' })
   const texts = await textsOf(ui)
   const urgencyLine = texts.indexOf('⏱️ Urgência: Blocks in ~8 min')
   const whyLine = texts.indexOf('💡 Por que A: It is smaller.')
@@ -1072,10 +1075,12 @@ test('a losses-only question draws the losses section alone, and a gains-only on
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
+  await ui.press({ key: 'details-q-l1-aaaaaa' })
   const losses = await textsOf(ui)
   expect(losses).toContain('⚖️ O que perdemos: Extra file.')
   expect(losses.some(text => text.startsWith('🎁'))).toBe(false)
   await ui.press({ key: 'nav-next' })
+  await ui.press({ key: 'details-q-l2-bbbbbb' })
   const gains = await textsOf(ui)
   expect(gains).toContain('🎁 O que ganhamos: Quick answers.')
   expect(gains.some(text => text.startsWith('⚖️'))).toBe(false)
@@ -1100,6 +1105,7 @@ test('a legacy question with tradeoff and no how, gains, losses or session title
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
+  await ui.press({ key: 'details-q-l1-aaaaaa' })
   const texts = await textsOf(ui)
   expect(texts).toContain('💡 Por que A: It is smaller.')
   expect(texts).toContain('└ Cheap · aderência 80')
@@ -1116,6 +1122,8 @@ test('a name in an explanation is drawn bold in the explanation ink, a slash com
   await $.session.start(SESSION)
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface)
+    await ui.press({ key: 'details-q-l1-aaaaaa' })
+    expect(await textsOf(ui)).toContain('🛠️ Como: Run /reload-plugins, then open frontend-code-engineer.')
     const nodes = nodesOf(await ui.drawn())
     const nameChildren = nodes
       .filter(node => node.type === 'Text' && (node.props as Record<string, unknown> | undefined)?.bold === true
@@ -1127,6 +1135,8 @@ test('a name in an explanation is drawn bold in the explanation ink, a slash com
     expect(await textsOf(ui)).toContain('🛠️ Como: Run /reload-plugins, then open frontend-code-engineer.')
     const drawnText = nodes.flatMap(node => (Array.isArray(node.children) ? node.children : [])).filter((child): child is string => typeof child === 'string')
     expect(drawnText.some(text => text.includes('`'))).toBe(false)
+    // The fold state outlives the mount, so close the details again before the next surface starts folded.
+    await ui.press({ key: 'details-q-l1-aaaaaa' })
     await ui.unmount()
   }
 })
@@ -1382,6 +1392,63 @@ test('the footer drops an answer from the last-24-hours count once the window pa
   await clock.advance(60_000)
   await clock.settle()
   expect(await footerOf(ui)).toContain('nenhuma respondida nas últimas 24 h')
+  await ui.unmount()
+})
+
+test('the card folds its long sections behind the details toggle, and each question keeps its own fold state', async ($, on) => {
+  const long = {
+    what: 'What W', problem: 'Problem P', analogy: 'Analogy N', why: 'Reason R', undo: 'Undo U', how: 'How H',
+    gains: 'Gain G', losses: 'Loss L', context: 'Context C', urgency: 'Blocks soon',
+  }
+  const options = [
+    { key: 'A', label: 'Keep', tradeoff: 'cheap', fit: 80, does: 'Keeps the queue', pros: 'Fast path', cons: 'Stale data' },
+    { key: 'B', label: 'Rewrite', tradeoff: 'slow', fit: 40 },
+  ]
+  const files = new Map([
+    [path('q', 'q-f1-aaaaaa'), question('q-f1-aaaaaa', 1000, { ...long, options })],
+    [path('q', 'q-f2-bbbbbb'), question('q-f2-bbbbbb', 2000, { ...long, options })],
+  ])
+  const folded = ['What W', 'Problem P', 'Analogy N', 'Reason R', 'Undo U', 'Context C', 'Keeps the queue', 'Fast path', 'Stale data']
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  // Folded: the title, the lead, the Question, Urgency, the option lines and the toggle draw; the long sections do not.
+  let texts = await textsOf(ui)
+  expect(texts).toContain('Which way for q-f1-aaaaaa?')
+  expect(texts.some(text => text.includes('Blocks soon'))).toBe(true)
+  expect(texts.some(text => text.startsWith('└ Cheap'))).toBe(true)
+  for (const name of folded) expect(texts.some(text => text.includes(name))).toBe(false)
+  expect(await labelOf(ui, 'details-q-f1-aaaaaa')).toBe('e · detalhes')
+  // Unfolded: the same card, with every long section and each option's does, pros and cons.
+  await ui.press({ key: 'details-q-f1-aaaaaa' })
+  texts = await textsOf(ui)
+  for (const name of folded) expect(texts.some(text => text.includes(name))).toBe(true)
+  // The fold is kept per question: the second question starts folded, and the first is open again on return.
+  await ui.press({ key: 'nav-next' })
+  texts = await textsOf(ui)
+  expect(texts).toContain('Which way for q-f2-bbbbbb?')
+  expect(texts.some(text => text.includes('What W'))).toBe(false)
+  await ui.press({ key: 'nav-back' })
+  texts = await textsOf(ui)
+  expect(texts.some(text => text.includes('What W'))).toBe(true)
+  await ui.press({ key: 'details-q-f1-aaaaaa' })
+  texts = await textsOf(ui)
+  expect(texts.some(text => text.includes('What W'))).toBe(false)
+  await ui.unmount()
+})
+
+test('the details toggle draws the plain "details" label and no hotkey when an option is keyed E', async ($, on) => {
+  const options = [
+    { key: 'A', label: 'Keep', tradeoff: 'cheap', fit: 80 },
+    { key: 'E', label: 'Other path', tradeoff: 'slow', fit: 40 },
+  ]
+  const files = new Map([
+    [path('q', 'q-f3-cccccc'), question('q-f3-cccccc', 1000, { what: 'What W', options })],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(await labelOf(ui, 'details-q-f3-cccccc')).toBe('detalhes')
   await ui.unmount()
 })
 
@@ -2039,8 +2106,9 @@ test('hotkeys: each option its key letter, Other the next digit, then z, x and w
   expect(await deskHotkey('other-q-l1-aaaaaa')).toBe('3')
   expect(await deskHotkey('nav-back')).toBe('p')
   expect(await deskHotkey('nav-next')).toBe('f')
+  expect(await deskHotkey('details-q-l1-aaaaaa')).toBe('e')
   await desk.press({ key: 'nav-next' })
-  expect(await deskHotkey('submit-all')).toBe('e')
+  expect(await deskHotkey('submit-all')).toBe('w')
   await desk.press({ key: 'nav-back' })
   await desk.press({ key: 'other-q-l1-aaaaaa' })
   for (const button of await desk.findAll({ type: 'Button' })) expect(button.props.hotkey).toBeUndefined()
@@ -2473,6 +2541,7 @@ test('the explanation boxes sit above the question, between the question and the
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
+  await ui.press({ key: 'details-q-l1-aaaaaa' })
   const nodes = nodesOf(await ui.drawn())
   const keyAt = (key: string): number => nodes.findIndex(node => keyOfNode(node) === key)
   const questionAt = nodes.findIndex(node => Array.isArray(node.children) && node.children.includes('Which way for q-l1-aaaaaa?'))
@@ -2524,6 +2593,7 @@ test('the card draws What, The problem, Analogy, the question, Urgency, the opti
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
+  await ui.press({ key: 'details-q-l1-aaaaaa' })
   expectInOrder(await textsOf(ui), [
     'O que é: W',
     'O problema: P',
@@ -2551,6 +2621,7 @@ test('the card draws the same order in English, with the option sub-lines under 
   stubHost(on, files, true, {}, {}, { LANG: 'en_US.UTF-8' })
   await $.session.start(SESSION)
   const ui = await mountPane($)
+  await ui.press({ key: 'details-q-l1-aaaaaa' })
   expectInOrder(await textsOf(ui), [
     'What it is: W',
     'The problem: P',
@@ -2578,6 +2649,7 @@ test('a question filed before the new fields still draws its card and option lin
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
+  await ui.press({ key: 'details-q-l1-aaaaaa' })
   const texts = await textsOf(ui)
   expect(texts).toContain('Which way for q-l1-aaaaaa?')
   expect(texts).toContain('└ Cheap · aderência 80')

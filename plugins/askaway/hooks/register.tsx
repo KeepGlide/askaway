@@ -64,6 +64,8 @@ const cleared = atom({ plugin: 'askaway', key: 'cleared' } as const, [] as strin
 const deliveredAt = atom({ plugin: 'askaway', key: 'deliveredAt' } as const, {} as Record<string, number>)
 // The cards fading out after a press: question id → press time. The pane is one instance, so a plain atom holds it.
 const leaving = atom({ plugin: 'askaway', key: 'leaving' } as const, {} as Record<string, number>)
+// The questions whose details are open (the long sections of the card): question id → true. Kept while the plugin lives.
+const expanded = atom({ plugin: 'askaway', key: 'expanded' } as const, {} as Record<string, boolean>)
 // Whether this session's main loop is inside a turn: an answer is handed to the prompt only while it is idle.
 const turn = atom({ plugin: 'askaway', key: 'turn' } as const, { isBusy: false })
 // The language in use, and the question wizard (group, step, picks, Other…).
@@ -476,6 +478,11 @@ async function toggleOther($: EngineInterface, id: string): Promise<void> {
   await update($, wizardAtom, prev => ({ ...prev, other: prev.other === id ? null : id }))
 }
 
+// Opens or closes the details of one question's card. The state lives in the plugin, one entry per question.
+async function toggleDetails($: EngineInterface, id: string): Promise<void> {
+  await update($, expanded, prev => ({ ...prev, [id]: prev[id] !== true }))
+}
+
 // The free text of "Other…" is a pick like an option; blank text is no answer.
 async function submitOther($: EngineInterface, id: string, text: string): Promise<void> {
   const trimmed = text.trim()
@@ -508,6 +515,7 @@ const actionsFor = ($: EngineInterface): PaneActions => ({
   dismiss: id => report($, dismissStatus($, id)),
   pick: (id, key) => report($, pickOption($, id, { key })),
   toggleOther: id => report($, toggleOther($, id)),
+  toggleDetails: id => report($, toggleDetails($, id)),
   submitOther: (id, text) => report($, submitOther($, id, text)),
   back: () => report($, moveWizard($, (current, group) => flow.back(current, group))),
   next: () => report($, moveWizard($, (current, group) => flow.next(current, group))),
@@ -589,6 +597,7 @@ export const register: Register = on => {
       now,
       leaving: fading,
       footer: footerText(lang, current, now),
+      expanded: await read($, expanded),
       groups,
       active,
       wizard,
