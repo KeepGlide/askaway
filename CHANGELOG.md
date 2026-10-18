@@ -2,8 +2,33 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.13, set by the beta.13 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.14, set by the beta.14 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.14] - 2026-10-18
+
+### Added
+
+- Optional `urgency_level` (`low`, `medium` or `high`) in `ask` and in the askaway-question-playbook skill. The CLI stores it lower-case (`build_entry` and `_urgency_level` in `askaway.py`) and refiles the question when the value is not one of the three grades. The pane grades the Urgency line by it, and falls back to the keyword grading of the text (en and pt) when it is absent.
+
+### Changed
+
+- The details block is filled by the theme family (dark `#282828`, light `#EEEDE9`, provisional) and has no border, replacing beta.13's rounded border in the theme key `subtle`. Themes named `auto` or `custom:<slug>` get no fill. The Askaway mark sits inside the block's title.
+- The Other option is drawn as the next letter (`C · Other…`, hotkey `c`), with no echo of the typed text and no "Your answer" label. Its input row is prefixed `└ `.
+- Urgency sits right under the title row, coloured by its grade with the theme keys `success`, `warning` and `error`.
+- Tree rows and "Submit Answer" are native Markdown links (`file:///askaway/jump/<id>`, `file:///askaway/submit/<id>`) marked `▪`, with escaped titles. An underlined button stands in where Markdown is absent.
+- The flat status lines became a History tree grouped by session family, then session, then question. Each answer row shows its mark (`⏳`, `✓`, `⚠️`) and a line such as "Answer A · sent 14:32 · delivered 14:33 (read by the session)" in local time ("17/10 14:32" on another day). Other answers are quoted, and "answered by agent/<name>" appears only when the answerer is not the user. Delivered rows still hide after 30 s.
+- A "▪ Clear history (N)" link at the bottom of the pane (`file:///askaway/clear`) removes the delivered, ended and expired rows and replaces the per-line ✕ dismiss. The cleared ids are pruned to the answers still on the board.
+- The delivery record carries the marker's `ts`.
+
+### Fixed
+
+- The urgency keyword fallback no longer grades "multimedia" as medium.
+- A delivered row without a time no longer leaves a dangling separator.
+
+### Migration needed
+
+- none.
 
 ## [0.4.0-beta.13] - 2026-10-18
 
