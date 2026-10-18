@@ -70,8 +70,16 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   `session` is the session the answer is bound to: for `by: cli` the caller's `CLAUDE_CODE_SESSION_ID`
   (or the question's session when the caller has none); for a panel answer the question's own session.
   Free text carries key `"other"` and the text in `text`: `{"id":"...","key":"other","text":"Use a fork","by":"panel","session":"<session>","ts":<ms>}`.
-  `text` is absent for lettered keys. First writer wins: a writer checks that the file does not
-  exist first and never overwrites it. Delivery accepts key `other` only when `text` is non-empty.
+  `text` is absent for lettered keys. First writer wins: the CLI publishes with `os.link` of a temp file, which fails
+  when the target exists, so it never overwrites an answer. Delivery accepts key `other` only when `text` is non-empty.
+  The panel answers through the CLI too (option a), so the same rule holds across processes: the panel never writes
+  `a/<id>.json` itself. It runs `python3 <plugin root>/scripts/askaway.py answer <id> <key> --by panel --strict`, with
+  `--text <string>` for key `other`, and `ASKAWAY_HOME` set to the state folder it reads. The plugin root is
+  `$.plugin.root`. The reply is one JSON line: `written: true` when the panel's answer landed, `written: false` when an
+  answer already held the slot. Either way the panel reads the record on disk from `a/<id>.json` and shows it, so the
+  board holds the CLI's own stamp (`ts`, `who`, `session`). The panel sends no `who`: the CLI stamps it (ASKAWAY_WHO,
+  else the OS user name). A run that cannot start (no `python3`), exits
+  non-zero or prints no `written` is an error: nothing is recorded, the card fades as usual, and the error is logged.
   Earlier versions wrote `other` answers too; the panel reads them like any other answer.
 - `d/<id>.json` — delivery marker: `{"id":"...","session":"<session that received it>","ts":<ms>}`.
   A marker the mod writes when it hands the answer to its own idle session's prompt carries
@@ -121,7 +129,7 @@ writes its document instead); exit 0 always, unless `--strict` is given (below).
   fields named in `error` and files again. An internal error prints
   `{"action":"continue","recommended":<given or null>,"error":"internal error"}`, or
   `{"action":"pause",...}` when the entry asked for `risk` `high` (nothing was filed in either case).
-- `answer <id> <key> [--by cli]` — writes a/ if absent; prints `{"id","key","written":bool}`.
+- `answer <id> <key> [--by cli] [--text <string>]` — writes a/ if absent (the panel calls it with `--by panel`, `--strict`, and `--text` for key `other`); prints `{"id","key","written":bool}`. `--text` is the free text of key `other` (trimmed; required for `other`, dropped for a lettered key).
   Session rule: a `cli` answer to a question with a session is refused unless the caller's
   `CLAUDE_CODE_SESSION_ID` equals that session (a shell with no session is refused too); the refusal
   prints `{"error":"answer refused: ..."}`, exit 0, and writes nothing, so the slot stays free. Panel
@@ -304,7 +312,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
 - **Next** moves to the next question whether or not it has a pick; **Back** moves to the previous one. Next does
   nothing on the last question.
 - **Submit all (n)** writes every answer of the group's round at once. On each press the card dims at once; each
-  answer then goes through the first-writer-wins path of `a/`, and the card fades for 250 ms (`FADE_MS`). Then the
+  answer is sent to the CLI (`askaway.py answer --by panel`, see the answer record above), which writes `a/` first-writer-wins, and the card fades for 250 ms (`FADE_MS`). Then the
   picks of those questions are cleared and the step goes back to the first question. When other groups stay open, the
   card then shows the first question of the first group still open.
 - **Picks** survive a re-poll. Picks, and an open Other field, of questions that are no longer open are dropped.

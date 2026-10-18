@@ -126,6 +126,7 @@ function stubHost(
   const toasts: string[] = []
   const writes: string[] = []
   const submits: string[] = []
+  const calls: { argv: string[]; env?: Record<string, string> }[] = []
   const clock = mock.clock(on)
   mock.env(on, { HOME, LANG: 'pt_BR.UTF-8', ...env })
   mock.store(on, stored)
@@ -158,13 +159,36 @@ function stubHost(
   })
   on('fs.exists', (_$, e) => ({ value: files.has(e.path) }))
   on('fs.write', async (_$, e) => {
+    // An answer goes through the CLI (process.run below); a direct write to a/ would bypass its first-writer-wins link.
+    if (e.path.startsWith(`${STATE}/a/`)) throw new Error(`answer written directly: ${e.path}`)
     await holds.write
     writes.push(e.path)
     files.set(e.path, e.text)
     return { value: undefined }
   })
-  return { toasts, writes, submits, clock }
+  // The CLI's `answer` (askaway.py's cmd_answer and create_once): the first answer for an id lands, a later one is refused
+  // and reports the stored key. The check runs when the call reaches its write, after any hold. `writes` records the
+  // answers that land; `calls` records every call the pane makes.
+  on('process.run', async (_$, e) => {
+    calls.push({ argv: [...e.argv], env: e.init?.env })
+    const [, , , id, key] = e.argv
+    await holds.write
+    const stored = files.get(path('a', id))
+    if (stored !== undefined) return cliReply(JSON.stringify({ id, key: (JSON.parse(stored) as { key: string }).key, written: false }))
+    const at = e.argv.indexOf('--text')
+    const text = at === -1 ? undefined : e.argv[at + 1]
+    const record = { id, key, by: 'panel', ts: 0, ...(key === 'other' && text !== undefined ? { text: text.trim() } : {}) }
+    files.set(path('a', id), `${JSON.stringify(record)}\n`)
+    writes.push(path('a', id))
+    return cliReply(JSON.stringify({ id, key, written: true }))
+  })
+  return { toasts, writes, submits, clock, calls }
 }
+
+// The hook's reply with the result `$.process.run` gives for a child that exited (the fields the pane reads).
+const cliReply = (stdout: string, exitCode = 0) => ({
+  value: { exitCode, stdout: `${stdout}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
+})
 
 // A promise a test releases by calling the returned function.
 function gate(): { promise: Promise<void>; open: () => void } {
@@ -662,24 +686,19 @@ test('a second press on another option replaces the pick; the answer is written 
   await ui.unmount()
 })
 
-test('a panel answer stamps who from ASKAWAY_WHO when it is set', async ($, on) => {
+test('a panel answer leaves who to the CLI: the call names no who and sets no ASKAWAY_WHO (the CLI stamps it)', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
-  stubHost(on, files, true, {}, {}, { ASKAWAY_WHO: '  Ana\tSilva  ' })
+  const { calls } = stubHost(on, files, true, {}, {}, { ASKAWAY_WHO: '  Ana\tSilva  ' })
   await $.session.start(SESSION)
   const ui = await mountPane($)
   await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
   await ui.press({ key: 'submit-all' })
-  expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ by: 'panel', who: 'Ana Silva' })
-})
-
-test('a panel answer stamps who from the OS user name when ASKAWAY_WHO is not set', async ($, on) => {
-  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
-  stubHost(on, files, true, {}, {}, { USER: 'jdoe' })
-  await $.session.start(SESSION)
-  const ui = await mountPane($)
-  await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
-  await ui.press({ key: 'submit-all' })
-  expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ by: 'panel', who: 'jdoe' })
+  expect(calls).toEqual([
+    {
+      argv: ['python3', expect.stringMatching(/\/scripts\/askaway\.py$/), 'answer', 'q-l1-aaaaaa', 'B', '--by', 'panel', '--strict'],
+      env: { ASKAWAY_HOME: STATE },
+    },
+  ])
 })
 
 test('a click picks and advances; Submit all on the last question writes every answer of the window in one go', async ($, on) => {

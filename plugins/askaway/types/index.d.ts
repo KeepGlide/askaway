@@ -40,7 +40,8 @@ export type Question = {
   risk: string
 }
 
-// a/<id>.json: the first writer wins; this mod never overwrites one. Legacy key "other" carries its free text in `text`.
+// a/<id>.json: the first writer wins. This mod writes one only through `askaway.py answer` (its create-once link), never
+// directly, and never overwrites one. Legacy key "other" carries its free text in `text`.
 export type Answer = {
   id: string
   key: string

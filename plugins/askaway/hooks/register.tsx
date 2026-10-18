@@ -13,13 +13,13 @@ import {
   EMPTY_BOARD,
   OTHER_KEY,
   ageLabel,
-  answerWho,
   footerText,
   groupBySession,
   isOpenIn,
   listText,
   openQuestions,
   parseAnswer,
+  parseAnswerWritten,
   parseAway,
   parseDelivery,
   parseQuestion,
@@ -317,9 +317,9 @@ async function handOne(
   if (lines.length > 0) await $.prompt.submit({ text: lines.join('\n') })
 }
 
-// Writes a/<id>.json for the chosen option, or for "Other…" with its free text. First writer wins: an existing answer
-// is never overwritten, and a question that is not open takes no answer. `pressing` holds the ids being written, so a
-// second write for a card whose first answer is still in flight writes nothing.
+// Answers the question with the chosen option, or with "Other…" and its free text, through the CLI (answerViaCli). First
+// writer wins: an answer that already exists is never overwritten, and a question that is not open takes no answer.
+// `pressing` holds the ids being answered, so a second press for a card whose first answer is still in flight does nothing.
 async function answerEntry($: EngineInterface, home: string, id: string, key: string, text?: string): Promise<boolean> {
   if (pressing.has(id)) return false
   pressing.add(id)
@@ -338,29 +338,29 @@ async function writeAnswer($: EngineInterface, home: string, id: string, key: st
   if (!isChoice || !isOpenIn(current, id)) return false
   const path = `${home}/a/${id}.json`
   const pressedAt = await $.clock.now()
-  // The card dims at once, before the file lands: the press gives its feedback without waiting for the disk.
+  // The card dims at once, before the CLI answers: the press gives its feedback without waiting for the disk.
   await startFade($, id, pressedAt)
-  if (await $.fs.exists(path)) {
-    // Another writer answered first (the CLI, or another session's pane): the board takes that answer now.
-    const existing = parseAnswer(await readJson($, path), id)
-    if (existing !== undefined) await update($, board, prev => withAnswer(prev, existing))
-    return false
-  }
-  const answer: Answer = { id, key, by: 'panel', ts: pressedAt, text, who: await currentWho($) }
-  await $.fs.write(path, `${JSON.stringify(answer)}\n`)
-  await update($, board, prev => withAnswer(prev, answer))
-  return true
+  const written = await answerViaCli($, home, id, key, text)
+  // The board takes the record on disk, whoever wrote it. The CLI stamps its own ts, who and session, so a copy made here
+  // would differ from the file and redraw the pane on the next poll.
+  const stored = parseAnswer(await readJson($, path), id)
+  if (stored !== undefined) await update($, board, prev => withAnswer(prev, stored))
+  return written
 }
 
-// The who the panel stamps on its answers: ASKAWAY_WHO, else the OS user name as Python's getpass reads it (LOGNAME, USER,
-// LNAME, USERNAME: the first one set), else "unknown". The engine wants each env name as a literal, so they are read one by one.
-async function currentWho($: EngineInterface): Promise<string> {
-  const osUser =
-    (await $.env.get('LOGNAME')) ||
-    (await $.env.get('USER')) ||
-    (await $.env.get('LNAME')) ||
-    (await $.env.get('USERNAME'))
-  return answerWho(await $.env.get('ASKAWAY_WHO'), osUser)
+// The panel's only writer of a/<id>.json is the CLI: `askaway.py answer --by panel` publishes with an exclusive link, so
+// the first answer from any process wins. The state folder goes in as ASKAWAY_HOME, so the CLI writes the folder the pane
+// reads. A run that cannot start, exits non-zero or prints no `written` throws, as a failed write did before. Returns
+// whether this answer landed (`written`).
+async function answerViaCli($: EngineInterface, home: string, id: string, key: string, text?: string): Promise<boolean> {
+  const argv = ['python3', `${$.plugin.root}/scripts/askaway.py`, 'answer', id, key, '--by', 'panel', '--strict']
+  if (text !== undefined) argv.push('--text', text)
+  const run = await $.process.run(argv, { env: { ASKAWAY_HOME: home } })
+  const written = parseAnswerWritten(run.stdout)
+  if (run.exitCode !== 0 || written === undefined) {
+    throw new Error(`askaway answer failed: ${(run.stderr || run.stdout).trim()}`)
+  }
+  return written
 }
 
 // Marks the card as leaving and, FADE_MS later on the engine clock, lets it go.

@@ -118,6 +118,18 @@ export function parseAnswer(raw: unknown, id: string): Answer | undefined {
   return { id, key: raw.key, by, ts: raw.ts, text: raw.key === OTHER_KEY ? optionalText(raw.text) : undefined, session, who }
 }
 
+// The `written` of the reply `askaway.py answer` prints (stdout, one JSON line). A reply without a boolean `written`, such as
+// an error line, is undefined.
+export function parseAnswerWritten(stdout: string): boolean | undefined {
+  let raw: unknown
+  try {
+    raw = JSON.parse(stdout)
+  } catch {
+    return undefined
+  }
+  return isRecord(raw) && typeof raw.written === 'boolean' ? raw.written : undefined
+}
+
 // The name an answer record carries (askaway.py's WHO_MAX and CONTROL_CHARS): at most WHO_MAX characters, the last one an
 // ellipsis, and control characters become spaces.
 const WHO_MAX = 40

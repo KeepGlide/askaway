@@ -75,15 +75,28 @@ function stubHost(on: On, files: Map<string, string>, holds: Holds = {}) {
     return { value: text }
   })
   on('fs.exists', (_$, e) => ({ value: files.has(e.path) }))
-  on('fs.write', async (_$, e) => {
-    attempts.push(e.path)
+  // The panel answers through the CLI (process.run below); a direct write to a/ would bypass its first-writer-wins link.
+  on('fs.write', (_$, e) => {
+    throw new Error(`answer written directly: ${e.path}`)
+  })
+  // The CLI's `answer` (create_once): a call reaches the host, is held, then lands only if no answer exists yet.
+  on('process.run', async (_$, e) => {
+    const [, , , id, key] = e.argv
+    attempts.push(path('a', id))
     await holds.write
-    writes.push(e.path)
-    files.set(e.path, e.text)
-    return { value: undefined }
+    const stored = files.get(path('a', id))
+    if (stored !== undefined) return cliReply(JSON.stringify({ id, key: (JSON.parse(stored) as { key: string }).key, written: false }))
+    files.set(path('a', id), `${JSON.stringify({ id, key, by: 'panel', ts: 0 })}\n`)
+    writes.push(path('a', id))
+    return cliReply(JSON.stringify({ id, key, written: true }))
   })
   return { attempts, writes, clock }
 }
+
+// The hook's reply with the result `$.process.run` gives for a child that exited (the fields the pane reads).
+const cliReply = (stdout: string, exitCode = 0) => ({
+  value: { exitCode, stdout: `${stdout}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
+})
 
 // A promise a test releases by calling the returned function.
 function gate(): { promise: Promise<void>; open: () => void } {
