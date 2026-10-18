@@ -3,6 +3,7 @@
 // in tree order (session by session). The step runs 0..total-1 over the questions of the group; the last question
 // carries the Submit all button, so there is no review step.
 import type { Question } from '../types'
+import { OTHER_KEY } from './model'
 
 // A chosen option. The key 'other' carries the free text in `text`.
 export type Pick = { key: string; text?: string }
@@ -76,6 +77,18 @@ export function submittable(group: Group, wizard: Wizard): { id: string; pick: P
     answers.push({ id: question.id, pick })
   }
   return answers.length > 0 ? answers : undefined
+}
+
+// Typing into the Other field records Other as the pick, with the text typed so far, and keeps the wizard where it is; blank
+// text takes an Other pick away. Enter still records and moves on (choose).
+export function typedOther(wizard: Wizard, id: string, text: string): Wizard {
+  const trimmed = text.trim()
+  const picks = { ...wizard.picks }
+  const pick: Pick | undefined = picks[id]
+  if (trimmed !== '') picks[id] = { key: OTHER_KEY, text: trimmed }
+  else if (pick?.key === OTHER_KEY) delete picks[id]
+  // The field holds text only while it is not blank: the hotkeys are off exactly while typed text is in it.
+  return { ...wizard, picks, other: trimmed !== '' ? id : null }
 }
 
 // The question on screen at the step (clamped into the group), or undefined for a group with no question.

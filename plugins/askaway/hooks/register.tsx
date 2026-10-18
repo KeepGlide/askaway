@@ -11,6 +11,7 @@ import { detectLang, langName, resolveLang, t, type Lang } from './i18n'
 import { renderPane, type PaneActions, type PaneView } from './pane'
 import {
   EMPTY_BOARD,
+  OTHER_INPUT_PREFIX,
   OTHER_KEY,
   ageLabel,
   footerText,
@@ -535,6 +536,27 @@ async function submitCurrent($: EngineInterface): Promise<void> {
   if (group !== undefined) await submitGroup($, group, wizard)
 }
 
+// The per-question Submit of a tree row: that question's answer goes through the answer path alone, at once. The other
+// questions keep their picks for Submit all, and the question leaves the round as Submit all's questions do.
+const submittingOne = (id: string): string => `question:${id}`
+
+async function submitOne($: EngineInterface, id: string): Promise<void> {
+  const { open, wizard, leaving: fading } = await snapshot($)
+  const group = flow.groupsOf(open).find(one => one.questions.some(question => question.id === id))
+  const pick: Pick | undefined = wizard.picks[id]
+  const folder = await folderOf($)
+  if (group === undefined || pick === undefined || fading[id] !== undefined || folder === undefined) return
+  if (submitting.has(submittingOne(id))) return
+  submitting.add(submittingOne(id))
+  try {
+    await answerEntry($, folder, id, pick.key, pick.text)
+    const first = group.questions.find(question => question.id !== id)?.id ?? null
+    await update($, wizardAtom, prev => clearPicks(prev, [id], first))
+  } finally {
+    submitting.delete(submittingOne(id))
+  }
+}
+
 // Records a pick for one question and moves the wizard on. A card that is fading takes nothing. Nothing is submitted
 // here: the last question's Submit all is the only submit path.
 async function pickOption($: EngineInterface, id: string, choice: Pick): Promise<void> {
@@ -554,9 +576,16 @@ async function moveWizard($: EngineInterface, move: (current: Wizard, group: Gro
   await update($, wizardAtom, prev => move(prunedWizard(prev, open), group))
 }
 
-// Opens or closes the "Other…" field of a question. The draft is typed into the field itself, never written here.
-async function toggleOther($: EngineInterface, id: string): Promise<void> {
-  await update($, wizardAtom, prev => ({ ...prev, other: prev.other === id ? null : id }))
+// The "Other…" link focuses the field of its question, which is already open under the link.
+async function focusOther($: EngineInterface, id: string): Promise<void> {
+  await $.ui.focus({ requestId: PANE, key: `${OTHER_INPUT_PREFIX}${id}` })
+}
+
+// Typing in the field records Other with the text so far, without moving on. A question that is not open takes nothing.
+async function typeOther($: EngineInterface, id: string, text: string): Promise<void> {
+  const { open, leaving: fading } = await snapshot($)
+  if (fading[id] !== undefined || !open.some(question => question.id === id)) return
+  await update($, wizardAtom, prev => flow.typedOther(prunedWizard(prev, open), id, text))
 }
 
 // Opens or closes the details of one question's card. The state lives in the plugin, one entry per question.
@@ -614,7 +643,9 @@ const actionsFor = ($: EngineInterface): PaneActions => ({
   dismiss: id => report($, dismissStatus($, id)),
   dismissEnded: id => report($, withFolder($, folder => dismissEnded($, folder, id))),
   pick: (id, key) => report($, pickOption($, id, { key })),
-  toggleOther: id => report($, toggleOther($, id)),
+  focusOther: id => report($, focusOther($, id)),
+  typeOther: (id, text) => report($, typeOther($, id, text)),
+  submitOne: id => report($, submitOne($, id)),
   toggleDetails: id => report($, toggleDetails($, id)),
   jump: id => report($, jumpToQuestion($, id)),
   submitOther: (id, text) => report($, submitOther($, id, text)),

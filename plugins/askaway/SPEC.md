@@ -347,29 +347,33 @@ status list). `hooks/pane.tsx`, `renderPane`.
     "Cons: <cons>" (pt "O que acontece", "Prós", "Contras"). The options are in a column with `gap={2}` and
     `marginTop={1}`, so two blank lines part them from the explanation box (`renderQuestion`, `renderOption`,
     `hooks/pane.tsx`);
-  - "N. Other…" is the last option (Portuguese: "Outra…"). Its button opens and shuts a text field under it
-    (autofocused). Enter in that field ("Done" / "Pronto") records the typed text as the pick (key `other`); blank
-    text records nothing. Once recorded, the text shows under the button and the button is primary. A surface with
-    no Input draws no Other option (`renderOther`);
-  - the explanation box after the options, the only folded box: it draws while the details are open and one of its sections is set, in this order: "💡 Why <rec>" (`why`; pt
-    "💡 Por que A"), "↩️ Undo" (`undo`; pt "↩️ Como desfazer"), "🛠️ How" (`how`; pt "🛠️ Como"), "🎁 What we gain" (`gains`;
-    pt "🎁 O que ganhamos"), "⚖️ What we lose" (`losses`; pt "⚖️ O que perdemos"), and "🧭 Context and origin" (`context`;
-    pt "🧭 Contexto e origem") last. Each section is one line, "heading: text", the heading in bold, the text wrapping as one
-    paragraph; every name in the text (a slash command, or anything the agent wrote between backticks) is drawn in bold
-    ink (`piecesOf`, `renderSection`, `hooks/model.ts`, `hooks/pane.tsx`). The three boxes are `sectionsOf` and
-    `renderExplanation` (`hooks/model.ts`, `hooks/pane.tsx`);
+  - "N. Other…" is the last option (Portuguese: "Outra…"), a plain Button with underlined text like the Details link,
+    bold while its pick holds text. The text field under it is always open (no press needed, no autofocus, so the keys
+    stay with the card until the person clicks in). Pressing the link only focuses that field (`$.ui.focus`, key
+    `other-input-<id>`). Typing in the field records Other as the pick with the text typed so far, without moving on
+    (`typeOther`, the Input's `onInput`, `flow.typedOther`); a blank field takes that pick away. Enter ("Done" /
+    "Pronto") records the text and moves on (`submitOther`). Once recorded, the text shows under the link. A surface
+    with no Input draws no Other option (`renderOther`);
+  - the details, folded by default: while the details toggle is open, they draw in the box above the question, right
+    after Analogy and before the question, in the same box and style as What it is, The problem and Analogy. Their
+    sections, each drawn only when its field is set, in this order: "💡 Why <rec>" (`why`; pt "💡 Por que A", the letter
+    is the recommended key), "↩️ Undo" (`undo`; pt "↩️ Como desfazer"), "🛠️ How" (`how`; pt "🛠️ Como"), "🎁 What we
+    gain" (`gains`; pt "🎁 O que ganhamos"), "⚖️ What we lose" (`losses`; pt "⚖️ O que perdemos"), and "🧭 Context and
+    origin" (`context`; pt "🧭 Contexto e origem") last. Each section is one line, "heading: text", the heading in bold,
+    the text wrapping as one paragraph; every name in the text (a slash command, or anything the agent wrote between
+    backticks) is drawn in bold ink (`piecesOf`, `renderSection`, `hooks/model.ts`, `hooks/pane.tsx`). The sections
+    come from `sectionsOf` (slot `details`); `sectionsAboveQuestion` joins them to the box above the question
+    (`renderExplanation`, `hooks/pane.tsx`);
   - **Details toggle**: a link under the lead line, drawn before What it is. It is a plain Button (no chrome, no variant)
-    whose label is underlined text: "Details" (pt "Detalhes"), or "Hide details" (pt "Ocultar detalhes") while the long
-    sections are open. Its hotkey `e` is drawn before the label ("e: Details"). When an option is keyed E, the toggle has no
-    hotkey, since the option keeps the letter. Pressing it opens and shuts the explanation box after the options (Why to
-    Context), which is folded by default. Everything else stays drawn: the title, the lead line, What it is, The problem,
-    Analogy, the question, Urgency, and each option's tradeoff, What happens, Pros and Cons lines, and the nav row. The toggle
-    is drawn only when the card has a folded section. Its state is kept per question in the plugin's state (`expanded`,
-    `hooks/register.tsx`) while the plugin is loaded; it is not written to disk (`renderDetailsToggle`, `hasDetailsOf`,
-    `hooks/pane.tsx`). On the terminal the link is text with an underline; on the desktop the surface draws its native
-    button for a Button, plain or not, since the API has no link-style control. The toggle is drawn only when the card has a
-    folded section. Its state is kept per question in the plugin's state (`expanded`, `hooks/register.tsx`) while the plugin
-    is loaded; it is not written to disk (`renderDetailsToggle`, `hasDetailsOf`, `hooks/pane.tsx`).
+    whose label is underlined text: "Details" (pt "Detalhes"), or "Hide details" (pt "Ocultar detalhes") while the details
+    are open. Pressing it opens and shuts the details, which then draw right after Analogy and before the question. Its
+    hotkey `e` is drawn before the label ("e: Details"). When an option is keyed E, the toggle has no hotkey, since the
+    option keeps the letter. The rest keeps its order: the title, the lead line, What it is, The problem, Analogy (with
+    the details after them when open), the question, Urgency, and each option's tradeoff, What happens, Pros and Cons
+    lines, and the nav row. The toggle is drawn only when the card has a folded section. Its state is kept per question
+    in the plugin's state (`expanded`, `hooks/register.tsx`) while the plugin is loaded; it is not written to disk
+    (`renderDetailsToggle`, `hasDetailsOf`, `hooks/pane.tsx`). On the terminal the link is text with an underline; on the
+    desktop the surface draws its native button for a Button, plain or not, since the API has no link-style control.
   - a separator: a 1px rule on the desktop, a row of "─" on the terminal (`renderDivider`);
   - the nav row: [← Back] (Portuguese: "← Voltar") on every question, dim on the first; [Next →] (Portuguese:
     "Próxima →") on every question but the last; on the last one, [Submit all (n)] (Portuguese: "Enviar tudo (n)"),
@@ -379,21 +383,27 @@ status list). `hooks/pane.tsx`, `renderPane`.
   take the first free letters of their surface's pool (`letterFor`, `NAV_POOLS`, `hooks/pane.tsx`): `z`, `x`, `w` on the
   terminal; `p`, `f` and then `w`, `z`, `x` on the desktop. The letter `e` is the details toggle's, on both surfaces, so no
   pool holds it. A letter that an option of the card uses is skipped. No
-  hotkey is drawn while the Other field is open, so typed text presses no button.
+  hotkey is drawn while the Other field holds typed text, so typed text presses no button. The Input reports typing
+  (`onInput`) but no focus change, so a bare focus on the field keeps the hotkeys (a known limit of the API).
 - **Choosing**: an option, or "Other…" with its text, records the pick and moves on: to the first question without a
   pick after the current one (wrapping to the start), or, once every question of the group has a pick, to the last
   question, where Submit all is. After each pick the group stays selected. Nothing is written until Submit all.
   A card that is fading after a press takes no pick.
 - **Next** moves to the next question whether or not it has a pick; **Back** moves to the previous one. Next does
   nothing on the last question.
+- **Per-question Submit**: a tree row whose question holds a pick not yet submitted draws, after its text, " ✓ - " and a
+  plain "Submit" button (key `tree-submit-<id>`, pt "Enviar"; `renderTreeQuestion`, `renderTreeSubmit`). Its press
+  answers that question alone, through the answer path (`submitOne`), at once, and the row leaves the tree and the round
+  as Submit all's questions do. The other picks stay for Submit all. The leading mark of a row is only ● (on screen) or ○.
 - **Submit all (n)** writes every answer of the group's round at once. On each press the card dims at once; each
   answer is sent to the CLI (`askaway.py answer --by panel`, see the answer record above), which writes `a/` first-writer-wins, and the card fades for 250 ms (`FADE_MS`). Then the
   picks of those questions are cleared and the step goes back to the first question. When other groups stay open, the
   card then shows the first question of the first group still open.
 - **Picks** survive a re-poll. Picks, and an open Other field, of questions that are no longer open are dropped.
-- **Status lines** (bottom of the pane, newest first), green (`#166534` ink on `#DCFCE7`):
-  - "⏳ Answer <key> sent to <window>" while the answer has no d/ marker;
-  - "✅ Answer <key> delivered to <window> (read by the session)", hidden 30 s after it is first seen
+- **Status lines** (bottom of the pane, newest first): plain text in the dim style, with no fill and no border. Only the
+  mark is drawn in the accent (`ACCENT_COLOR`, a non-text mark, 3:1); the text is dim (`renderStatusLine`):
+  - mark "⏳", text "Answer <key> sent to <window>" while the answer has no d/ marker;
+  - mark "✓" (it replaces the hourglass once delivered), text "Answer <key> delivered to <window> (read by the session)", hidden 30 s after it is first seen
     (`DELIVERED_SHOWN_MS`, `hooks/model.ts`);
   - "⚠️ <window> ended before reading answer <key>" and "⚠️ Answer <key> expired unread". The two ⚠️
     lines stay until their ✕ is pressed; the press records the id in `$.store` key `cleared`

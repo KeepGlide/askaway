@@ -184,13 +184,13 @@ While questions are open, a band sits above the prompt: `2 questions waiting · 
 ### Answering a question
 
 1. Press `1` from an empty prompt, or click **Answer** on the band, to open the pane. The header shows the Askaway logo, the heading **Questions waiting** and the counter, such as `2 pending · 1 group`.
-2. The tree lists every project with open questions, one under the other, each project name in bold. Under each project, its sessions (`├` or `└`) hold their questions. A mark shows where each question stands: `●` the one on screen, `✓` a picked option, `○` waiting. Nothing is sent until **Submit all**. Project and session names are text, not buttons; each question row is a button, and pressing one jumps to its card.
+2. The tree lists every project with open questions, one under the other, each project name in bold. Under each project, its sessions (`├` or `└`) hold their questions. A mark shows where each question stands: `●` the one on screen, `○` waiting. A question with a picked option shows `✓ - Submit` after its text: that **Submit** sends only that question's answer, at once; the other picks wait for **Submit all**. Nothing is sent until one of them is pressed. Project and session names are text, not buttons; each question row is a button, and pressing one jumps to its card.
 3. Click an option to record it. The pane moves to the next question without an answer, wrapping to the start if needed, or to the last question once every question has one. Nothing is sent yet.
-4. For your own answer, click **Other…**, type it and press Enter (the field's button reads **Done**). The text is recorded as the answer, and the hotkeys stay off while the field is open.
+4. For your own answer, the field under **Other…** is always open: click into it and type. The text is recorded as your answer as you type, and the hotkeys stay off while the field holds text. Press Enter (the field's button reads **Done**) to record it and move on. The **Other…** link only moves the focus to the field.
 5. **← Back** goes to the previous question. **Next →** goes to the next one, with or without an answer. It is on every question but the last.
 6. On the project's last question, the forward button is **Submit all (N)**, where N is the number of questions of the project on screen. It is pressable only once every question has an answer. Pressing it sends every answer of the project to the sessions that asked. Nothing is sent before this button.
 
-Status lines at the bottom of the pane show where each answer is: `⏳` sent, `✅` read by the session, `⚠️` the session ended before reading it, or the answer expired unread (`expired`: no session read it within 7 days). The last two can be dismissed with `✕`.
+Status lines at the bottom of the pane show where each answer is: `⏳` sent, `✓` read by the session (the check replaces the hourglass; the text is plain, only the mark is coloured), `⚠️` the session ended before reading it, or the answer expired unread (`expired`: no session read it within 7 days). The last two can be dismissed with `✕`.
 
 When no question is open, the pane shows one footer line under the status lines, with the counts: `Nothing waiting · 1 answered in the last 24 h · last: <title> → A, <age> · 1 not yet read · 1 expired`. It is absent while a question is open.
 
@@ -226,7 +226,7 @@ The risk label is the risk of accepting the recommended option, as the agent jud
 - `e` opens and closes the card's details (the long sections); with an option keyed E, the details toggle has no hotkey. A letter that one of the card's options uses is skipped, and the keys shift to the next free letters of the same list.
 - For dictation, say a nav key by its letter: `p` (Back), `f` (Next) or `w` (Submit all) on the desktop, and `e` for the details.
 - The band's **Answer** button keeps hotkey `1`.
-- No hotkey works while the **Other…** field is open, so typed text presses no button.
+- No hotkey works while the **Other…** field holds typed text, so typed text presses no button.
 
 On the desktop, the KeepGlide mark sits beside the counter and beside **Submit all (N)**.
 

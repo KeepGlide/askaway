@@ -184,13 +184,13 @@ Enquanto há perguntas abertas, uma faixa fica acima do prompt: `2 perguntas agu
 ### Responder uma pergunta
 
 1. Aperte `1` com o prompt vazio, ou clique em **Responder** na faixa, para abrir o painel. O cabeçalho mostra o logo do Askaway, o título **Perguntas aguardando** e o contador, como `2 pendentes · 1 grupo`.
-2. A árvore lista cada projeto com perguntas abertas, um abaixo do outro, com o nome de cada projeto em negrito. Embaixo de cada projeto, as sessões (`├` ou `└`) guardam as suas perguntas. Uma marca mostra em que ponto está cada pergunta: `●` a que está na tela, `✓` com opção escolhida, `○` aguardando. Nada é enviado até **Enviar tudo**. Os nomes de projeto e de sessão são texto, não botões; cada linha de pergunta é um botão, e apertar uma leva ao cartão dela.
+2. A árvore lista cada projeto com perguntas abertas, um abaixo do outro, com o nome de cada projeto em negrito. Embaixo de cada projeto, as sessões (`├` ou `└`) guardam as suas perguntas. Uma marca mostra em que ponto está cada pergunta: `●` a que está na tela, `○` aguardando. Uma pergunta com opção escolhida mostra depois do texto `✓ - Enviar`: esse **Enviar** manda só a resposta dela, na hora; as demais escolhas esperam o **Enviar tudo**. Nada é enviado antes de um dos dois. Os nomes de projeto e de sessão são texto, não botões; cada linha de pergunta é um botão, e apertar uma leva ao cartão dela.
 3. Clique numa opção para registrá-la. O painel avança para a próxima pergunta sem resposta, voltando ao início se preciso, ou para a última pergunta quando todas já têm resposta. Nada é enviado ainda.
-4. Para responder com as suas palavras, clique em **Outra…**, digite e aperte Enter (o botão do campo diz **Pronto**). O texto vira a resposta, e as teclas ficam desligadas enquanto o campo estiver aberto.
+4. Para responder com as suas palavras, o campo embaixo de **Outra…** fica sempre aberto: clique nele e digite. O texto vira a resposta enquanto você digita, e as teclas ficam desligadas enquanto o campo tiver texto. Aperte Enter (o botão do campo diz **Pronto**) para registrar e avançar; o link **Outra…** só leva o foco ao campo.
 5. **← Voltar** vai para a pergunta anterior. **Próxima →** vai para a seguinte, com ou sem resposta. Ele aparece em todas as perguntas, menos na última.
 6. Na última pergunta do projeto, o botão de avançar é **Enviar tudo (N)**, em que N é o número de perguntas do projeto na tela. Ele só fica disponível quando todas as perguntas têm resposta. Ao apertá-lo, todas as respostas do projeto vão para as sessões que perguntaram. Nada é enviado antes desse botão.
 
-As linhas de estado no fim do painel mostram onde está cada resposta: `⏳` enviada, `✅` lida pela sessão, `⚠️` a sessão encerrou antes de ler, ou a resposta expirou sem ser lida (`expired`: nenhuma sessão a leu em 7 dias). As duas últimas podem ser dispensadas com `✕`.
+As linhas de estado no fim do painel mostram onde está cada resposta: `⏳` enviada, `✓` lida pela sessão (o visto troca a ampulheta; o texto é simples, só a marca tem cor), `⚠️` a sessão encerrou antes de ler, ou a resposta expirou sem ser lida (`expired`: nenhuma sessão a leu em 7 dias). As duas últimas podem ser dispensadas com `✕`.
 
 Quando nenhuma pergunta está aberta, o painel mostra uma linha de rodapé sob as linhas de estado, com as contagens: `Nada aguardando · 1 respondida nas últimas 24 h · última: <título> → A, <idade> · 1 ainda não lida · 1 expirada`. Ela some enquanto uma pergunta está aberta.
 
@@ -226,7 +226,7 @@ O rótulo de risco é o risco de aceitar a opção recomendada, como o agente av
 - A tecla `e` abre e fecha os detalhes do cartão (as seções longas); com uma opção de letra E, o botão de detalhes não tem tecla. Uma letra que uma das opções do cartão usa é pulada, e as teclas passam para as próximas letras livres da mesma lista.
 - Para ditado, diga uma tecla de navegação pela sua letra: `p` (Voltar), `f` (Próxima) ou `w` (Enviar tudo) no desktop, e `e` para os detalhes.
 - O botão **Responder** da faixa mantém a tecla `1`.
-- Nenhuma tecla de atalho funciona enquanto o campo **Outra…** está aberto, então o texto digitado não aperta botão.
+- Nenhuma tecla de atalho funciona enquanto o campo **Outra…** tem texto digitado, então o texto digitado não aperta botão.
 
 No desktop, a marca KeepGlide fica ao lado do contador e ao lado de **Enviar tudo (N)**.
 

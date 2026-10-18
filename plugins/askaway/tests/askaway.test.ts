@@ -1825,15 +1825,19 @@ test('Other… takes a free-text answer through the same answer path, and blank 
   const { writes, clock } = stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  await ui.press({ key: 'other-q-l1-aaaaaa' })
-  // The field has a stable key and takes its text from the person's typing: no value, no onInput.
+  // The field is open under the Other link from the start, with no press: a stable key, no value, no autofocus (the card
+  // keeps its keys until the person clicks in), and typing reports through onInput.
   const field = await ui.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa' })
-  expect(field?.props).toMatchObject({ autoFocus: true })
+  expect(field?.props).not.toHaveProperty('autoFocus')
   expect(field?.props).not.toHaveProperty('value')
-  expect(field?.props).not.toHaveProperty('onInput')
+  // The Other link only focuses that field and records nothing. The harness grants no ui.focus, so the focus request itself
+  // is not observable here: the press is checked by what it leaves in place.
+  await ui.press({ key: 'other-q-l1-aaaaaa' })
+  expect(await ui.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa' })).toBeDefined()
+  expect(writes).toEqual([])
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a', kind: 'change' })
   expect(await ui.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa' })).toBeDefined()
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: '   ' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: '   ', kind: 'change' })
   expect(writes).toEqual([])
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: '  Use a fork  ' })
   await ui.press({ key: 'submit-all' })
@@ -1935,7 +1939,8 @@ test('an Other… answer stays on its button: primary, with its text drawn under
   expect(await textsOf(ui)).toContain('Title q-l2-bbbbbb')
   await ui.press({ key: 'nav-back' })
   expect(await textsOf(ui)).toContain('Title q-l1-aaaaaa')
-  expect((await ui.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))?.props.variant).toBe('primary')
+  expect(await ui.find({ type: 'Button', key: 'other-q-l1-aaaaaa' })).toMatchObject({ props: { plain: true } })
+  expect(JSON.stringify(await ui.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).toContain('"underline":true')
   expect(await textsOf(ui)).toContain('Use a fork')
   await ui.unmount()
 })
@@ -2168,7 +2173,7 @@ test('a group answered from outside while another is open: the pane shows the fi
   await ui.unmount()
 })
 
-test('hotkeys: each option its key letter, Other the next digit, then z, x and w on the terminal and p, f and e on the desktop; none while the Other field is open', async ($, on) => {
+test('hotkeys: each option its key letter, Other the next digit, then z, x and w on the terminal and p, f and e on the desktop; none once the Other field holds typed text', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
@@ -2185,12 +2190,15 @@ test('hotkeys: each option its key letter, Other the next digit, then z, x and w
   await ui.press({ key: 'nav-next' })
   expect(await hotkeyOf('submit-all')).toBe('w')
   await ui.press({ key: 'nav-back' })
+  // The Other link only focuses its field: the hotkeys stay until the person types in it.
   await ui.press({ key: 'other-q-l1-aaaaaa' })
-  expect(await ui.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa' })).toBeDefined()
+  expect(await hotkeyOf('opt-q-l1-aaaaaa-A')).toBe('a')
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'o', kind: 'change' })
   const buttons = await ui.findAll({ type: 'Button' })
   expect(buttons.length).toBeGreaterThan(0)
   for (const button of buttons) expect(button.props.hotkey).toBeUndefined()
-  await ui.press({ key: 'other-q-l1-aaaaaa' })
+  // A blank field holds no text, so the hotkeys come back; the desktop mount below starts from that state.
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: '', kind: 'change' })
   await ui.unmount()
   // The desktop takes p, f and e for Back, Next and Submit: none of them is an option key of this question (A or B), so no
   // shortcut clashes with another. Options take their letters on the desktop too.
@@ -2204,9 +2212,8 @@ test('hotkeys: each option its key letter, Other the next digit, then z, x and w
   await desk.press({ key: 'nav-next' })
   expect(await deskHotkey('submit-all')).toBe('w')
   await desk.press({ key: 'nav-back' })
-  await desk.press({ key: 'other-q-l1-aaaaaa' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'o', kind: 'change' })
   for (const button of await desk.findAll({ type: 'Button' })) expect(button.props.hotkey).toBeUndefined()
-  await desk.press({ key: 'other-q-l1-aaaaaa' })
   await desk.unmount()
 })
 
@@ -2342,16 +2349,44 @@ test('the tree draws the group row in bold, each session with ├ or └, and on
   await ui.unmount()
 })
 
-test('after a pick the ● moves to the next question, and the picked one shows ✓', async ($, on) => {
+test('after a pick the ● moves to the next question, and the picked row shows its check, " - " and its own Submit', async ($, on) => {
   stubHost(on, treeFiles())
   await $.session.start(SESSION)
   const ui = await mountPane($)
   await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
   const texts = await textsOf(ui)
-  expect(texts).toContain('│  ✓ Title q-l1-aaaaaa')
+  expect(texts).toContain('│  ○ Title q-l1-aaaaaa')
+  expect(texts).toContain(' ✓ - ')
+  expect(texts.indexOf(' ✓ - ')).toBeGreaterThan(texts.indexOf('│  ○ Title q-l1-aaaaaa'))
   expect(texts).toContain('│  ● Title q-l2-bbbbbb')
   expect(texts).not.toContain('│  ○ Title q-l2-bbbbbb')
   expect(await ui.find({ type: 'Text', text: '│  ● Title q-l2-bbbbbb' })).toMatchObject({ props: { bold: true } })
+  // Only the picked row has its own Submit.
+  expect(await ui.find({ type: 'Button', key: 'tree-submit-q-l1-aaaaaa' })).toMatchObject({ props: { plain: true } })
+  expect(await ui.find({ type: 'Button', key: 'tree-submit-q-l2-bbbbbb' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a row Submit answers that question alone and removes its row; the other picks wait for Submit all', async ($, on) => {
+  const { writes, clock } = stubHost(on, treeFiles())
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
+  await ui.press({ key: 'opt-q-l2-bbbbbb-A' })
+  expect(writes).toEqual([])
+  await ui.press({ key: 'tree-submit-q-l1-aaaaaa' })
+  expect(writes).toEqual([path('a', 'q-l1-aaaaaa')])
+  await clock.advance(250)
+  expect((await textsOf(ui)).some(text => text.includes('q-l1-aaaaaa'))).toBe(false)
+  // The second question keeps its pick and its own Submit.
+  expect(await ui.find({ type: 'Button', key: 'tree-submit-q-l2-bbbbbb' })).toBeDefined()
+  // Submit all still answers the rest of the group.
+  await ui.press({ key: 'tree-jump-q-l3-cccccc' })
+  await ui.press({ key: 'opt-q-l3-cccccc-A' })
+  await ui.press({ key: 'submit-all' })
+  // Each answer is written once; the order of the rest follows the group, so the three are compared as a set.
+  expect(writes[0]).toBe(path('a', 'q-l1-aaaaaa'))
+  expect([...writes].sort()).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb'), path('a', 'q-l3-cccccc')])
   await ui.unmount()
 })
 

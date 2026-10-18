@@ -57,7 +57,9 @@ export type PaneActions = {
   saveWho: (text: string) => void
   skipWho: () => void
   pick: (id: string, key: string) => void
-  toggleOther: (id: string) => void
+  focusOther: (id: string) => void
+  typeOther: (id: string, text: string) => void
+  submitOne: (id: string) => void
   toggleDetails: (id: string) => void
   jump: (id: string) => void
   submitOther: (id: string, text: string) => void
@@ -67,7 +69,8 @@ export type PaneActions = {
 }
 
 // What one question card draws from: the question, the wizard state, whether it is fading out after a press, and
-// whether its Other field is open (then the card draws no hotkeys: typed text must not press a button).
+// whether its Other field holds typed text (then the card draws no hotkeys: typed text must not press a button). The
+// Input reports typing (onInput) but no focus change, so the pane cannot see a bare focus on the field.
 type CardContext = {
   question: Question
   wizard: Wizard
@@ -215,23 +218,38 @@ function renderSession(tree: TreeContext, questions: Question[], isFinal: boolea
 // The indent is the Box's paddingLeft, so the mark sits in the same column under either session. The row is a plain
 // Button: its press jumps to the question's card (actions.jump), as walking there with Next or Back would. Its text is
 // bold while the card on screen is that question.
+// One question row of the tree: its link, then, once the question has a pick not yet submitted, " ✓ - " and its own
+// Submit button. The mark before the text is only the one on screen (●) or waiting (○).
 function renderTreeQuestion(tree: TreeContext, question: Question, isFinal: boolean): RenderElement {
   const { ui, view, actions, held } = tree
   const { Box, Button, Text } = ui
   const isOnScreen = view.screen?.question.id === question.id
-  const mark = isOnScreen ? '●' : view.wizard.picks[question.id] !== undefined ? '✓' : '○'
+  const isPicked = view.wizard.picks[question.id] !== undefined
+  const mark = isOnScreen ? '●' : '○'
   const label = `${isFinal ? '' : '│  '}${mark} ${questionLabel(question)}`
   const key = `tree-jump-${question.id}`
   const onPress = () => actions.jump(question.id)
   return (
-    <Box key={`tree-${question.id}`} paddingLeft={isFinal ? 4 : 1}>
+    <Box key={`tree-${question.id}`} paddingLeft={isFinal ? 4 : 1} flexDirection="row">
       {held.hold(key, [label, isOnScreen], onPress, press => (
         <Button key={key} label={label} plain onPress={press}>
           <Text bold={isOnScreen}>{label}</Text>
         </Button>
       ))}
+      {isPicked && <Text>{' ✓ - '}</Text>}
+      {isPicked && renderTreeSubmit(tree, question)}
     </Box>
   )
+}
+
+// The Submit of one tree row: it answers that question alone, at once. Plain, the smallest button the API has.
+function renderTreeSubmit(tree: TreeContext, question: Question): RenderElement {
+  const { Button } = tree.ui
+  const { held, lang, actions } = tree
+  const key = `tree-submit-${question.id}`
+  const label = t(lang, 'tree.submit')
+  const onPress = () => actions.submitOne(question.id)
+  return held.hold(key, [label], onPress, press => <Button key={key} label={label} plain onPress={press} />)
 }
 
 // The title of a question for the card and the tree: its title, else its text cut to TITLE_MAX characters.
@@ -447,37 +465,38 @@ function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContex
   )
 }
 
-// "Other…": the last option. Pressing it opens a field right under it for a free-text answer; the text goes through
-// the same pick path as an option. A surface with no Input (mobile) draws no field, so it draws no Other option either.
+// "Other…": the last option, a link under the options styled like the Details link. Its field is always open right under
+// it, ready to type; the link only focuses that field. Typing records Other with the text typed so far (typeOther), and
+// Enter records it and moves on (submitOther). A surface with no Input (mobile) draws no field, so no Other option either.
 function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext): RenderElement | false {
   if (!('Input' in ui)) return false
   const { Box, Button, Input, Text } = ui
   const { question, isLeaving, wizard, held } = card
-  const isOpen = wizard.other === question.id
-  // Once Other… is submitted the pick holds its text: the button stays primary and the text shows under it.
+  // The pick holds the typed text: the link is bold and the text shows under it.
   const pick = wizard.picks[question.id]
   const chosenText = pick !== undefined && pick.key === OTHER_KEY ? (pick.text ?? '') : undefined
   const key = `other-${question.id}`
   const label = `${question.options.length + 1}. ${t(lang, 'option.other')}`
-  const variant = chosenText !== undefined ? 'primary' : 'secondary'
   const hotkey = hotkeyFor(card, digitOf(question.options.length))
   const onPress = () => {
     if (isLeaving) return
-    actions.toggleOther(question.id)
+    actions.focusOther(question.id)
   }
   return (
     <Box key={`other-row-${question.id}`} flexDirection="column">
-      {held.hold(key, [label, variant, isLeaving, hotkey], onPress, press => (
-        <Button key={key} label={label} variant={variant} dimColor={isLeaving} hotkey={hotkey} onPress={press} />
+      {held.hold(key, [label, chosenText !== undefined, isLeaving, hotkey], onPress, press => (
+        <Button key={key} label={label} plain dimColor={isLeaving} hotkey={hotkey} onPress={press}>
+          <Text underline bold={chosenText !== undefined} dimColor={isLeaving}>{label}</Text>
+        </Button>
       ))}
       {chosenText !== undefined && <Text dimColor={isLeaving}>{chosenText}</Text>}
-      {isOpen && !isLeaving && (
+      {!isLeaving && (
         <Input
           key={`${OTHER_INPUT_PREFIX}${question.id}`}
           label={t(lang, 'input.label')}
           placeholder={t(lang, 'input.placeholder')}
           submitLabel={t(lang, 'input.send')}
-          autoFocus
+          onInput={text => actions.typeOther(question.id, text)}
           onSubmit={text => actions.submitOther(question.id, text)}
         />
       )}
