@@ -130,6 +130,21 @@ export function parseAnswerWritten(stdout: string): boolean | undefined {
   return isRecord(raw) && typeof raw.written === 'boolean' ? raw.written : undefined
 }
 
+// The ids `askaway.py list --open` marks `ended`: open questions whose asking session has ended. Undefined when the
+// output is not a list reply, so the caller keeps what it knew.
+export function parseEndedIds(stdout: string): string[] | undefined {
+  let raw: unknown
+  try {
+    raw = JSON.parse(stdout)
+  } catch {
+    return undefined
+  }
+  if (!isRecord(raw) || !Array.isArray(raw.items)) return undefined
+  return raw.items.flatMap((item: unknown) =>
+    isRecord(item) && item.ended === true && typeof item.id === 'string' ? [item.id] : [],
+  )
+}
+
 // The name an answer record carries (askaway.py's WHO_MAX and CONTROL_CHARS): at most WHO_MAX characters, the last one an
 // ellipsis, and control characters become spaces.
 const WHO_MAX = 40

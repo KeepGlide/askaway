@@ -2635,3 +2635,48 @@ def test_code_that_edits_docs_mentioning_askaway_is_allowed(command, capsys, mon
 def test_code_that_answers_or_writes_the_state_folder_is_denied(command, capsys, monkeypatch):
     out = hook_json(capsys, monkeypatch, "pause-guard", bash_event(command))
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+# ---- ended-session card ------------------------------------------------
+
+def ask_from(capsys, monkeypatch, session: str, **over) -> str:
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", session)
+    item = ask_item(capsys, **over)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID")
+    return item
+
+
+def test_list_marks_an_open_question_of_an_ended_session_ended(home, capsys, monkeypatch):
+    gone = ask_from(capsys, monkeypatch, SESSION, title="gone")
+    live = ask_from(capsys, monkeypatch, "sess-alive", title="live")
+    release_marker(home, SESSION)
+    rows = {row["id"]: row for row in cli(capsys, "list", "--open")["items"]}
+    assert rows[gone]["ended"] is True
+    assert "ended" not in rows[live]
+
+
+def test_list_does_not_mark_an_answered_question_ended(home, capsys, monkeypatch):
+    item = ask_from(capsys, monkeypatch, SESSION)
+    cli(capsys, "answer", item, "A", "--by", "panel")
+    release_marker(home, SESSION)
+    assert "ended" not in cli(capsys, "list")["items"][0]
+
+
+def test_prune_id_removes_an_open_question_of_an_ended_session(home, capsys, monkeypatch):
+    item = ask_from(capsys, monkeypatch, SESSION)
+    release_marker(home, SESSION)
+    assert cli(capsys, "prune", "--id", item) == {"removed": 1}
+    assert cli(capsys, "list") == {"items": []}
+
+
+def test_prune_id_refuses_a_live_session_and_an_answered_question(home, capsys, monkeypatch):
+    live = ask_from(capsys, monkeypatch, SESSION)
+    assert "has not ended" in cli(capsys, "prune", "--id", live)["error"]
+    cli(capsys, "answer", live, "A", "--by", "panel")
+    release_marker(home, SESSION)
+    assert "already answered" in cli(capsys, "prune", "--id", live)["error"]
+    assert [row["id"] for row in cli(capsys, "list")["items"]] == [live]
+
+
+def test_prune_id_rejects_an_unknown_id(home, capsys):
+    assert "unknown inbox id" in usage_error(capsys, "prune", "--id", "q-1-abcdef")["error"]

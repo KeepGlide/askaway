@@ -127,6 +127,7 @@ function stubHost(
   const writes: string[] = []
   const submits: string[] = []
   const calls: { argv: string[]; env?: Record<string, string> }[] = []
+  const ended = new Set<string>()
   const clock = mock.clock(on)
   mock.env(on, { HOME, LANG: 'pt_BR.UTF-8', ...env })
   mock.store(on, stored)
@@ -171,6 +172,15 @@ function stubHost(
   // answers that land; `calls` records every call the pane makes.
   on('process.run', async (_$, e) => {
     calls.push({ argv: [...e.argv], env: e.init?.env })
+    // `list --open` reports the ids a test put in `ended`; `prune --id` removes the question file, as the CLI does for one.
+    if (e.argv[2] === 'list') {
+      const items = [...files.keys()].filter(file => file.startsWith(`${STATE}/q/`)).map(file => ({ id: file.slice(`${STATE}/q/`.length, -5) }))
+      return cliReply(JSON.stringify({ items: items.map(item => (ended.has(item.id) ? { ...item, ended: true } : item)) }))
+    }
+    if (e.argv[2] === 'prune') {
+      files.delete(path('q', e.argv[4]))
+      return cliReply(JSON.stringify({ removed: 1 }))
+    }
     const [, , , id, key] = e.argv
     await holds.write
     const stored = files.get(path('a', id))
@@ -182,7 +192,7 @@ function stubHost(
     writes.push(path('a', id))
     return cliReply(JSON.stringify({ id, key, written: true }))
   })
-  return { toasts, writes, submits, clock, calls }
+  return { toasts, writes, submits, clock, calls, ended }
 }
 
 // The hook's reply with the result `$.process.run` gives for a child that exited (the fields the pane reads).
@@ -2887,5 +2897,48 @@ test('after the board empties, a question from a new group opens at its first qu
   const texts = await textsOf(ui)
   expect(texts).toContain('Which way for q-l3-cccccc?')
   expect(texts).not.toContain('Which way for q-l4-dddddd?')
+  await ui.unmount()
+})
+
+test('an open question whose session has ended draws the notice and Dismiss instead of the options, with Next on', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone' })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { session: 'sess-gone' })],
+  ])
+  const { ended } = stubHost(on, files)
+  ended.add('q-l1-aaaaaa')
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(await textsOf(ui)).toContain('A sessão que perguntou terminou; o agente ficou na A.')
+  expect(await ui.find({ type: 'Button', key: 'dismiss-ended' })).toBeDefined()
+  expect(await labelOf(ui, 'nav-next')).toBe('Próxima →')
+  expect(await ui.find({ type: 'Button', key: 'opt-q-l1-aaaaaa-A' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the ended notice reads in English with the recommended key, and a live session keeps its options', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-live' })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { session: 'sess-gone', recommended: 'B' })],
+  ])
+  const { ended } = stubHost(on, files, true, {}, {}, { LANG: '' })
+  ended.add('q-l2-bbbbbb')
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(await textsOf(ui)).not.toContain('The session that asked has ended; the agent stayed on A.')
+  expect(await ui.find({ type: 'Button', key: 'dismiss-ended' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('Dismiss on an ended card removes the question through prune --id, and sends no answer', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone' })]])
+  const { ended, calls, writes } = stubHost(on, files)
+  ended.add('q-l1-aaaaaa')
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'dismiss-ended' })
+  expect(calls.some(call => call.argv.slice(2, 5).join(' ') === 'prune --id q-l1-aaaaaa')).toBe(true)
+  expect(files.has(path('q', 'q-l1-aaaaaa'))).toBe(false)
+  expect(writes).toEqual([])
   await ui.unmount()
 })

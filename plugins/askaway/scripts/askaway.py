@@ -811,10 +811,13 @@ def cmd_status(item_id: str) -> dict[str, Any]:
     return _status_reply(item_id, *question_status(item_id))
 
 
-def _list_row(entry: Mapping[str, Any]) -> dict[str, Any]:
+def _list_row(entry: Mapping[str, Any], released: ReleasedScan | None = None) -> dict[str, Any]:
     status, key = item_status(entry["id"])
     row = {"id": entry["id"], "title": entry.get("title"), "status": status,
            "recommended": entry.get("recommended"), "key": key}
+    # The pane reads this: an open question whose asking session has ended can no longer be answered.
+    if status == "open" and session_ended(entry.get("session"), entry.get("project"), released):
+        row["ended"] = True
     answer = read_json(item_path("a", entry["id"]))
     text = other_text(answer) if key == OTHER_KEY else None
     if text:
@@ -826,7 +829,8 @@ def _list_row(entry: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def cmd_list(only_open: bool) -> dict[str, Any]:
-    items = [_list_row(entry) for entry in load_questions()[0]]
+    released = ReleasedScan()
+    items = [_list_row(entry, released) for entry in load_questions()[0]]
     return {"items": [item for item in items if not only_open or item["status"] == "open"]}
 
 
@@ -924,6 +928,19 @@ def cmd_prune(days: int) -> dict[str, Any]:
     _remove_stale_temps()
     entries, damaged = load_questions()
     return {"removed": _remove_damaged(damaged) + _remove_closed(days, entries)}
+
+
+def cmd_prune_id(item_id: str) -> dict[str, Any]:
+    """Remove one open question whose asking session has ended (the panel's Dismiss). Nothing else is removed by id."""
+    entry = read_json(item_path("q", item_id))
+    if entry is None:
+        raise ValueError("unknown inbox id")
+    if item_status(item_id)[0] != "open":
+        return {"error": "prune refused: the question is already answered"}
+    if not session_ended(entry.get("session"), entry.get("project")):
+        return {"error": "prune refused: the session that asked has not ended"}
+    _remove_item(item_id)
+    return {"removed": 1}
 
 
 def _mark_delivered(item_id: str) -> bool:
@@ -1058,7 +1075,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     prune = commands.add_parser("prune")
     prune.add_argument("--days", type=int, default=prune_days())
-    prune.set_defaults(run=lambda a: cmd_prune(a.days))
+    prune.add_argument("--id", dest="item_id")
+    prune.set_defaults(run=lambda a: cmd_prune_id(a.item_id) if a.item_id else cmd_prune(a.days))
 
     wait = commands.add_parser("wait")
     wait.add_argument("id")

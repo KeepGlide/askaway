@@ -20,6 +20,7 @@ import {
   openQuestions,
   parseAnswer,
   parseAnswerWritten,
+  parseEndedIds,
   parseAway,
   parseDelivery,
   parseQuestion,
@@ -71,6 +72,8 @@ const expanded = atom({ plugin: 'askaway', key: 'expanded' } as const, {} as Rec
 const turn = atom({ plugin: 'askaway', key: 'turn' } as const, { isBusy: false })
 // The language in use, and the question wizard (group, step, picks, Other…).
 const langAtom = atom({ plugin: 'askaway', key: 'lang' } as const, DEFAULT_LANG)
+// The open questions whose asking session has ended (`list --open` marks them): the card shows a notice for them.
+const endedAtom = atom({ plugin: 'askaway', key: 'ended' } as const, [] as string[])
 const wizardAtom = atom({ plugin: 'askaway', key: 'wizard' } as const, flow.EMPTY_WIZARD)
 
 // Files are written once and never change, so a parsed file stays until its name leaves the folder.
@@ -250,6 +253,28 @@ function anchorStep(prev: Wizard, active: Group | undefined, switched: boolean):
   return anchor >= 0 ? anchor : prev.step
 }
 
+// Asks the CLI which open questions belong to an ended session; only questions that name a session can. A run that fails
+// keeps what the pane knew. The atom is written only when the list changed, so a poll that learns nothing redraws nothing.
+async function refreshEnded($: EngineInterface, home: string, next: Board): Promise<void> {
+  const asked = next.questions.some(question => question.session !== null && isOpenIn(next, question.id))
+  let ended: string[] | undefined = []
+  if (asked) {
+    const argv = ['python3', `${$.plugin.root}/scripts/askaway.py`, 'list', '--open']
+    ended = parseEndedIds((await $.process.run(argv, { env: { ASKAWAY_HOME: home } }).catch(() => undefined))?.stdout ?? '')
+  }
+  if (ended !== undefined && JSON.stringify(ended) !== JSON.stringify(await read($, endedAtom))) {
+    await update($, endedAtom, () => ended)
+  }
+}
+
+// Dismiss on an ended card: the CLI removes the question (prune --id), then the board is read again.
+async function dismissEnded($: EngineInterface, home: string, id: string): Promise<void> {
+  const argv = ['python3', `${$.plugin.root}/scripts/askaway.py`, 'prune', '--id', id]
+  const run = await $.process.run(argv, { env: { ASKAWAY_HOME: home } })
+  if (run.exitCode !== 0) throw new Error(`askaway prune failed: ${(run.stderr || run.stdout).trim()}`)
+  await pollInbox($, home)
+}
+
 // One poll: read the folder, merge it into the board, redraw only when something changed, then announce new questions.
 // The interval poll of a session also hands its own answers to its prompt (handDue).
 async function pollInbox($: EngineInterface, home: string, ownSession?: string): Promise<void> {
@@ -257,6 +282,7 @@ async function pollInbox($: EngineInterface, home: string, ownSession?: string):
   const away = parseAway(await readJson($, `${home}/away.json`))
   const now = await $.clock.now()
   await mergeBoard($, next)
+  await refreshEnded($, home, next)
   if ((await read($, isAway)) !== away) await update($, isAway, () => away)
   const shownAt = await recordDeliveries($, next, now)
   await tickClock($, now, shownAt)
@@ -532,6 +558,7 @@ async function awayText($: EngineInterface, lang: Lang): Promise<string> {
 
 const actionsFor = ($: EngineInterface): PaneActions => ({
   dismiss: id => report($, dismissStatus($, id)),
+  dismissEnded: id => report($, withFolder($, folder => dismissEnded($, folder, id))),
   pick: (id, key) => report($, pickOption($, id, { key })),
   toggleOther: id => report($, toggleOther($, id)),
   toggleDetails: id => report($, toggleDetails($, id)),
@@ -618,6 +645,7 @@ export const register: Register = on => {
       leaving: fading,
       footer: footerText(lang, current, now),
       expanded: await read($, expanded),
+      ended: await read($, endedAtom),
       groups,
       active,
       wizard,

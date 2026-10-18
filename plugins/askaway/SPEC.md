@@ -175,6 +175,10 @@ writes its document instead). Exit codes: 0 for a reply; 1 for a usage error (un
   (the question's `ts`; unlike `list --since`, which filters by the answer's). Writes the document to stdout, not a
   JSON result line; exit 0.
 - `away on|off|status` — writes or reads away.json; prints `{"away":bool}`.
+- `prune --id <id>` — removes one open question whose asking session has ended (the card's Dismiss) with its files;
+  prints `{"removed":1}`, or `{"error":...}` for a question that is answered or whose session is alive. `list` rows of an
+  open question whose session has ended carry `"ended": true`; the pane polls `list --open` for them and draws the
+  ended-session card (a notice instead of the options, Next on, Dismiss; no answer can be sent).
 - `prune [--days N]` — deletes q/a/d files of closed items (`delivered` or `expired`) whose closing
   time is older than N days: the delivery marker's `ts` for `delivered`, the answer's `ts` for
   `expired`; never the question's `ts`. Prints `{"removed":n}`. A damaged q/ file (no JSON object) is removed with its a/ and d/ files whatever `--days` is; the daily prune (the deliver hook's slow path) never removes one, so the user clears it.

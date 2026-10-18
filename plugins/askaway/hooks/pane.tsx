@@ -45,10 +45,13 @@ export type PaneView = {
   footer?: string
   // The questions whose details are open: question id → true. A question not listed keeps its details folded.
   expanded: Readonly<Record<string, boolean>>
+  // The ids of open questions whose asking session has ended: their card shows a notice and Dismiss, no options.
+  ended: readonly string[]
 }
 
 export type PaneActions = {
   dismiss: (id: string) => void
+  dismissEnded: (id: string) => void
   pick: (id: string, key: string) => void
   toggleOther: (id: string) => void
   toggleDetails: (id: string) => void
@@ -288,6 +291,7 @@ function renderQuestion(
     surface: view.surface,
   }
   const { isLeaving, isExpanded } = card
+  const isEnded = view.ended.includes(question.id)
   return (
     <Box key={`card-${question.id}`} flexDirection="column" gap={1} borderStyle="round" borderDimColor={isLeaving} paddingX={1} paddingBottom={1}>
       <Box flexDirection="row" flexWrap="wrap" gap={2}>
@@ -299,13 +303,17 @@ function renderQuestion(
       {renderExplanation(ui, 'before-question', sectionsOf(lang, question, 'before-question'), isLeaving)}
       <Text bold dimColor={isLeaving}>{question.question}</Text>
       {renderExplanation(ui, 'before-options', sectionsOf(lang, question, 'before-options'), isLeaving)}
-      <Box flexDirection="column" gap={2} marginTop={1}>
-        {question.options.map(option => renderOption(ui, lang, actions, card, option))}
-        {renderOther(ui, lang, actions, card)}
-      </Box>
+      {isEnded ? (
+        <Text key={`ended-${question.id}`}>{t(lang, 'card.ended', { key: question.recommended })}</Text>
+      ) : (
+        <Box flexDirection="column" gap={2} marginTop={1}>
+          {question.options.map(option => renderOption(ui, lang, actions, card, option))}
+          {renderOther(ui, lang, actions, card)}
+        </Box>
+      )}
       {isExpanded && renderExplanation(ui, 'after-options', sectionsOf(lang, question, 'after-options'), isLeaving)}
       {renderDivider(ui, view.surface)}
-      {renderNav(ui, lang, actions, card, screen)}
+      {isEnded ? renderEndedNav(ui, lang, actions, card, screen) : renderNav(ui, lang, actions, card, screen)}
     </Box>
   )
 }
@@ -463,6 +471,27 @@ function renderNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, 
         <Button key="nav-back" label={label} variant="secondary" dimColor={isBackOff} hotkey={hotkey} onPress={press} />
       ))}
       {screen.canNext ? renderNext(ui, lang, actions, card, screen) : renderSubmitAll(ui, lang, actions, card, screen)}
+    </Box>
+  )
+}
+
+// The nav row of an ended card: Back, Dismiss (removes the question) and Next. Next is on while a later question exists in
+// the group; nothing waits for a pick, because no answer can be sent.
+function renderEndedNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: Screen): RenderElement {
+  const { Box, Button } = ui
+  const { question, isLeaving, held } = card
+  const isBackOff = !screen.canBack || isLeaving
+  const backLabel = t(lang, 'nav.back')
+  const dismissLabel = t(lang, 'card.dismiss')
+  return (
+    <Box key={`nav-${question.id}`} flexDirection="row" justifyContent="space-between">
+      {held.hold('nav-back', [backLabel, isBackOff, undefined], () => !isBackOff && actions.back(), press => (
+        <Button key="nav-back" label={backLabel} variant="secondary" dimColor={isBackOff} onPress={press} />
+      ))}
+      {held.hold('dismiss-ended', [dismissLabel, question.id], () => actions.dismissEnded(question.id), press => (
+        <Button key="dismiss-ended" label={dismissLabel} variant="secondary" onPress={press} />
+      ))}
+      {renderNext(ui, lang, actions, card, screen)}
     </Box>
   )
 }
