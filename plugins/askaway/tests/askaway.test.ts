@@ -28,7 +28,7 @@ import {
   urgencyGradeOf,
  desktopSessionOf } from '../hooks/model'
 import { heldButtons } from '../hooks/held'
-import { renderTreeQuestion } from '../hooks/pane'
+import { placeUnder, renderTreeQuestion } from '../hooks/pane'
 import { ACCENT_COLOR, DETAILS_FILL, LINK_MARK, URGENCY_COLOR, themeFamilyOf } from '../hooks/look'
 import type { Answer, Board } from '../types'
 
@@ -518,10 +518,10 @@ test('model: the History tree groups answers by family, then session, newest fir
   const tree = historyOf('en', board, { ...NO_STATUS, now: SAME_DAY_NOW })
   expect(tree.map(group => group.label)).toEqual(['App Family', 'the session'])
   expect(tree[0]?.sessions.map(session => session.label)).toEqual(['the session', 'Build App'])
-  expect(tree[0]?.sessions[0]?.entries.map(entry => entry.line)).toEqual(['Answer B · sent 14:35 · waiting to be read'])
+  expect(tree[0]?.sessions[0]?.entries.map(entry => entry.line)).toEqual(['Answer B · sent 14:35'])
   expect(tree[0]?.sessions[1]?.entries.map(entry => entry.title)).toEqual(['Title q-h-000001'])
   expect(tree[1]?.sessions[0]?.entries).toEqual([
-    { id: 'q-h-000009', title: 'q-h-000009', line: 'Answer A · sent 13:58 · waiting to be read', clearable: false },
+    { id: 'q-h-000009', title: 'q-h-000009', line: 'Answer A · sent 13:58', clearable: false },
   ])
 })
 
@@ -547,10 +547,10 @@ test('model: the Other answer names its letter and its text; an agent or a named
       ...NO_STATUS,
       now: SAME_DAY_NOW,
     })[0]?.sessions[0]?.entries[0]?.line
-  expect(lineOf({})).toBe('Answer C (Other: "lavanda") · sent 14:32 · waiting to be read')
-  expect(lineOf({ key: 'A', by: 'agent' })).toBe('Answer A · answered by agent · sent 14:32 · waiting to be read')
-  expect(lineOf({ key: 'A', by: 'cli', who: 'Ana' })).toBe('Answer A · answered by Ana · sent 14:32 · waiting to be read')
-  expect(lineOf({ key: 'A', by: 'panel', who: 'Ana' })).toBe('Answer A · sent 14:32 · waiting to be read')
+  expect(lineOf({})).toBe('Answer C (Other: "lavanda") · sent 14:32')
+  expect(lineOf({ key: 'A', by: 'agent' })).toBe('Answer A · answered by agent · sent 14:32')
+  expect(lineOf({ key: 'A', by: 'cli', who: 'Ana' })).toBe('Answer A · answered by Ana · sent 14:32')
+  expect(lineOf({ key: 'A', by: 'panel', who: 'Ana' })).toBe('Answer A · sent 14:32')
 })
 
 test('model: Clear removes only delivered, ended and expired lines; a pending line stays; a delivered line leaves 30 s after the pane first saw it', () => {
@@ -824,8 +824,8 @@ test('the card is the oldest open question; the other open ones are tree rows; a
     expect(await ui.find({ type: 'Markdown', key: 'tree-jump-q-l3-cccccc' })).toBeUndefined()
     expect(await ui.find({ type: 'Markdown', key: 'tree-jump-q-l4-dddddd' })).toBeUndefined()
     const historyRow = nodesOf(await ui.drawn()).find(node => keyOfNode(node) === 'history-q-l3-cccccc')
-    // The history row carries the same ○ a waiting question row does, and no state mark.
-    expect(nodesOf(historyRow).some(node => node.type === 'Text' && textOfNode(node) === '○ Title q-l3-cccccc')).toBe(true)
+    // The history row is one line: the same ○ a waiting question row does, the title, " ✓ - " and the answer line.
+    expect(nodesOf(historyRow).some(node => node.type === 'Text' && textOfNode(node).startsWith('○ Title q-l3-cccccc ✓ - '))).toBe(true)
     // The broken file draws nothing.
     expect(texts.some(text => text.includes('q-l9'))).toBe(false)
     await ui.unmount()
@@ -1186,7 +1186,7 @@ test('the nav row has a separator after the options and Other…: an SVG rule on
   }
 })
 
-test('a status row has no fill and no border: it takes no colour of its own, and its text is plain and dim', async ($, on) => {
+test('a status row has no fill and no border: it takes no colour of its own, and its text is plain', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'A')],
@@ -1199,8 +1199,10 @@ test('a status row has no fill and no border: it takes no colour of its own, and
   const ui = await mountPane($)
   const expired = 'expirou sem ser lida'
   const pending = 'Resposta B · enviada'
-  expect((await textNodeWith(ui, expired))?.props).toMatchObject({ dimColor: true })
-  expect((await textNodeWith(ui, pending))?.props).toMatchObject({ dimColor: true })
+  expect(await textNodeWith(ui, expired)).toBeDefined()
+  expect((await textNodeWith(ui, expired))?.props?.dimColor).toBeUndefined()
+  expect(await textNodeWith(ui, pending)).toBeDefined()
+  expect((await textNodeWith(ui, pending))?.props?.dimColor).toBeUndefined()
   // The history rows draw the plain ○ of the open tree, in no colour of their own.
   expect(await ui.find({ type: 'Text', text: /^○ / })).toBeDefined()
   expect((await ui.find({ type: 'Text', text: /^○ / }))?.props.color).toBeUndefined()
@@ -1856,7 +1858,7 @@ test('the title row links "See session" to the asking session\'s Desktop window,
   const ui = await mountPane($)
   const titleRow = await ui.find({ type: 'Markdown', key: 'title-q-l1-aaaaaa' })
   const text = String((titleRow?.props as Record<string, unknown> | undefined)?.text)
-  expect(text.startsWith(`### Cache \\[it\\] now - [Ver sessão](#local_abc) - ${riskLabel('pt', 'low')} · `)).toBe(true)
+  expect(text.startsWith(`### Cache \\[it\\] now - [Ver sessão ↗](#local_abc) - ${riskLabel('pt', 'low')} · `)).toBe(true)
   // The surface opens the link itself: no pressable list on the heading.
   expect((titleRow?.props as Record<string, unknown> | undefined)?.pressableLinks).toBeUndefined()
   await ui.unmount()
@@ -3055,7 +3057,7 @@ function fakeRow(options: {
     held: heldButtons(),
   }
   const question = options.question ?? parsedQuestion('q-l1-aaaaaa', 1000)
-  return renderTreeQuestion(tree as never, question, options.isFinal) as unknown as FakeElement
+  return renderTreeQuestion(tree as never, question, placeUnder(options.isFinal)) as unknown as FakeElement
 }
 
 test('on a surface that draws Markdown, a tree row is a Markdown link: its lead, its state mark and the file: link, and its press runs the jump', () => {
@@ -3248,6 +3250,69 @@ test('a session family is one group labelled by its root title; an old question 
   expect(texts).toContain('├ Root Session')
   expect(texts).toContain('└ Child Session')
   expect(texts).not.toContain('Scratch')
+  await ui.unmount()
+})
+
+test('the root session of a family draws no session row: its questions sit right under the family title, before the derived sessions', async ($, on) => {
+  const family = { family: 'local_root', family_title: 'release checklist review' }
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'local_root', session_title: 'release checklist review', ...family })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { session: 'local_child', session_title: 'child session', ...family })],
+    [path('q', 'q-l3-cccccc'), question('q-l3-cccccc', 3000, { session: 'local_root', session_title: 'release checklist review', ...family })],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  const texts = await textsOf(ui)
+  // The family title is drawn once, bold; no "├ Release Checklist Review" row repeats it.
+  expect(texts.filter(text => text.includes('Release Checklist Review'))).toHaveLength(1)
+  expect(texts.some(text => text.startsWith('├ ') || text.startsWith('└ '))).toBe(true)
+  expect(texts).toContain('└ Child Session')
+  // The root's rows carry no lead and sit before the derived session; the child's row sits under "└", without a lead.
+  const rootRow = texts.findIndex(text => text.startsWith('○ Title q-l3-cccccc'))
+  expect(rootRow).toBeGreaterThan(texts.indexOf('Release Checklist Review'))
+  expect(rootRow).toBeLessThan(texts.indexOf('└ Child Session'))
+  expect(texts.indexOf('○ Title q-l2-bbbbbb')).toBeGreaterThan(texts.indexOf('└ Child Session'))
+  await ui.unmount()
+})
+
+test('History: a row whose question has a Desktop session is one Markdown line, its title a link to that session, then the answer line', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { desktop_session: 'local_abc', title: 'Cache [it] now' })],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'A')],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  const row = await ui.find({ type: 'Markdown', text: /\[Cache \\\[it\\\] now\]\(#local_abc\)/ })
+  expect(row).toBeDefined()
+  const text = String(row?.props.text)
+  expect(text.startsWith('○ [Cache \\[it\\] now](#local_abc) ✓ - Resposta A · enviada ')).toBe(true)
+  expect(row?.props.onLinkPress).toBeUndefined()
+  // The History heading carries the logo, as the pane heading does, and the whole block gaps its rows from the heading.
+  const history = nodesOf(await ui.drawn()).find(node => keyOfNode(node) === 'history')
+  expect((history?.props as Record<string, unknown>).gap).toBe(1)
+  await ui.unmount()
+})
+
+test('History: an Other text with Markdown in it never makes a link or a style; a row with no session and no project is not a root row', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { desktop_session: 'local_abc', project: '' })],
+    [path('a', 'q-l1-aaaaaa'), JSON.stringify({ id: 'q-l1-aaaaaa', key: 'other', by: 'panel', ts: 1, text: '*x* ](#local_evil)' })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  const row = await ui.find({ type: 'Markdown', text: /\(#local_abc\)/ })
+  const text = String(row?.props.text)
+  expect(text).not.toContain('](#local_evil)')
+  expect(text).not.toContain('*x*')
+  expect(text).toContain('\\*x\\* \\]\\(#local\\_evil\\)')
+  // The group of a question with no project and no family is keyed ''; its session row (null session, key '') still draws, as "└ a sessão".
+  const texts = await textsOf(ui)
+  expect(texts).toContain('└ a sessão')
   await ui.unmount()
 })
 
@@ -3886,8 +3951,8 @@ test('History: Clear drops a cleared id whose answer is gone from the board, and
   await $.session.start(SESSION)
   const restarted = await mountPane($)
   const restartedTexts = await textsOf(restarted)
-  expect(restartedTexts).toContain('○ Title q-gone-eeeeee')
-  expect(restartedTexts).not.toContain('○ Title q-l1-aaaaaa')
+  expect(restartedTexts.some(text => text.startsWith('○ Title q-gone-eeeeee ✓ - '))).toBe(true)
+  expect(restartedTexts.some(text => text.includes('○ Title q-l1-aaaaaa'))).toBe(false)
   await restarted.unmount()
 })
 

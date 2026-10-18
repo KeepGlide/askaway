@@ -17,8 +17,10 @@ Terms:
 - **Group**: the open questions of one session family (`family`: the Claude Desktop root session that started or forked the
   asking session, and its family's other sessions). A question with no `family` (filed before the field existed) groups by
   its project (`project`). The group's label is the root's title (`family_title`), or the project's name when there is none.
-- **Session**: the questions of a group that were asked by one session (`session`). A question with no
-  session sits in its group under the session label "the session" ("a sessão").
+- **Session**: the questions of a group that were asked by one session (`session`). The root session of a family (its
+  `session` is the group's `family`) is the group itself: its questions sit right under the group's label, with no session
+  row, so the family's title is never drawn twice. The other sessions of the family are derived sessions, drawn as rows under
+  the root's questions. A question with no session sits in its group under the session label "the session" ("a sessão").
 - **Round**: the open questions of one group; Submit all writes the round of the group on screen.
 
 ## State folder: `~/.claude/state/askaway/` (`ASKAWAY_HOME` env var overrides it; tests use it)
@@ -333,11 +335,12 @@ status list). `hooks/pane.tsx`, `renderPane`.
     the, to, via, with; Portuguese: its own list, `MINOR_WORDS`). A word that already has a capital stays as typed.
   - **Label of each group**: a bold row (`renderGroup`, `hooks/pane.tsx`). The group on screen is the wizard's `groupKey`
     while that group is open, else the first open group.
-    Its sessions are rows below it: "├ <session>", and
+    The rows of the root session (its `session` equal to the group key) come first, one step under the label, with no
+    lead and no session row (`renderRootRows`, `hooks/pane.tsx`). Its derived sessions are rows below them: "├ <session>", and
     "└ <session>" for the last one, indented with the Box's `paddingLeft`. Each question of a session is a row
     with a mark and its title: ● the question on screen (bold), ✓ picked, ○ not yet picked.
     The questions of a session that is not the last are indented with `paddingLeft={1}` and prefixed "│  "; those
-    of the last session are indented with `paddingLeft={4}` (`renderSession`, `renderTreeQuestion`, `hooks/pane.tsx`).
+    of the last session are indented with `paddingLeft={4}` (`renderBranchSession`, `renderTreeQuestion`, `hooks/pane.tsx`).
   - The card shows the questions of one group at a time (the group on screen); the other groups stay in the tree only,
     and the picks of every group are kept.
   - **Pressing a question row**: each question row is a link. Where the surface draws Markdown it is a Markdown block, `<mark> [<title>](file:///askaway/jump/<question id>)`, the one mark being the row's state (● on screen, ○ waiting) and never the link mark `▪` (`LINK_MARK`, `hooks/look.ts`) beside it, the title in `**…**` while the card on screen is that question; `pressableLinks` names only that href, and `onLinkPress` runs the jump. The Desktop draws the link dotted and underlined, as its own links. Where Markdown is not drawn it is the underlined plain Button it was (key `tree-jump-<question id>`, `treeLink`, `renderTreeQuestion`,
@@ -351,9 +354,9 @@ status list). `hooks/pane.tsx`, `renderPane`.
   drawn on the desktop only: 24px before the counter in the header (key `keepglide-counter`, `KEEPGLIDE_HEADER_SIZE`)
   and 28px before the Submit all button (key `keepglide-submit`, `KEEPGLIDE_SUBMIT_SIZE`). The terminal draws no mark.
 - **Question card**, one question at a time, bordered, rows separated by a gap. Top to bottom:
-  - the title row (`renderTitleRow`): where the surface draws Markdown, one heading, "### <title> - See session - <risk
-    label> · <age label>" (`riskLabel`, `ageLabel`), the title a size up from the body; "See session" ("Ver sessão",
-    `card.session`) is a link to the asking session's Desktop window, `#<desktop_session>`, left out with its dashes when
+  - the title row (`renderTitleRow`): where the surface draws Markdown, one heading, "### <title> - See session ↗ - <risk
+    label> · <age label>" (`riskLabel`, `ageLabel`), the title a size up from the body; "See session ↗" ("Ver sessão ↗",
+    `card.session`; the arrow marks the link, since the desktop draws no underline) is a link to the asking session's Desktop window, `#<desktop_session>`, left out with its dashes when
     the question has no `desktop_session`; the surface opens it itself (no `onLinkPress`). Elsewhere the title in bold with
     the risk and age beside it, muted, wrapping under the title when they do not fit. The risk label (low, medium,
     high) is the risk of accepting the recommended option, as the filing agent judged it. A question with no title is
@@ -436,16 +439,20 @@ status list). `hooks/pane.tsx`, `renderPane`.
   card then shows the first question of the first group still open.
 - **Picks** survive a re-poll. Picks, and an open Other field, of questions that are no longer open are dropped.
 - **History** (under the card, above the footer; `historyOf`, `hooks/model.ts`; `renderHistory`, `hooks/pane.tsx`): the answers
-  of the last while, as a tree like the open one. Each family is a bold row, its sessions are "├" or "└" rows under it, and each
-  answer is a row "○ <title>" (the same ○ a waiting question row of the open tree has, plain, for every history row; the
-  state is only in the line), with its answer line under it, dim. The line reads
+  of the last while, drawn as the open tree is: a heading row with the logo and "History" ("Histórico"), a blank line, then
+  the tree. Each family is a bold row, the rows of its root session sit right under it and its derived sessions are "├" or
+  "└" rows (as in the open tree), and each answer is one row "○ <title> ✓ - <line>", shaped as a picked row of the open tree
+  (the same ○ every history row carries, plain; the state is only in the line). Where the surface draws Markdown and the
+  question is still known with a `desktop_session`, the row is a Markdown line whose title is a link to `#<desktop_session>`,
+  which the surface opens itself (no `onLinkPress`), as the card's See session link; else the row is plain Text. The line reads
   "Answer <key> · sent <time> · delivered <time> (read by the session)" ("Resposta <key> · enviada <time> · entregue <time> (lida
-  pela sessão)"); a pending line ends "waiting to be read" ("aguardando leitura"), an ended one "the session ended before reading
+  pela sessão)"); a pending line ends at the sent time (nothing says it is waiting: the line only grows once the session
+  answers back), an ended one ends "the session ended before reading
   it" ("a sessão encerrou antes de ler"), an expired one "expired unread" ("expirou sem ser lida"). An Other answer names its
   letter and its text (`Answer C (Other: "…")`). "answered by agent" or "answered by <name>" (a CLI answer) appears only when the
   answer was not given by the person. Times are local: "14:32" on the day of the pane, "17/10 14:32" on another day. The delivered
   time is the `ts` of the delivery marker (`d/<id>.json`); an expired marker carries a ts, which the History line does not show.
-  A question's title is plain text: an answered question is no longer open, so no card can be jumped to.
+  A question's title is never a jump link: an answered question is no longer open, so no card can be jumped to.
   A delivered line leaves DELIVERED_SHOWN_MS (30 s) after the pane first saw it (`deliveredAt`). A pending line never leaves; an
   ended or expired line stays until it is cleared.
 - **Clear history** (the last row of the pane, after a divider, right-aligned; `renderHistoryClear`): a secondary Button, as the card's Back is, labelled "Clear history (N)",

@@ -154,10 +154,16 @@ type TreeContext = {
   held: HeldButtons
 }
 
-// A row under a session. It is drawn knowing whether its session is the last one: the indent and the "│" differ.
-type TreeRow = (isFinal: boolean) => RenderElement
-type TreeSession = { key: string; label: string; rows: readonly TreeRow[] }
+// Where a row sits: its lead ("│  " under a session that is not the last one, else none) and the indent of its Box.
+type RowPlace = { lead: string; indent: number }
+// A row under a session, drawn at its place.
+type TreeRow = (place: RowPlace) => RenderElement
+// A session of a branch. The root session of a family (`isRoot`: its key is the group's) draws no row of its own: its
+// rows sit right under the group's label, before the derived sessions, so the family's title is never drawn twice.
+type TreeSession = { key: string; label: string; isRoot: boolean; rows: readonly TreeRow[] }
 type TreeBranch = { key: string; label: string; sessions: readonly TreeSession[] }
+const ROOT_PLACE: RowPlace = { lead: '', indent: 1 }
+export const placeUnder = (isFinal: boolean): RowPlace => (isFinal ? { lead: '', indent: 4 } : { lead: '│  ', indent: 1 })
 
 // The tree of the open questions: every group in turn, one under the other, each with its sessions and their questions.
 // Indentation is the Box's paddingLeft, not leading spaces, which a desktop may collapse.
@@ -182,26 +188,40 @@ function renderGroup(tree: TreeContext, group: Group): RenderElement {
         {
           key: `session-${first.id}`,
           label: sessionLabelOf(first, tree.lang),
-          rows: questions.map(question => (isFinal: boolean) => renderTreeQuestion(tree, question, isFinal)),
+          isRoot: first.session === group.key,
+          rows: questions.map(question => (place: RowPlace) => renderTreeQuestion(tree, question, place)),
         },
       ]
     }),
   })
 }
 
-// A branch of a tree: its label in bold, then its sessions. The last session is drawn "└", the others "├".
+// A branch of a tree: its label in bold, the rows of its root session right under it, then the derived sessions. The last
+// derived session is drawn "└", the others "├".
 function renderBranch(ui: Ui, branch: TreeBranch): RenderElement {
   const { Box, Text } = ui
-  const lastSession = branch.sessions.length - 1
+  const derived = branch.sessions.filter(session => !session.isRoot)
+  const lastSession = derived.length - 1
   return (
     <Box key={branch.key} flexDirection="column">
       <Text bold>{branch.label}</Text>
-      {branch.sessions.map((session, index) => renderBranchSession(ui, session, index === lastSession))}
+      {branch.sessions.filter(session => session.isRoot).map(session => renderRootRows(ui, session))}
+      {derived.map((session, index) => renderBranchSession(ui, session, index === lastSession))}
     </Box>
   )
 }
 
-// One session of a branch: its row ("├ " or, for the last one, "└ "), then its rows under it.
+// The rows of a family's root session: no session row, each row one step under the group's label.
+function renderRootRows(ui: Ui, session: TreeSession): RenderElement {
+  const { Box } = ui
+  return (
+    <Box key={session.key} flexDirection="column">
+      {session.rows.map(row => row(ROOT_PLACE))}
+    </Box>
+  )
+}
+
+// One derived session of a branch: its row ("├ " or, for the last one, "└ "), then its rows under it.
 function renderBranchSession(ui: Ui, session: TreeSession, isFinal: boolean): RenderElement {
   const { Box, Text } = ui
   return (
@@ -209,17 +229,21 @@ function renderBranchSession(ui: Ui, session: TreeSession, isFinal: boolean): Re
       <Box paddingLeft={1}>
         <Text>{`${isFinal ? '└' : '├'} ${session.label}`}</Text>
       </Box>
-      {session.rows.map(row => row(isFinal))}
+      {session.rows.map(row => row(placeUnder(isFinal)))}
     </Box>
   )
 }
 
-// The History tree under the card: the answers of the last while, drawn with the same branches as the open tree.
+// The History tree under the card: the answers of the last while, drawn as the open tree is: the heading row with the
+// logo, a blank line, then the same branches.
 function renderHistory(tree: TreeContext, history: readonly HistoryGroup[]): RenderElement {
   const { Box, Text } = tree.ui
   return (
-    <Box key="history" flexDirection="column">
-      <Text bold>{t(tree.lang, 'history.heading')}</Text>
+    <Box key="history" flexDirection="column" gap={1}>
+      <Box flexDirection="row" gap={1}>
+        {renderLogo(tree.ui, tree.view.surface)}
+        <Text bold>{t(tree.lang, 'history.heading')}</Text>
+      </Box>
       <Box flexDirection="column" gap={1}>
         {history.map(group =>
           renderBranch(tree.ui, {
@@ -228,7 +252,9 @@ function renderHistory(tree: TreeContext, history: readonly HistoryGroup[]): Ren
             sessions: group.sessions.map(session => ({
               key: `history-session-${session.key}`,
               label: session.label,
-              rows: session.entries.map(entry => (isFinal: boolean) => renderHistoryEntry(tree.ui, entry, isFinal)),
+              // A row with no session (key '') is never a root, even in a group keyed '' (no family and no project).
+              isRoot: session.key !== '' && session.key === group.key,
+              rows: session.entries.map(entry => (place: RowPlace) => renderHistoryEntry(tree.ui, entry, place)),
             })),
           }),
         )}
@@ -237,17 +263,24 @@ function renderHistory(tree: TreeContext, history: readonly HistoryGroup[]): Ren
   )
 }
 
-// One answer's row: the ○ every history row carries, as a waiting question row does, and its question's title. Its line
-// sits under the title, dim, starting in the title's column.
-function renderHistoryEntry(ui: Ui, entry: HistoryEntry, isFinal: boolean): RenderElement {
+// One answer's row, one line shaped as a picked row of the open tree: the ○ every history row carries, the question's
+// title, " ✓ - " and the answer line. Where the surface draws Markdown and the question's Desktop session is known, the
+// title is a link to that session (`#<desktop_session>`), which the surface opens itself, as the card's See session does.
+function renderHistoryEntry(ui: Ui, entry: HistoryEntry, place: RowPlace): RenderElement {
   const { Box, Text } = ui
-  return (
-    <Box key={`history-${entry.id}`} flexDirection="column" paddingLeft={isFinal ? 4 : 1}>
-      <Box flexDirection="row">
-        {!isFinal && <Text>{'│  '}</Text>}
-        <Text>{`○ ${entry.title}`}</Text>
+  const tail = ` ✓ - ${entry.line}`
+  if (entry.session === undefined || !('Markdown' in ui)) {
+    return (
+      <Box key={`history-${entry.id}`} paddingLeft={place.indent}>
+        <Text>{`${place.lead}○ ${entry.title}${tail}`}</Text>
       </Box>
-      <Text dimColor>{`${isFinal ? '  ' : '│    '}${entry.line}`}</Text>
+    )
+  }
+  const { Markdown } = ui
+  const text = `${place.lead}○ [${escapeMarkdown(entry.title)}](#${entry.session})${escapeMarkdown(tail)}`
+  return (
+    <Box key={`history-${entry.id}`} paddingLeft={place.indent}>
+      <Markdown text={text} />
     </Box>
   )
 }
@@ -273,16 +306,16 @@ function renderHistoryClear(tree: TreeContext, count: number): RenderElement {
 // is bold while the card on screen is that question.
 // One question row of the tree: its link, then, once the question has a pick not yet submitted, " ✓ - " and its own
 // Submit link. The one mark before the text is the state: on screen (●) or waiting (○); no link mark joins it.
-export function renderTreeQuestion(tree: TreeContext, question: Question, isFinal: boolean): RenderElement {
+export function renderTreeQuestion(tree: TreeContext, question: Question, place: RowPlace): RenderElement {
   const { ui, view, actions, held } = tree
   const { Box, Text } = ui
   const isOnScreen = view.screen?.question.id === question.id
   const isPicked = view.wizard.picks[question.id] !== undefined
   return (
-    <Box key={`tree-${question.id}`} paddingLeft={isFinal ? 4 : 1} flexDirection="row">
+    <Box key={`tree-${question.id}`} paddingLeft={place.indent} flexDirection="row">
       {treeLink(ui, held, {
         key: `tree-jump-${question.id}`,
-        lead: isFinal ? '' : '│  ',
+        lead: place.lead,
         mark: isOnScreen ? '●' : '○',
         label: questionLabel(question),
         href: linkHref('jump', question.id),
