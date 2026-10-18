@@ -92,6 +92,8 @@ declare module 'claude-code' {
       deliveredAt: Record<string, number>
       // The answered cards still fading out (250 ms after the press): question id → press time. Drawn dim, then gone.
       leaving: Record<string, number>
+      // Whether each card shows its long sections (the `e` toggle): question id → true while open.
+      expanded: Record<string, boolean>
       // Whether this session is inside a model turn of its own (turn.start to turn.complete; subagent turns excluded).
       turn: { isBusy: boolean }
       // The language in use: the stored choice, else the environment's. Set at session start and by /askaway lang.
