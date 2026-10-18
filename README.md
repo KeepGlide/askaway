@@ -21,7 +21,7 @@ A question card appears in the Askaway panel for each decision an agent filed wh
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Early access (0.4.0-beta.18):** the mod API moves between Claude Code releases, so expect changes until a stable release. The changes of this version are listed in [CHANGELOG.md](CHANGELOG.md).
+> ⚠️ **Early access (0.4.0-beta.19):** the mod API moves between Claude Code releases, so expect changes until a stable release. The changes of this version are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## 💡 What it is
 
@@ -190,7 +190,7 @@ While questions are open, a band sits above the prompt: `2 questions waiting · 
 5. **← Back** goes to the previous question. **Next →** goes to the next one, with or without an answer. It is on every question but the last.
 6. On the group's last question, the forward button is **Submit all (N)**, where N is the number of questions of the group on screen. It is pressable only once every question has an answer. Pressing it sends every answer of the group to the sessions that asked. Nothing is sent before this button.
 
-Under the card, the **History** tree lists the answers of the last while, grouped by session family and session, each answer with its mark and its question's title: `⏳` sent and not yet read, `✓` read by the session (with the time it was delivered), `⚠️` the session ended before reading it, or the answer expired unread (`expired`: no session read it within 7 days). A `✓` line leaves 30 seconds after the pane first shows it; `⚠️` lines stay. **Clear history (N)** at the very bottom removes the `✓` and `⚠️` lines; a `⏳` line stays until it is read.
+Under the card, the **History** tree lists the answers of the last while, grouped by session family and session, each answer as a `○` row with its question's title, as the open tree draws its rows, and a dim line under it that says where the answer stands: sent and waiting to be read, read by the session (with the time it was delivered), the session ended before reading it, or expired unread (`expired`: no session read it within 7 days). A read line leaves 30 seconds after the pane first shows it; ended and expired lines stay. **Clear history (N)** at the very bottom removes the read, ended and expired lines; a waiting line stays until it is read.
 
 When no question is open, the pane shows one footer line under the History tree, with the counts: `Nothing waiting · 1 answered in the last 24 h · last: <title> → A, <age> · 1 not yet read · 1 expired`. It is absent while a question is open.
 

@@ -2,8 +2,14 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.18, set by the beta.18 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.19, set by the beta.19 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.19] - 2026-10-18
+
+### Changed
+
+- A History row is drawn as a row of the open tree: "○ <title>" in plain text, with no ⏳, ✓ or ⚠️ mark and no accent colour; the dim line under it alone says where the answer stands (`HistoryEntry`, `lineStateOf` in `hooks/model.ts`; `renderHistoryEntry` in `hooks/pane.tsx`).
 
 ## [0.4.0-beta.18] - 2026-10-18
 
