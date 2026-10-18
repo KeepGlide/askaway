@@ -3,7 +3,39 @@
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
 `plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.8, set by the beta.8 release commit.
-The 0.4.0-beta.8 entry has no release commit yet. Commit hashes name the change in `git log`.
+Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.9] - Unreleased
+
+### Added
+
+- Each card opens folded: `e` (`e · details`) opens and closes the long sections (What it is, The problem, Analogy, Why to Context, and each option's What happens, Pros and Cons). The state is kept per question while the plugin is loaded (pane changes).
+- `askaway.py wait <id> --strict` exits 0 when the question is answered, 2 on timeout and 1 on an error. A Codex run waits this way, since no hook holds it.
+- `export --format csv` writes the columns `asked_at`, `project`, `title`, `recommended`, `answered_key`, `label`, `who`, `by`, `answered_at` and `delivered`.
+- Statuses `damaged` (the question file does not read as a JSON object) and `damaged answer` (the answer file does not read, so its key is unknown). A damaged question keeps its high-risk pause; a damaged answer ends it.
+- A repeated `ask` for an open question (same session, same question) returns the id of the open one.
+- Docs: From Codex, One machine, one login, Pin and roll back, Remove your data, the card fold and the dictation note.
+
+### Changed
+
+- `risk` is required on `ask`, with no default: a missing `risk` is refiled.
+- On the desktop, Back, Next and Submit all take `p`, `f` and `w` (was `p`, `f` and `e`), and `e` opens the card's details. The terminal keeps `z`, `x` and `w`.
+- A Bash call that runs `askaway.py answer` is denied by the `pause-guard` hook in every session; the user answers in the panel.
+- The Bash guard reads each command word by word (quotes, `;`, `&&`, `||`, `|`, subshells, `sh -c`, `eval`, `$(...)`), and also guards Write, Edit and NotebookEdit. It is a deterrent, not a guarantee (SPEC.md).
+- A damaged `a/` file keeps a high-risk pause until an `answer` overwrites it; `prune` clears a damaged `q/` file with its companions. A `wait` from another session no longer writes the delivery marker.
+- `~`, `$HOME` and `${HOME}` before the installed script path count as the inbox call during a pause.
+- The AI install spec checks for Python 3.12 or newer (it accepted 3.10).
+- The README opens with what the user sees, moves the away triggers to the terms table, and labels `fit` as the agent's estimate.
+
+### Fixed
+
+- The footer counts follow the clock: the 24 h window and the 7-day TTL move them without a status line change.
+
+### Migration needed
+
+- yes: callers of `ask` must send `risk`, which has no default. On the desktop, `e` opens the details, and Back, Next and Submit all are `p`, `f` and `w`. Answers come from the panel or from the session that asked, since a Bash call cannot run `askaway.py answer`.
+- yes: long fields are refused as `too long (n/limit)`, not cut; a usage error (unknown command, bad id or key) exits 1 even without `--strict`; `wait` on an unknown id exits 1.
+- yes: the state folder gains `foreign_check`, an empty stamp file whose mtime is the last re-check of unread answers of other sessions (created on first use). Delete it freely; it is recreated.
 
 ## [0.4.0-beta.8] - 2026-10-18
 

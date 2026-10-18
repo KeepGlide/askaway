@@ -91,6 +91,9 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   marker (Claude Desktop released it). `ttl`: the answer has been unread for more than 7 days (measured
   from the answer's `ts`); it expires for every session, the asking one included.
 - `away.json` — `{"on":true,"ts":<ms>}` (missing = off).
+- `foreign_check` — an empty stamp file; its mtime is the last re-check of unread answers that other sessions
+  receive. The deliver hook re-checks them at most once every 60 s, so its usual cost stays near the empty folder's.
+
 
 Status (derived, never stored): `open` (no a/), `answered` (a/ but no d/, and the answer is not yet
 past the 7-day TTL), `delivered` (a d/ marker without `expired`), `expired` (an answer unread past the
@@ -106,58 +109,73 @@ The user counts as away when ANY of: hook input `permission_mode == "bypassPermi
 ## CLI
 
 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" <cmd>`. Output is one JSON line on stdout (`export`
-writes its document instead); exit 0 always, unless `--strict` is given (below).
+writes its document instead). Exit codes: 0 for a reply; 1 for a usage error (unknown command, unknown id or option key, bad option value), always, with a one-line `{"error": ...}` and nothing on stderr; `--strict` (below) adds exit 1 for a refile or an error, and exit 2 for a `wait` timeout.
 
 - `ask` — reads the entry JSON (the fields above minus v/id/ts/source) from stdin or `--json '<...>'`.
   `title` defaults to the question clipped to 60 chars. Fills `session` from env
   `CLAUDE_CODE_SESSION_ID`, `project` from the working directory, and `run_kind` defaults to `main`
   (`codex` when env `CODEX_*` vars exist and there is no session id). Validates: at least 2
   options, option keys consecutive uppercase letters starting at A, in order (A, B, C...),
-  `recommended` among the keys. The required top-level fields are `what`, `problem`,
-  `context`, `why`, `how`, `gains`, `losses`, `analogy`, `urgency` and `undo` (non-blank strings). Each option
-  requires `tradeoff` (non-blank), `fit` (integer 0-100), `does`, `pros` and `cons` (non-blank strings).
-  `what` must hold at least 2 sentences, counted leniently: the non-empty runs between terminators, where a
-  terminator is one or more of `.`, `!` or `?` followed by a space or the end of the text (so `2.0` and
-  `e.g.` do not break a sentence, and the last sentence needs no terminator). Every missing or invalid
-  field is named in one error, e.g. `missing fields: analogy, undo; option B: fit; option B: does`, and a
-  `what` shorter than 2 sentences adds `what needs at least 2 sentences`. Gaps are listed in this order:
-  the missing top-level fields, the `what` sentence rule, then each option's gaps in option order
-  (`tradeoff`, `fit`, `does`, `pros`, `cons`). Truncates long strings (`what` 600 chars, `problem` 400; the
-  sentence rule reads the kept text). Prints
-  `{"id","recommended","action":"continue|pause"}`. An incomplete or invalid entry files nothing and
-  prints `{"action":"refile","recommended":<given or null>,"error":"..."}`: the caller completes the
-  fields named in `error` and files again. An internal error prints
+  `recommended` among the keys. `risk` is required, with no default: `low`, `medium` or `high`.
+  The required top-level text fields are `question`, `what`, `problem`, `context`, `why`, `how`, `gains`,
+  `losses`, `analogy`, `urgency` and `undo`; each option requires `label`, `tradeoff` (non-blank), `fit`
+  (integer 0-100), `does`, `pros` and `cons`. `what` must hold at least 2 sentences, counted leniently: the
+  non-empty runs between terminators, where a terminator is one or more of `.`, `!` or `?` followed by a space
+  or the end of the text (so `2.0` and `e.g.` do not break a sentence, and the last sentence needs no
+  terminator). A text is refused, never clipped: `missing` when blank or not a string; `too long (n/limit)` over
+  its limit (`question` 400, `what` 600, `context` 600, `problem` 400, `how` 400, `title` 60, the other texts 300);
+  `placeholder` for a required text made only of the words `TBD`, `todo`, `n/a` or `lorem` (any case, punctuation ignored), or, for a long text (`question`, `what`, `problem`, `analogy`, `why`, `how`, `gains`, `losses`, `context`, each option's `does`, `pros`, `cons`), of fewer than 3 words. Short texts (`urgency`, `undo`, each option's `tradeoff` and `label`, `title`) may be one or two words, such as `Can wait`.
+  Every gap is named in one error, grouped: the missing fields (`missing fields: analogy, undo`), then the other
+  refused top-level fields (`what: placeholder`), then the `what` sentence rule, then each option grouped by key
+  (`option B: does, pros`; `option B: cons: placeholder`). Option keys out of order add `keys received: B, A`.
+  An incomplete or invalid entry files nothing and prints
+  `{"action":"refile","recommended":<given or null>,"error":"...","missing":[...],"by_option":{"B":["does","pros"]},"keys_received":["B","A"]}`:
+  `missing` lists the refused top-level fields, `by_option` the refused fields of each option, `keys_received`
+  the option keys as given (`[]` when they were not a list). The caller completes the named fields and files again.
+  A new ask whose session and question text (case and spacing ignored) match an open question of that session
+  prints `{"id":<existing>,"recommended":<its>,"action":"open","duplicate":true}` and files nothing. A question
+  with no session is never a duplicate.
+  Prints `{"id","recommended","action":"continue|pause"}`. An internal error prints
   `{"action":"continue","recommended":<given or null>,"error":"internal error"}`, or
   `{"action":"pause",...}` when the entry asked for `risk` `high` (nothing was filed in either case).
-- `answer <id> <key> [--by cli] [--text <string>]` — writes a/ if absent (the panel calls it with `--by panel`, `--strict`, and `--text` for key `other`); prints `{"id","key","written":bool}`. `--text` is the free text of key `other` (trimmed; required for `other`, dropped for a lettered key).
+- `answer <id> <key> [--by cli] [--text <string>]` — writes a/ if absent (the panel calls it with `--by panel`, `--strict`, and `--text` for key `other`); prints `{"id","key","written":bool}`. `--text` is the free text of key `other` (trimmed; required for `other`, dropped for a lettered key). Keys are case-insensitive (`b`, `other`, `OTHER`); the reply and the record carry the canonical key (`B`, `other`).
   Session rule: a `cli` answer to a question with a session is refused unless the caller's
   `CLAUDE_CODE_SESSION_ID` equals that session (a shell with no session is refused too); the refusal
   prints `{"error":"answer refused: ..."}`, exit 0, and writes nothing, so the slot stays free. Panel
   answers (`--by panel|accept_recommended|accept_all`) are not bound to a shell session.
-- `status <id>` — prints `{"id","status","key"|null}`, plus `"who"` when the item is answered and its answer record carries one.
-- `--strict` (opt-in, on `ask`, `answer` and `status`) — a refile, an error, or a usage error that
-  names `--strict` exits 1 instead of 0. The JSON line is printed as usual. Without the flag the exit
-  code stays 0. A repeated `answer` that loses the first-writer race (`written:false`) is not an error.
-- `wait <id> [--timeout 300]` — polls a/ every 0.5 s until the answer exists or the timeout (seconds,
-  finite, zero or more; `0` checks once) passes. Prints `{"id","status":"answered","key","text"?}` (the
-  `text` of an `other` answer, as in `status`), `{"id","status":"timeout"}`, or
-  `{"id","status":"unknown id"}`. Exit 0. The pause guard exempts `wait` and `export` like `ask`,
-  `status` and `list`, so a paused turn can wait for its answer.
+- `status <id>` — prints `{"id","status","key"|null}`, plus `"who"` when the item is answered and its answer record
+  carries one. `status` is `open`, `answered`, `delivered` or `expired`; `damaged` when the question file does not
+  read (key null); `damaged answer` when the answer file does not read (answered, key unknown). An unknown id is a
+  usage error (exit 1).
+- `--strict` (opt-in, on `ask`, `answer`, `status` and `wait`) — a refile or an error exits 1 instead of 0; `wait`
+  also exits 2 on a timeout and 1 on any status other than `answered` or `delivered`. The JSON line is printed as
+  usual. Without the flag the exit code stays 0 (usage errors exit 1 either way). A repeated `answer` that loses the
+  first-writer race (`written:false`) is not an error.
+- `wait <id> [--timeout 300] [--strict]` — polls every 0.5 s until the question leaves `open` or the timeout (seconds,
+  finite, zero or more; `0` checks once) passes. It returns the reply `status` gives for the item
+  (`{"id","status","key"?,"text"?,"who"?}`): an answer past the TTL reads `expired`, not `answered`; an answer
+  already delivered reads `delivered`. `{"id","status":"timeout"}` when nothing arrives. When it returns an
+  `answered` item, it writes the delivery marker `d/<id>.json` that the deliver hook writes, so the pane and `status`
+  agree and the hook does not send the answer again. An unknown id is a usage error (exit 1). With `--strict`: exit 0
+  for `answered` or `delivered`, 2 on timeout, 1 for any other status. The pause guard exempts `wait` and `export`
+  like `ask`, `status` and `list`, so a paused turn can wait for its answer. The delivery marker is written only by the question's own session, or for a question with no session (Codex); another session's `wait` returns the answer and leaves the delivery to the asking session.
 - `list [--open | --answered] [--since <when>]` — prints `{"items":[{"id","title","status","recommended","key"}...]}`,
   with `"who"` on each answered item whose answer record carries one; newest first. `--answered` keeps the answered items (`answered`, `delivered`, `expired`). With
   `--since`, only the items whose answer `ts` is at or after `<when>`; `--since` needs `--answered`.
   `<when>` is a duration counted back from now (`30m`, `2h`, `7d`) or an ISO 8601 timestamp; a
   timestamp without a zone is read as UTC. Any other value is an error.
-- `export [--since <when>] [--format json|jsonl|csv]` — writes every question, newest first, with its
-  answer record (as stored, so it carries `who` when `answer` wrote one). Rows are `{"id","status","question":<stored question>,"answer":<stored answer>|null}`:
-  `json` (the default) is one array, `jsonl` one row per line, `csv` one row per question with the
-  header `id,status,question,answer`, the last two cells as JSON. `--since` keeps the questions
-  asked at or after `<when>` (the question's `ts`; unlike `list --since`, which filters by the answer's).
-  Writes the document to stdout, not a JSON result line; exit 0.
+- `export [--since <when>] [--format json|jsonl|csv]` — writes every question, newest first, with its answer record
+  (as stored, so it carries `who` when `answer` wrote one). Rows are `{"id","status","question":<stored question>,"answer":<stored answer>|null}`:
+  `json` (the default) is one array, `jsonl` one row per line. `csv` is one flat row per question, under the header
+  `asked_at,project,title,recommended,answered_key,label,who,by,answered_at,delivered`: times are UTC ISO 8601 to the
+  second; `label` is the text of the answered option (empty for `other` and for an unanswered question); `delivered`
+  is `true` only for a delivered answer. No cell holds JSON. `--since` keeps the questions asked at or after `<when>`
+  (the question's `ts`; unlike `list --since`, which filters by the answer's). Writes the document to stdout, not a
+  JSON result line; exit 0.
 - `away on|off|status` — writes or reads away.json; prints `{"away":bool}`.
 - `prune [--days N]` — deletes q/a/d files of closed items (`delivered` or `expired`) whose closing
   time is older than N days: the delivery marker's `ts` for `delivered`, the answer's `ts` for
-  `expired`; never the question's `ts`. Prints `{"removed":n}`.
+  `expired`; never the question's `ts`. Prints `{"removed":n}`. A damaged q/ file (no JSON object) is removed with its a/ and d/ files whatever `--days` is; the daily prune (the deliver hook's slow path) never removes one, so the user clears it.
   N defaults to env `ASKAWAY_PRUNE_DAYS` when it is a whole number of days (1 to 6 digits, `0`
   allowed, surrounding spaces ignored), else 30; `--days` overrides both. Any other value (empty,
   negative, decimal, a word, more than 6 digits) falls back to 30. The window never reaches an open,
@@ -190,7 +208,7 @@ It fails open: any error exits 0 with no output. The command hooks are declared 
   `pause:true` (risk `high` only) whose status is not closed (`open` or `answered`, that is, not yet
   delivered nor expired) has `session == input.session_id`, it denies with the reason "Paused: Askaway question
   <id> (<title>) needs the user's answer. Do read-only work or end the turn; check with
-  `askaway.py status <id>`." Exception: one simple Bash command running `askaway.py ask|status|list|wait|export`
+  `askaway.py status <id>`." Exception: one simple Bash command running `askaway.py ask|status|list|wait|export` (its installed or mirror path may start with `~`, `$HOME` or `${HOME}`)
   (no `;&|`$<>`) passes. `answer` never passes, so only the user lifts a pause; an answer that is
   written but not yet delivered still holds it, and the next deliver run (the `status` call's
   PostToolUse, for one) ends it. Read-only MCP tools pass: `mcp__<server>__<tool>` whose tool name
@@ -219,6 +237,8 @@ It fails open: any error exits 0 with no output. The command hooks are declared 
 
 - `/askaway` — opens the panel. When the panel is not placed, it answers with a text list of the open questions.
 - `/askaway lang pt-BR|en|auto` — sets the language; the default is `auto`, the environment's locale (see "Language").
+- Damaged files: a damaged `q/` file (no JSON object) holds the pause of its session while it is open; the pause reason names it and `askaway.py prune`. A damaged `a/` file keeps the pause (status `damaged answer`) until an `answer`, with any `--by`, overwrites it; `create_once` replaces only a file that does not read as a JSON object.
+- **Bash and file guard** (`bash_tamper_reason`, `_tamper_denial`): runs in every session, away or not, on Bash, Edit, Write and NotebookEdit. It denies (1) an answer typed in a shell: a command word that runs the askaway script or module (`python`, `python3.x`, `-m askaway`, a bare `askaway.py`, or a glob or a variable standing for it) followed by `answer`, or by a word that could expand to it, unless that command sets `ASKAWAY_HOME` to a literal path under /tmp or to `$(mktemp ...)` (inline, or exported by an earlier segment; a bare assignment does not reach the child process); (2) code that writes the state folder, or answers, in `python -c`, `-e` and a heredoc, and in `sh -c` and `eval` text; (3) a write into the state folder: a redirection target, an operand of `cp`, `mv`, `tee`, `touch`, `ln`, `install`, `truncate`, `rsync`, `rm`, `unlink`, `shred`, `rmdir`, `sed -i` or `dd of=`, after `~`, `$HOME`, `${HOME}`, `$ASKAWAY_HOME` and `cd` are applied; deleting also refuses a path above the folder. Reading (`cat`, `jq`, `less`, `python3 -m json.tool`) stays allowed, and a Write, Edit or NotebookEdit into the folder is denied. The protected folders are the default `~/.claude/state/askaway` and `ASKAWAY_HOME` when it lies outside /tmp; paths are resolved (symlinks followed) before the check. **The guard is a deterrent against the agent's own shell, not a guarantee.** It does not model `xargs`, `find -exec`, a command word held in a variable, a script file's own code, or the code of interpreters beyond their `-c`/`-e` string; the user's own shell is not guarded.
 - `/askaway away` — toggles `away.json` and reports the new state.
 
 There are no other public commands. The `/inbox` commands of earlier versions are not part of v1.
@@ -284,7 +304,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
   - the lead line, bold: "The agent is already on <key> since <HH:MM>", or "The agent is paused since <HH:MM>" for a
     `high` risk question (`leadOf`, `hooks/model.ts`; pt: "O agente já seguiu com <key> desde <HH:MM>", "O agente está
     pausado desde <HH:MM>");
-  - the explanation box before the question, when one of its sections is set: a box on a very light gray ground
+  - the explanation box before the question, while the details are open and one of its sections is set: a box on a very light gray ground
     (`#F9FAFB`, ink `#1F2937`, `EXPLAIN_COLORS`, 14.05:1), with `paddingX={1}` and `paddingY={1}`. Its sections, each
     drawn only when its field is set: "What it is" (`what`; pt "O que é"), "The problem" (`problem`; pt "O problema"),
     and "🔁 Analogy" (`analogy`; pt "🔁 Analogia");
@@ -294,7 +314,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
     "(Recomendada)") after the label of the recommended one. The recommended option is bold while not picked; the picked
     option is the primary button. Under each option, its own lines, indented one cell (`paddingLeft={1}`), dim only while
     the card fades: the tradeoff line "└ <tradeoff> · fit N" (the first letter of the tradeoff capitalized; pt "· aderência N";
-    with no tradeoff "└ fit N"; a null fit draws nothing), then "What happens: <does>", "Pros: <pros>" and
+    with no tradeoff "└ fit N"; a null fit draws nothing). While the details are open, also "What happens: <does>", "Pros: <pros>" and
     "Cons: <cons>" (pt "O que acontece", "Prós", "Contras"). The options are in a column with `gap={2}` and
     `marginTop={1}`, so two blank lines part them from the explanation box (`renderQuestion`, `renderOption`,
     `hooks/pane.tsx`);
@@ -302,13 +322,21 @@ status list). `hooks/pane.tsx`, `renderPane`.
     (autofocused). Enter in that field ("Done" / "Pronto") records the typed text as the pick (key `other`); blank
     text records nothing. Once recorded, the text shows under the button and the button is primary. A surface with
     no Input draws no Other option (`renderOther`);
-  - the explanation box after the options, when one of its sections is set, in this order: "💡 Why <rec>" (`why`; pt
+  - the explanation box after the options, while the details are open and one of its sections is set, in this order: "💡 Why <rec>" (`why`; pt
     "💡 Por que A"), "↩️ Undo" (`undo`; pt "↩️ Como desfazer"), "🛠️ How" (`how`; pt "🛠️ Como"), "🎁 What we gain" (`gains`;
     pt "🎁 O que ganhamos"), "⚖️ What we lose" (`losses`; pt "⚖️ O que perdemos"), and "🧭 Context and origin" (`context`;
     pt "🧭 Contexto e origem") last. Each section is one line, "heading: text", the heading in bold, the text wrapping as one
     paragraph; every name in the text (a slash command, or anything the agent wrote between backticks) is drawn in bold
     ink (`piecesOf`, `renderSection`, `hooks/model.ts`, `hooks/pane.tsx`). The three boxes are `sectionsOf` and
     `renderExplanation` (`hooks/model.ts`, `hooks/pane.tsx`);
+  - **Details toggle**: the long sections are folded by default. One Button under the options, labelled "e · details"
+    (pt "e · detalhes"), with hotkey `e`. When an option is keyed E, the label is "details" (pt "detalhes") and the toggle
+    has no hotkey, since the option keeps the letter. Pressing it opens and shuts the folded sections: the explanation box
+    before the question, the "What happens", "Pros" and "Cons" lines under each option, and the explanation box after the
+    options. The title, the lead line, the question, Urgency, the options with their tradeoff lines and the nav row stay
+    drawn. The toggle is drawn only when the card has a folded section. Its state is kept per question in the plugin's state
+    (`expanded`, `hooks/register.tsx`) while the plugin is loaded; it is not written to disk (`renderDetailsToggle`,
+    `hasDetailsOf`, `hooks/pane.tsx`).
   - a separator: a 1px rule on the desktop, a row of "─" on the terminal (`renderDivider`);
   - the nav row: [← Back] (Portuguese: "← Voltar") on every question, dim on the first; [Next →] (Portuguese:
     "Próxima →") on every question but the last; on the last one, [Submit all (n)] (Portuguese: "Enviar tudo (n)"),
@@ -316,7 +344,8 @@ status list). `hooks/pane.tsx`, `renderPane`.
 - **Hotkeys**: each option button draws its key letter in lower case as its hotkey (`optionHotkey`, `hooks/pane.tsx`), on
   every surface. "Other…" keeps its digit, the position after the options (none after nine). Back, Next and Submit all
   take the first free letters of their surface's pool (`letterFor`, `NAV_POOLS`, `hooks/pane.tsx`): `z`, `x`, `w` on the
-  terminal; `p`, `f`, `e` and then `z`, `x`, `w` on the desktop. A letter that an option of the card uses is skipped. No
+  terminal; `p`, `f` and then `w`, `z`, `x` on the desktop. The letter `e` is the details toggle's, on both surfaces, so no
+  pool holds it. A letter that an option of the card uses is skipped. No
   hotkey is drawn while the Other field is open, so typed text presses no button.
 - **Choosing**: an option, or "Other…" with its text, records the pick and moves on: to the first question without a
   pick after the current one (wrapping to the start), or, once every question of the group has a pick, to the last
@@ -340,7 +369,8 @@ status list). `hooks/pane.tsx`, `renderPane`.
   part that is missing is left out), the same label that the tree uses for a session.
 - **Footer** (`footerText`, `hooks/model.ts`; pt "Nada aguardando" first): drawn under the status lines only while no
   question is open. It counts the answers given in the last 24 h, names the last answer (its question's title cut to 40
-  characters, its key and its age), and counts the answers not yet read and the expired ones. Absent while a question is open.
+  characters, its key and its age), and counts the answers not yet read and the expired ones. Absent while a question is open. Its counts are read on the pane's clock (the tick, `tickClock`), which the poll rewrites
+  whenever the footer text changes, so the 24 h window and the 7-day TTL move the counts with no status line change.
 
 ## Focus and clicks
 
