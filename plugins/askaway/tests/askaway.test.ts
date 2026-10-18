@@ -2098,7 +2098,7 @@ test('Other… takes a free-text answer on Enter through the same answer path, a
   await ui.unmount()
 })
 
-test('typing in Other… changes nothing drawn and writes nothing: no pick, no bold link, no state write, Submit all writes nothing', async ($, on) => {
+test('typing in Other… changes nothing drawn and writes nothing: no pick, no bold link, no state write', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   const { writes } = stubHost(on, files)
   // Every state write goes through state.set; the pane's text lives in memory, so no key may reach it.
@@ -2118,7 +2118,6 @@ test('typing in Other… changes nothing drawn and writes nothing: no pick, no b
   }
   expect(stateWrites.length).toBe(writesBefore)
   expect(JSON.stringify(await ui.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).not.toContain('"bold":true')
-  await ui.press({ key: 'submit-all' })
   expect(writes).toEqual([])
   await ui.unmount()
 })
@@ -2269,6 +2268,43 @@ test('Submit all records the Other text typed after the picks, before it writes'
   await ui.press({ key: 'submit-all' })
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb')])
   expect(readJson(files, path('a', 'q-l2-bbbbbb'))).toMatchObject({ key: 'other', text: 'Use a fork' })
+  await ui.unmount()
+})
+
+test('Submit all drawn off takes the press when the only answer is an Other text typed but not recorded: it records, then writes', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { writes } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'other-q-l1-aaaaaa' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
+  // No Enter and no focus move: the pane still draws the button off, as the draft is not in the store yet.
+  expect((await ui.find({ type: 'Button', key: 'submit-all' }))?.props.dimColor).toBe(true)
+  await ui.press({ key: 'submit-all' })
+  expect(writes).toEqual([path('a', 'q-l1-aaaaaa')])
+  expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ key: 'other', text: 'Use a fork' })
+  await ui.unmount()
+})
+
+test('Submit all drawn off with an Other text on one of two questions records the pick and writes nothing while the other has none', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  const { writes } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'nav-next' })
+  await ui.press({ key: 'other-q-l2-bbbbbb' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l2-bbbbbb', text: 'Use a fork', kind: 'change' })
+  await ui.press({ key: 'submit-all' })
+  expect(writes).toEqual([])
+  expect(await otherBold(ui, 'q-l2-bbbbbb')).toBe(true)
+  // A blank text typed over it and another press: the pick goes away and still nothing is written.
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l2-bbbbbb', text: '   ', kind: 'change' })
+  await ui.press({ key: 'submit-all' })
+  expect(writes).toEqual([])
+  expect(await otherBold(ui, 'q-l2-bbbbbb')).toBe(false)
   await ui.unmount()
 })
 

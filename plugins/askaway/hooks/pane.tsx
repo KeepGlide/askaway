@@ -389,7 +389,7 @@ const letterFor = (card: CardContext, key: NavKey): string | undefined => {
 
 // One question on screen: the title in bold with the risk and age beside it, the Urgency box under it (when set), the first
 // block (What it is and The problem, plain paragraphs), then the details block: the "Askaway Details:" title and Analogy,
-// Why to Context. Then the question, the bold lead line under it, the options with their tradeoff, fit, what happens,
+// Why to Context. Then the question, the dim lead line under it, the options with their tradeoff, fit, what happens,
 // pros and cons, and "Other…". Then a separator, and the Back / Next or Submit all row. One blank line sits under it.
 function renderQuestion(
   ui: Ui,
@@ -423,7 +423,7 @@ function renderQuestion(
       {details.length > 0 && renderDetailsBlock(ui, lang, card, details)}
       <Box flexDirection="column">
         <Text bold dimColor={isLeaving}>{question.question}</Text>
-        <Text bold dimColor={isLeaving}>{leadOf(lang, question)}</Text>
+        <Text dimColor>{leadOf(lang, question)}</Text>
       </Box>
       {isEnded ? (
         <Text key={`ended-${question.id}`}>{t(lang, 'card.ended', { key: question.recommended })}</Text>
@@ -661,8 +661,10 @@ function renderSubmitAll(ui: Ui, lang: Lang, actions: PaneActions, card: CardCon
   const isOff = !screen.canSubmit || card.isLeaving
   const label = t(lang, 'review.submit', { n: screen.total })
   const hotkey = letterFor(card, 'submit')
+  // The press goes through even while the button is drawn off: an Other text typed but not recorded yet (no Enter, no
+  // blur) is recorded by the submit action first, and submitGroup checks again that every question has a pick.
   const onPress = () => {
-    if (isOff) return
+    if (card.isLeaving) return
     actions.submit()
   }
   return (

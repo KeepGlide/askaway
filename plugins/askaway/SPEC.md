@@ -375,7 +375,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
     `hooks/look.ts`): `#282828` for a dark theme, `#EEEDE9` for a light one (provisional). A theme the plugin does not resolve (`auto`, `custom:<slug>`) gets no fill: the block carries no background, and the engine's own theme shows through. Its padding is one cell across
     and one row above and below, so the text does not touch the fill's edge (`renderDetailsBlock`, `hooks/pane.tsx`).
   - the question text, bold;
-  - the lead line, bold, right under the question: "On <key> since <HH:MM>. Pick another option to switch; no answer keeps <key>.",
+  - the lead line, dim, right under the question: "On <key> since <HH:MM>. Pick another option to switch; no answer keeps <key>.",
     or "Paused since <HH:MM>, waiting for your answer." for a `high` risk question (`leadOf`, `hooks/model.ts`; pt: "Na <key> desde
     <HH:MM>. Escolha outra opção para trocar; sem resposta, fica a <key>.", "Pausado desde <HH:MM>, esperando a sua resposta.");
   - the options, one full-width Button each, "<key> · Label" (for example "A · Label"), with "(Recommended)" (pt
@@ -423,7 +423,10 @@ status list). `hooks/pane.tsx`, `renderPane`.
   "Submit Answer" link, after the mark `▪` (Markdown `▪ [Submit Answer](file:///askaway/submit/<id>)` where Markdown is drawn, else the plain underlined Button; key `tree-submit-<id>`, pt "Enviar resposta"; `renderTreeSubmit`, `treeLink`). Its press
   answers that question alone, through the answer path (`submitOne`), at once, and the row leaves the tree and the round
   as Submit all's questions do. The other picks stay for Submit all. The leading mark of a row is only ● (on screen) or ○.
-- **Submit all (n)** writes every answer of the group's round at once. On each press the card dims at once; each
+- **Submit all (n)** writes every answer of the group's round at once. It is drawn off (secondary, dim) while a question of
+  the group has no pick in the store, but its press always runs: the submit action records a pending Other text first, then
+  `submitGroup` checks again that every question has a pick and writes nothing otherwise. So a text typed in the Other
+  field and followed straight by a click on Submit all is the answer, with no Enter and no focus move. On each press the card dims at once; each
   answer is sent to the CLI (`askaway.py answer --by panel`, see the answer record above), which writes `a/` first-writer-wins, and the card fades for 250 ms (`FADE_MS`). Then the
   picks of those questions are cleared and the step goes back to the first question. When other groups stay open, the
   card then shows the first question of the first group still open.
