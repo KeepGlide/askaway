@@ -23,7 +23,7 @@ import {
   windowOf,
 } from '../hooks/model'
 import { heldButtons } from '../hooks/held'
-import { ACCENT_COLOR, EXPLAIN_COLORS } from '../hooks/look'
+import { ACCENT_COLOR } from '../hooks/look'
 import type { Answer, Board } from '../types'
 
 const HOME = '/test-home'
@@ -376,11 +376,11 @@ test('model: the age label reads now, minutes, hours and days in both languages'
 test('model: the status lines read in the chosen language, and a session that ended keeps its line', () => {
   const q = parsedQuestion('q-m-000001', 10)
   const board: Board = { questions: [q], answers: [answerOf('q-m-000001', 'B', 1)], delivered: [] }
-  expect(statusLines('pt', board, NO_STATUS).map(line => line.text)).toEqual(['⏳ Resposta B enviada para App'])
-  expect(statusLines('en', board, NO_STATUS).map(line => line.text)).toEqual(['⏳ Answer B sent to App'])
+  expect(statusLines('pt', board, NO_STATUS).map(line => line.text)).toEqual(['Resposta B enviada para App'])
+  expect(statusLines('en', board, NO_STATUS).map(line => line.text)).toEqual(['Answer B sent to App'])
 
   const orphan: Board = { questions: [], answers: [answerOf('q-m-000001', 'B', 1)], delivered: [] }
-  expect(statusLines('pt', orphan, NO_STATUS).map(line => line.text)).toEqual(['⏳ Resposta B enviada para a sessão'])
+  expect(statusLines('pt', orphan, NO_STATUS).map(line => line.text)).toEqual(['Resposta B enviada para a sessão'])
 
   const ended: Board = {
     questions: [q],
@@ -388,14 +388,14 @@ test('model: the status lines read in the chosen language, and a session that en
     delivered: [{ id: 'q-m-000001', expired: true, reason: 'session-ended' }],
   }
   const [line] = statusLines('en', ended, NO_STATUS)
-  expect(line).toEqual({ id: 'q-m-000001', text: '⚠️ App ended before reading answer B', dismissable: true })
+  expect(line).toEqual({ id: 'q-m-000001', mark: '⚠️', text: 'App ended before reading answer B', dismissable: true })
 })
 
 test('model: an answer unread past the 7-day TTL reads as expired, and one inside the TTL still reads as pending', () => {
   const board: Board = { questions: [parsedQuestion('q-m-000001', 10)], answers: [answerOf('q-m-000001', 'B', 1000)], delivered: [] }
-  expect(statusLines('en', board, { ...NO_STATUS, now: 1000 + ANSWER_TTL_MS }).map(line => line.text)).toEqual(['⏳ Answer B sent to App'])
+  expect(statusLines('en', board, { ...NO_STATUS, now: 1000 + ANSWER_TTL_MS }).map(line => line.text)).toEqual(['Answer B sent to App'])
   expect(statusLines('en', board, { ...NO_STATUS, now: 1000 + ANSWER_TTL_MS + 1 })).toEqual([
-    { id: 'q-m-000001', text: '⚠️ Answer B expired unread', dismissable: true },
+    { id: 'q-m-000001', mark: '⚠️', text: 'Answer B expired unread', dismissable: true },
   ])
 })
 
@@ -933,7 +933,7 @@ test('a separator is drawn after the options and Other…, and before the nav ro
   }
 })
 
-test('every status line takes the one green pair, the ⚠️ lines included', async ($, on) => {
+test('a status row has no fill and no border: its mark alone takes the accent, and its text is plain and dim', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'A')],
@@ -944,16 +944,18 @@ test('every status line takes the one green pair, the ⚠️ lines included', as
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  const expired = '⚠️ Resposta A expirou sem ser lida'
-  const pending = '⏳ Resposta B enviada para App'
-  expect((await ui.find({ type: 'Text', text: expired }))?.props.color).toBe('#166534')
-  expect((await ui.find({ type: 'Text', text: pending }))?.props.color).toBe('#166534')
-  // Each status line is one green row with its text inside; the explanation box of the card is light gray, so it is not one.
-  const rows = nodesOf(await ui.drawn()).filter(node => (node.props as Record<string, unknown> | undefined)?.backgroundColor === '#DCFCE7')
-  expect(rows).toHaveLength(2)
-  for (const text of [expired, pending]) {
-    expect(rows.some(row => nodesOf(row).some(child => Array.isArray(child.children) && child.children.includes(text)))).toBe(true)
-  }
+  const expired = 'Resposta A expirou sem ser lida'
+  const pending = 'Resposta B enviada para App'
+  expect((await ui.find({ type: 'Text', text: expired }))?.props).toMatchObject({ dimColor: true })
+  expect((await ui.find({ type: 'Text', text: pending }))?.props).toMatchObject({ dimColor: true })
+  expect((await ui.find({ type: 'Text', text: '⏳' }))?.props.color).toBe(ACCENT_COLOR)
+  expect((await ui.find({ type: 'Text', text: '⚠️' }))?.props.color).toBe(ACCENT_COLOR)
+  // No node of the pane is filled or boxed: the status rows and the explanation boxes sit on the card's own background.
+  const filled = nodesOf(await ui.drawn()).filter(node => {
+    const props = node.props as Record<string, unknown> | undefined
+    return props?.backgroundColor !== undefined || props?.borderStyle !== undefined && props?.borderStyle !== 'round'
+  })
+  expect(filled).toHaveLength(0)
   await ui.unmount()
 })
 
@@ -1173,7 +1175,7 @@ test('a legacy question with tradeoff and no how, gains, losses or session title
   await ui.unmount()
 })
 
-test('a name in an explanation is drawn bold in the explanation ink, a slash command bare and a backticked one without its backticks', async ($, on) => {
+test('a name in an explanation is drawn bold, a slash command bare and a backticked one without its backticks', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { how: 'Run /reload-plugins, then open `frontend-code-engineer`.' })],
   ])
@@ -1185,8 +1187,7 @@ test('a name in an explanation is drawn bold in the explanation ink, a slash com
     expect(await textsOf(ui)).toContain('🛠️ Como: Run /reload-plugins, then open frontend-code-engineer.')
     const nodes = nodesOf(await ui.drawn())
     const nameChildren = nodes
-      .filter(node => node.type === 'Text' && (node.props as Record<string, unknown> | undefined)?.bold === true
-        && (node.props as Record<string, unknown> | undefined)?.color === EXPLAIN_COLORS.ink)
+      .filter(node => node.type === 'Text' && (node.props as Record<string, unknown> | undefined)?.bold === true)
       .map(node => node.children)
     expect(nameChildren).toContainEqual(['/reload-plugins'])
     expect(nameChildren).toContainEqual(['frontend-code-engineer'])
@@ -1345,12 +1346,12 @@ test('a pending answer shows "enviada", then "entregue" for 30 seconds after the
   const { clock } = stubHost(on, files)
   await $.session.start(SESSION)
   let ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: '⏳ Resposta B enviada para App' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Resposta B enviada para App' })).toBeDefined()
   await ui.unmount()
   files.set(path('d', 'q-l1-aaaaaa'), delivery('q-l1-aaaaaa'))
   await clock.advance(5000)
   ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: '✅ Resposta B entregue para App (lida pela sessão)' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Resposta B entregue para App (lida pela sessão)' })).toBeDefined()
   await ui.unmount()
   // This 36 s advance runs a poll every 5 s; the last one lands 35 s after the first sighting, past the 30 s the line stays for.
   await clock.advance(36_000)
@@ -1370,7 +1371,7 @@ test('a delivered line is still drawn about 25 seconds after the first sighting,
   await clock.advance(5000) // the poll at 5 s is the first sighting
   await clock.advance(25_000) // the poll at 30 s: 25 s on screen
   let ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: '✅ Resposta B entregue para App (lida pela sessão)' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Resposta B entregue para App (lida pela sessão)' })).toBeDefined()
   await ui.unmount()
   await clock.advance(10_000) // the poll at 40 s: 35 s on screen
   ui = await mountPane($)
@@ -1401,7 +1402,7 @@ test('an expired answer with no reason reads as expired unread', async ($, on) =
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: '⚠️ Resposta B expirou sem ser lida' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Resposta B expirou sem ser lida' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -1414,7 +1415,7 @@ test('an answer unread past the 7-day TTL expires with no marker, and its line i
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: '⚠️ Resposta B expirou sem ser lida' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Resposta B expirou sem ser lida' })).toBeDefined()
   expect(await ui.find({ type: 'Button', key: 'dismiss-q-l1-aaaaaa' })).toBeDefined()
   await ui.unmount()
 })
@@ -1554,7 +1555,7 @@ test('a legacy answer written by accept_recommended reads as a normal status lin
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: '⏳ Resposta A enviada para App' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Resposta A enviada para App' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Which way for q-l1-aaaaaa?' })).toBeUndefined()
   await ui.unmount()
 })
@@ -1567,7 +1568,7 @@ test('an expired answer whose session ended stays until the person dismisses it,
   ])
   const { writes, clock } = stubHost(on, files)
   await $.session.start(SESSION)
-  const warning = '⚠️ App · Spec-49 Follow-ups encerrou antes de ler a resposta B'
+  const warning = 'App · Spec-49 Follow-ups encerrou antes de ler a resposta B'
   await clock.advance(60_000)
   const ui = await mountPane($)
   expect(await ui.find({ type: 'Text', text: warning })).toBeDefined()
@@ -1586,7 +1587,7 @@ test('a line dismissed before a restart stays hidden after it', async ($, on) =>
   stubHost(on, files, true, { cleared: ['q-l1-aaaaaa'] })
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: '⚠️ Resposta B expirou sem ser lida' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Resposta B expirou sem ser lida' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -1631,7 +1632,7 @@ test('a legacy answer with key other and its free text still gives a status line
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await ui.find({ type: 'Text', text: '⏳ Resposta other enviada para App' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Resposta other enviada para App' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Which way for q-l1-aaaaaa?' })).toBeUndefined()
   await ui.unmount()
 })
@@ -1800,7 +1801,7 @@ test('a poll that read the answer folder before a press keeps the press answer',
   await clock.advance(1000)
   const texts = await textsOf(ui)
   expect(texts).not.toContain('Which way for q-l1-aaaaaa?')
-  expect(texts).toContain('⏳ Resposta B enviada para App')
+  expect(texts).toContain('Resposta B enviada para App')
   await ui.unmount()
 })
 
@@ -1816,7 +1817,7 @@ test('Submit all on a question another writer already answered takes that answer
   await clock.advance(250)
   const texts = await textsOf(ui)
   expect(texts).not.toContain('Which way for q-l1-aaaaaa?')
-  expect(texts).toContain('⏳ Resposta A enviada para App')
+  expect(texts).toContain('Resposta A enviada para App')
   await ui.unmount()
 })
 
@@ -1844,7 +1845,7 @@ test('Other… takes a free-text answer through the same answer path, and blank 
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa')])
   expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ id: 'q-l1-aaaaaa', key: 'other', by: 'panel', text: 'Use a fork' })
   await clock.advance(250)
-  expect(await textsOf(ui)).toContain('⏳ Resposta other enviada para App')
+  expect(await textsOf(ui)).toContain('Resposta other enviada para App')
   await ui.unmount()
 })
 
@@ -2258,8 +2259,8 @@ test('draw order: every status line is drawn after the card\'s Back and Next but
   const propsOf = (node: Record<string, unknown>): Record<string, unknown> => (node.props ?? {}) as Record<string, unknown>
   const textOf = (node: Record<string, unknown>): string =>
     (Array.isArray(node.children) ? node.children : []).filter((child): child is string => typeof child === 'string').join('')
-  const STATUS_INK = '#166534'
-  const statusAt = drawn.flatMap((node, index) => (node.type === 'Text' && propsOf(node).color === STATUS_INK ? [index] : []))
+  const STATUS_MARKS = ['⏳', '✓', '⚠️']
+  const statusAt = drawn.flatMap((node, index) => (node.type === 'Text' && STATUS_MARKS.includes(textOf(node)) ? [index] : []))
   const navKeys = ['nav-back', 'nav-next', 'submit-all']
   const navAt = drawn.flatMap((node, index) => (node.type === 'Button' && navKeys.includes(String(propsOf(node).key)) ? [index] : []))
   const cardAt = drawn.findIndex(node => node.type === 'Text' && textOf(node) === 'Which way for q-l1-aaaaaa?')
@@ -2891,7 +2892,7 @@ test('a minute turning while only an answered question is open writes only the c
   await clock.advance(60_000)
   // The footer draws while no question is open, and its age label ("now", then "1 min") turns with the minute.
   expect(stateWrites.slice(writesBefore)).toEqual(['tick'])
-  expect(await ui.find({ type: 'Text', text: '⏳ Resposta A enviada para App' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Resposta A enviada para App' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -2943,7 +2944,7 @@ test('the poll right after the last answer writes no atom the pane draws from, s
   const writesBefore = stateWrites.length
   await clock.advance(5000)
   expect(stateWrites.slice(writesBefore)).toEqual([])
-  expect(await textsOf(ui)).toContain('⏳ Resposta B enviada para App')
+  expect(await textsOf(ui)).toContain('Resposta B enviada para App')
   await ui.unmount()
 })
 

@@ -30,7 +30,8 @@ const RISK_KEYS: ReadonlyMap<string, MessageKey> = new Map<string, MessageKey>([
 export type Section = { heading: string; body: string }
 // The cards answered a moment ago that are still drawn dim before they leave: question id → press time (ms).
 export type Leaving = Readonly<Partial<Record<string, number>>>
-export type StatusLine = { id: string; text: string; dismissable: boolean }
+// A status row: its mark (drawn alone, in the accent) and its text (drawn plain and dim).
+export type StatusLine = { id: string; mark: string; text: string; dismissable: boolean }
 export type StatusContext = {
   cleared: readonly string[]
   shownAt: Readonly<Partial<Record<string, number>>>
@@ -326,15 +327,15 @@ function statusOf(
   const target = (question ? windowOf(question, lang) : '') || t(lang, 'status.target.session')
   const status = answerStatusOf(answer, delivery, now)
   if (status === 'answered') {
-    return { id, text: t(lang, 'status.pending', { key, target }), dismissable: false }
+    return { id, mark: '⏳', text: t(lang, 'status.pending', { key, target }), dismissable: false }
   }
   if (status === 'delivered') {
-    return { id, text: t(lang, 'status.delivered', { key, target }), dismissable: false }
+    return { id, mark: '✓', text: t(lang, 'status.delivered', { key, target }), dismissable: false }
   }
   if (delivery?.reason === 'session-ended') {
-    return { id, text: t(lang, 'status.sessionEnded', { key, target }), dismissable: true }
+    return { id, mark: '⚠️', text: t(lang, 'status.sessionEnded', { key, target }), dismissable: true }
   }
-  return { id, text: t(lang, 'status.expired', { key }), dismissable: true }
+  return { id, mark: '⚠️', text: t(lang, 'status.expired', { key }), dismissable: true }
 }
 
 // The status lines above the list, newest answer first: pending answers, delivered ones for DELIVERED_SHOWN_MS after

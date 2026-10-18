@@ -454,7 +454,7 @@ Two guards keep the drawn state from changing for nothing:
   card, so that write would only redraw the pane. A group that opens later still starts at step 0.
 
 Colour: the accent `#3566C8` (`ACCENT_COLOR`, `hooks/look.ts`) is never used for text (since 0.4.0-beta.7, commit 0a01eb5):
-text is bold ink, or the theme's own foreground, and the explanation box is `#1F2937` on `#F9FAFB`. Measured WCAG 2.x
+text is bold ink, or the theme's own foreground, and the pane draws no fill of its own: the explanation and the status rows sit on the card's background. Measured WCAG 2.x
 contrast of the accent, for the record: 5.40:1 on `#FFFFFF` and 3.28:1 on `#111827` (`#1E40AF` measured 8.72:1 and 2.03:1).
 The engine gives the mod no theme signal, so the colours cannot switch with the theme.
 

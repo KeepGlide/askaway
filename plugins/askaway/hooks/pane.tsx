@@ -8,7 +8,7 @@ import type { Question, QuestionOption } from '../types'
 import { t, type Lang } from './i18n'
 import type { HeldButtons } from './held'
 import { DIVIDER_COLUMNS, DIVIDER_HEIGHT, DIVIDER_PX, dividerSvg } from './divider'
-import { EXPLAIN_COLORS, STATUS_COLORS } from './look'
+import { ACCENT_COLOR } from './look'
 import { KEEPGLIDE_HEADER_SIZE, KEEPGLIDE_SUBMIT_SIZE, renderKeepGlide, renderLogo } from './logo-element'
 import {
   OTHER_INPUT_PREFIX,
@@ -141,18 +141,16 @@ function renderFooter(ui: Ui, text: string): RenderElement {
   return <Text key="footer" dimColor>{text}</Text>
 }
 
-// One status line of the answers: pending, delivered or expired. Expired lines carry a ✕ that dismisses them.
+// One status line of the answers: its mark in the accent, then its text plain and dim, with no fill and no border. Expired
+// lines carry a ✕ that dismisses them.
 function renderStatusLine(ui: Ui, actions: PaneActions, line: StatusLine, held: HeldButtons): RenderElement {
   const { Box, Text, Button } = ui
   return (
-    <Box
-      key={`status-${line.id}`}
-      flexDirection="row"
-      justifyContent="space-between"
-      backgroundColor={STATUS_COLORS.bg}
-      paddingX={1}
-    >
-      <Text color={STATUS_COLORS.ink}>{line.text}</Text>
+    <Box key={`status-${line.id}`} flexDirection="row" justifyContent="space-between" paddingX={1}>
+      <Box flexDirection="row" gap={1}>
+        <Text color={ACCENT_COLOR}>{line.mark}</Text>
+        <Text dimColor>{line.text}</Text>
+      </Box>
       {line.dismissable &&
         held.hold(`dismiss-${line.id}`, '✕', () => actions.dismiss(line.id), press => (
           <Button key={`dismiss-${line.id}`} label="✕" plain onPress={press} />
@@ -407,12 +405,13 @@ function renderDivider(ui: Ui, surface: RenderSurface): RenderElement {
   return <Text key="divider" dimColor>{'─'.repeat(DIVIDER_COLUMNS)}</Text>
 }
 
-// The explanations of one slot of the card, in one box at that place on the card. Nothing is drawn for a slot with no section.
+// The explanations of one slot of the card, as a group of sections on the card's own background, the sections gap-spaced.
+// Nothing is drawn for a slot with no section.
 function renderExplanation(ui: Ui, slot: CardSlot, sections: Section[], isLeaving: boolean): RenderElement | false {
   if (sections.length === 0) return false
   const { Box } = ui
   return (
-    <Box key={`explanation-${slot}`} flexDirection="column" gap={1} backgroundColor={EXPLAIN_COLORS.bg} paddingX={1} paddingY={1}>
+    <Box key={`explanation-${slot}`} flexDirection="column" gap={1}>
       {sections.map(section => renderSection(ui, section, isLeaving))}
     </Box>
   )
@@ -586,11 +585,11 @@ function renderSubmitAll(ui: Ui, lang: Lang, actions: PaneActions, card: CardCon
 function renderSection(ui: Ui, section: Section, isLeaving: boolean): RenderElement {
   const { Text } = ui
   return (
-    <Text key={`section-${section.heading}`} color={EXPLAIN_COLORS.ink} dimColor={isLeaving}>
+    <Text key={`section-${section.heading}`} dimColor={isLeaving}>
       <Text bold>{`${section.heading}: `}</Text>
       {piecesOf(section.body).map((piece, index) =>
         piece.isName ? (
-          <Text key={`name-${index}`} bold color={EXPLAIN_COLORS.ink}>
+          <Text key={`name-${index}`} bold>
             {piece.text}
           </Text>
         ) : (

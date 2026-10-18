@@ -48,9 +48,9 @@ test('a stored language wins; anything else falls back to the detected one', () 
 })
 
 test('t fills the named placeholders and keeps a placeholder with no value', () => {
-  expect(t('en', 'status.pending', { key: 'A', target: 'app · Build' })).toBe('⏳ Answer A sent to app · Build')
-  expect(t('pt', 'status.pending', { key: 'A', target: 'app · Build' })).toBe('⏳ Resposta A enviada para app · Build')
-  expect(t('en', 'status.pending', {})).toBe('⏳ Answer {key} sent to {target}')
+  expect(t('en', 'status.pending', { key: 'A', target: 'app · Build' })).toBe('Answer A sent to app · Build')
+  expect(t('pt', 'status.pending', { key: 'A', target: 'app · Build' })).toBe('Resposta A enviada para app · Build')
+  expect(t('en', 'status.pending', {})).toBe('Answer {key} sent to {target}')
 })
 
 test('t reads a numeric value as its text', () => {
