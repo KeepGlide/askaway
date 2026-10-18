@@ -513,12 +513,12 @@ test('model: parseQuestion keeps what, problem and each option does, pros and co
 
 test('model: the lead line names the recommended key and the local time, or says paused for a high-risk question', () => {
   const at = new Date(2026, 9, 18, 14, 2).getTime()
-  expect(leadOf('en', parsedQuestion('q-m-000008', at, { recommended: 'B' }))).toBe('The agent is already on B since 14:02')
-  expect(leadOf('pt', parsedQuestion('q-m-000008', at, { recommended: 'B' }))).toBe('O agente já seguiu com B desde 14:02')
-  expect(leadOf('en', parsedQuestion('q-m-000009', at, { risk: 'high' }))).toBe('The agent is paused since 14:02')
-  expect(leadOf('pt', parsedQuestion('q-m-000009', at, { risk: 'high' }))).toBe('O agente está pausado desde 14:02')
+  expect(leadOf('en', parsedQuestion('q-m-000008', at, { recommended: 'B' }))).toBe('Working on B since 14:02 while it waits for you. Your answer still counts: pick another option and it switches; with no answer it stays on B.')
+  expect(leadOf('pt', parsedQuestion('q-m-000008', at, { recommended: 'B' }))).toBe('Trabalhando na B desde 14:02 enquanto espera você. Sua resposta ainda vale: escolha outra opção e ele muda; sem resposta, segue na B.')
+  expect(leadOf('en', parsedQuestion('q-m-000009', at, { risk: 'high' }))).toBe('Paused since 14:02: it waits for your answer before going on.')
+  expect(leadOf('pt', parsedQuestion('q-m-000009', at, { risk: 'high' }))).toBe('Pausado desde 14:02: espera a sua resposta para seguir.')
   const early = new Date(2026, 9, 18, 9, 5).getTime()
-  expect(leadOf('en', parsedQuestion('q-m-000010', early, {}))).toBe('The agent is already on A since 09:05')
+  expect(leadOf('en', parsedQuestion('q-m-000010', early, {}))).toBe('Working on A since 09:05 while it waits for you. Your answer still counts: pick another option and it switches; with no answer it stays on A.')
 })
 
 test('model: the list header and rows read in each language, with away mode when it is on', () => {
@@ -1043,7 +1043,7 @@ async function cardTextsAt1402($: Engine, on: On, env: Record<string, string>, e
 
 test('the card draws the lead line under the title in pt-BR: the recommended key and the time', async ($, on) => {
   const texts = await cardTextsAt1402($, on, {}, {})
-  const lead = 'O agente já seguiu com B desde 14:02'
+  const lead = 'Trabalhando na B desde 14:02 enquanto espera você. Sua resposta ainda vale: escolha outra opção e ele muda; sem resposta, segue na B.'
   expect(texts).toContain(lead)
   expect(texts.indexOf(lead)).toBe(texts.indexOf('Which way for q-l1-aaaaaa?') - 1)
   expect(texts.indexOf(lead)).toBeGreaterThan(texts.indexOf('Title q-l1-aaaaaa'))
@@ -1051,20 +1051,20 @@ test('the card draws the lead line under the title in pt-BR: the recommended key
 
 test('the card draws the lead line under the title in English: the recommended key and the time', async ($, on) => {
   const texts = await cardTextsAt1402($, on, { LANG: 'en_US.UTF-8' }, {})
-  expect(texts).toContain('The agent is already on B since 14:02')
-  expect(texts).not.toContain('O agente já seguiu com B desde 14:02')
+  expect(texts).toContain('Working on B since 14:02 while it waits for you. Your answer still counts: pick another option and it switches; with no answer it stays on B.')
+  expect(texts).not.toContain('Trabalhando na B desde 14:02 enquanto espera você. Sua resposta ainda vale: escolha outra opção e ele muda; sem resposta, segue na B.')
 })
 
 test('a high-risk card in pt-BR says the agent is paused, not on a key', async ($, on) => {
   const texts = await cardTextsAt1402($, on, {}, { risk: 'high' })
-  expect(texts).toContain('O agente está pausado desde 14:02')
-  expect(texts.some(text => text.startsWith('O agente já seguiu'))).toBe(false)
+  expect(texts).toContain('Pausado desde 14:02: espera a sua resposta para seguir.')
+  expect(texts.some(text => text.startsWith('Trabalhando na'))).toBe(false)
 })
 
 test('a high-risk card in English says the agent is paused, not on a key', async ($, on) => {
   const texts = await cardTextsAt1402($, on, { LANG: 'en_US.UTF-8' }, { risk: 'high' })
-  expect(texts).toContain('The agent is paused since 14:02')
-  expect(texts.some(text => text.startsWith('The agent is already on'))).toBe(false)
+  expect(texts).toContain('Paused since 14:02: it waits for your answer before going on.')
+  expect(texts.some(text => text.startsWith('Working on'))).toBe(false)
 })
 
 test('a losses-only question draws the losses section alone, and a gains-only one the gains', async ($, on) => {
@@ -1395,7 +1395,7 @@ test('the footer drops an answer from the last-24-hours count once the window pa
   await ui.unmount()
 })
 
-test('the card folds its long sections behind the details toggle, and each question keeps its own fold state', async ($, on) => {
+test('the card folds only Why to Context behind the details toggle, and each question keeps its own fold state', async ($, on) => {
   const long = {
     what: 'What W', problem: 'Problem P', analogy: 'Analogy N', why: 'Reason R', undo: 'Undo U', how: 'How H',
     gains: 'Gain G', losses: 'Loss L', context: 'Context C', urgency: 'Blocks soon',
@@ -1408,32 +1408,34 @@ test('the card folds its long sections behind the details toggle, and each quest
     [path('q', 'q-f1-aaaaaa'), question('q-f1-aaaaaa', 1000, { ...long, options })],
     [path('q', 'q-f2-bbbbbb'), question('q-f2-bbbbbb', 2000, { ...long, options })],
   ])
-  const folded = ['What W', 'Problem P', 'Analogy N', 'Reason R', 'Undo U', 'Context C', 'Keeps the queue', 'Fast path', 'Stale data']
+  const shown = ['What W', 'Problem P', 'Analogy N', 'Blocks soon', 'Keeps the queue', 'Fast path', 'Stale data']
+  const folded = ['Reason R', 'Undo U', 'How H', 'Gain G', 'Loss L', 'Context C']
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  // Folded: the title, the lead, the Question, Urgency, the option lines and the toggle draw; the long sections do not.
+  // Folded: the title, the lead, What it is, The problem, Analogy, the question, Urgency, the option lines with what happens,
+  // pros and cons, and the toggle draw; Why to Context does not.
   let texts = await textsOf(ui)
   expect(texts).toContain('Which way for q-f1-aaaaaa?')
-  expect(texts.some(text => text.includes('Blocks soon'))).toBe(true)
+  for (const name of shown) expect(texts.some(text => text.includes(name))).toBe(true)
   expect(texts.some(text => text.startsWith('└ Cheap'))).toBe(true)
   for (const name of folded) expect(texts.some(text => text.includes(name))).toBe(false)
   expect(await labelOf(ui, 'details-q-f1-aaaaaa')).toBe('e · detalhes')
-  // Unfolded: the same card, with every long section and each option's does, pros and cons.
+  // Unfolded: the same card, with Why to Context too.
   await ui.press({ key: 'details-q-f1-aaaaaa' })
   texts = await textsOf(ui)
-  for (const name of folded) expect(texts.some(text => text.includes(name))).toBe(true)
+  for (const name of [...shown, ...folded]) expect(texts.some(text => text.includes(name))).toBe(true)
   // The fold is kept per question: the second question starts folded, and the first is open again on return.
   await ui.press({ key: 'nav-next' })
   texts = await textsOf(ui)
   expect(texts).toContain('Which way for q-f2-bbbbbb?')
-  expect(texts.some(text => text.includes('What W'))).toBe(false)
+  expect(texts.some(text => text.includes('Reason R'))).toBe(false)
   await ui.press({ key: 'nav-back' })
   texts = await textsOf(ui)
-  expect(texts.some(text => text.includes('What W'))).toBe(true)
+  expect(texts.some(text => text.includes('Reason R'))).toBe(true)
   await ui.press({ key: 'details-q-f1-aaaaaa' })
   texts = await textsOf(ui)
-  expect(texts.some(text => text.includes('What W'))).toBe(false)
+  expect(texts.some(text => text.includes('Reason R'))).toBe(false)
   await ui.unmount()
 })
 

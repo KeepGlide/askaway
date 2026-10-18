@@ -301,10 +301,9 @@ status list). `hooks/pane.tsx`, `renderPane`.
     high) is the risk of accepting the recommended option, as the filing agent judged it. A question with no title is
     named by its text, cut to 24 characters with "…";
   - the question text, bold;
-  - the lead line, bold: "The agent is already on <key> since <HH:MM>", or "The agent is paused since <HH:MM>" for a
-    `high` risk question (`leadOf`, `hooks/model.ts`; pt: "O agente já seguiu com <key> desde <HH:MM>", "O agente está
-    pausado desde <HH:MM>");
-  - the explanation box before the question, while the details are open and one of its sections is set: a box on a very light gray ground
+  - the lead line, bold: "Working on <key> since <HH:MM> while it waits for you. Your answer still counts: pick another option and it switches; with no answer it stays on <key>.", or "Paused since <HH:MM>: it waits for your answer before going on." for a `high` risk question (`leadOf`,
+    `hooks/model.ts`; pt: "Trabalhando na <key> desde <HH:MM> enquanto espera você. Sua resposta ainda vale: escolha outra opção e ele muda; sem resposta, segue na <key>.", "Pausado desde <HH:MM>: espera a sua resposta para seguir.");
+  - the explanation box before the question, drawn (not folded) when one of its sections is set: a box on a very light gray ground
     (`#F9FAFB`, ink `#1F2937`, `EXPLAIN_COLORS`, 14.05:1), with `paddingX={1}` and `paddingY={1}`. Its sections, each
     drawn only when its field is set: "What it is" (`what`; pt "O que é"), "The problem" (`problem`; pt "O problema"),
     and "🔁 Analogy" (`analogy`; pt "🔁 Analogia");
@@ -314,7 +313,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
     "(Recomendada)") after the label of the recommended one. The recommended option is bold while not picked; the picked
     option is the primary button. Under each option, its own lines, indented one cell (`paddingLeft={1}`), dim only while
     the card fades: the tradeoff line "└ <tradeoff> · fit N" (the first letter of the tradeoff capitalized; pt "· aderência N";
-    with no tradeoff "└ fit N"; a null fit draws nothing). While the details are open, also "What happens: <does>", "Pros: <pros>" and
+    with no tradeoff "└ fit N"; a null fit draws nothing). Also drawn at once: "What happens: <does>", "Pros: <pros>" and
     "Cons: <cons>" (pt "O que acontece", "Prós", "Contras"). The options are in a column with `gap={2}` and
     `marginTop={1}`, so two blank lines part them from the explanation box (`renderQuestion`, `renderOption`,
     `hooks/pane.tsx`);
@@ -322,21 +321,20 @@ status list). `hooks/pane.tsx`, `renderPane`.
     (autofocused). Enter in that field ("Done" / "Pronto") records the typed text as the pick (key `other`); blank
     text records nothing. Once recorded, the text shows under the button and the button is primary. A surface with
     no Input draws no Other option (`renderOther`);
-  - the explanation box after the options, while the details are open and one of its sections is set, in this order: "💡 Why <rec>" (`why`; pt
+  - the explanation box after the options, the only folded box: it draws while the details are open and one of its sections is set, in this order: "💡 Why <rec>" (`why`; pt
     "💡 Por que A"), "↩️ Undo" (`undo`; pt "↩️ Como desfazer"), "🛠️ How" (`how`; pt "🛠️ Como"), "🎁 What we gain" (`gains`;
     pt "🎁 O que ganhamos"), "⚖️ What we lose" (`losses`; pt "⚖️ O que perdemos"), and "🧭 Context and origin" (`context`;
     pt "🧭 Contexto e origem") last. Each section is one line, "heading: text", the heading in bold, the text wrapping as one
     paragraph; every name in the text (a slash command, or anything the agent wrote between backticks) is drawn in bold
     ink (`piecesOf`, `renderSection`, `hooks/model.ts`, `hooks/pane.tsx`). The three boxes are `sectionsOf` and
     `renderExplanation` (`hooks/model.ts`, `hooks/pane.tsx`);
-  - **Details toggle**: the long sections are folded by default. One Button under the options, labelled "e · details"
-    (pt "e · detalhes"), with hotkey `e`. When an option is keyed E, the label is "details" (pt "detalhes") and the toggle
-    has no hotkey, since the option keeps the letter. Pressing it opens and shuts the folded sections: the explanation box
-    before the question, the "What happens", "Pros" and "Cons" lines under each option, and the explanation box after the
-    options. The title, the lead line, the question, Urgency, the options with their tradeoff lines and the nav row stay
-    drawn. The toggle is drawn only when the card has a folded section. Its state is kept per question in the plugin's state
-    (`expanded`, `hooks/register.tsx`) while the plugin is loaded; it is not written to disk (`renderDetailsToggle`,
-    `hasDetailsOf`, `hooks/pane.tsx`).
+  - **Details toggle**: the explanation box after the options (Why to Context) is folded by default. One Button under the
+    options, labelled "e · details" (pt "e · detalhes"), with hotkey `e`. When an option is keyed E, the label is "details"
+    (pt "detalhes") and the toggle has no hotkey, since the option keeps the letter. Pressing it opens and shuts that box.
+    Everything else stays drawn: the title, the lead line, What it is, The problem, Analogy, the question, Urgency, and each
+    option's tradeoff, What happens, Pros and Cons lines, and the nav row. The toggle is drawn only when the card has a
+    folded section. Its state is kept per question in the plugin's state (`expanded`, `hooks/register.tsx`) while the plugin
+    is loaded; it is not written to disk (`renderDetailsToggle`, `hasDetailsOf`, `hooks/pane.tsx`).
   - a separator: a 1px rule on the desktop, a row of "─" on the terminal (`renderDivider`);
   - the nav row: [← Back] (Portuguese: "← Voltar") on every question, dim on the first; [Next →] (Portuguese:
     "Próxima →") on every question but the last; on the last one, [Submit all (n)] (Portuguese: "Enviar tudo (n)"),
