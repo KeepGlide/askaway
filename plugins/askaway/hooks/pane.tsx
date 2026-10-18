@@ -18,6 +18,7 @@ import {
   clearableIdsOf,
   counterText,
   escapeMarkdown,
+  firstBlockOf,
   groupLabelOf,
   leadOf,
   otherLetterOf,
@@ -26,7 +27,6 @@ import {
   riskLabel,
   sectionsOf,
   sessionLabelOf,
-  type CardSlot,
   type HistoryEntry,
   type HistoryGroup,
   type Leaving,
@@ -67,6 +67,7 @@ export type PaneActions = {
   focusOther: (id: string) => void
   submitOne: (id: string) => void
   jump: (id: string) => void
+  typeOther: (id: string, text: string) => void
   submitOther: (id: string, text: string) => void
   back: () => void
   next: () => void
@@ -386,11 +387,10 @@ const letterFor = (card: CardContext, key: NavKey): string | undefined => {
   return free[NAV_ORDER.indexOf(key)]
 }
 
-// One question on screen: the title in bold with the risk and age beside it, the Urgency box under it (when set), the bold
-// lead line, the first block
-// (What it is and The problem), then the details block under a divider: the "Askaway Details:" title and Analogy, Why to
-// Context. Then the question, the options with their tradeoff, fit, what happens, pros and cons, and
-// "Other…". Then a separator, and the Back / Next or Submit all row. One blank line sits under it.
+// One question on screen: the title in bold with the risk and age beside it, the Urgency box under it (when set), the first
+// block (What it is and The problem, plain paragraphs), then the details block: the "Askaway Details:" title and Analogy,
+// Why to Context. Then the question, the bold lead line under it, the options with their tradeoff, fit, what happens,
+// pros and cons, and "Other…". Then a separator, and the Back / Next or Submit all row. One blank line sits under it.
 function renderQuestion(
   ui: Ui,
   lang: Lang,
@@ -419,11 +419,12 @@ function renderQuestion(
         <Text dimColor>{`${riskLabel(lang, question.risk)} · ${ageLabel(lang, question.ts, view.now)}`}</Text>
       </Box>
       {renderUrgency(ui, lang, question, isLeaving)}
-      <Text bold dimColor={isLeaving}>{leadOf(lang, question)}</Text>
-      {renderExplanation(ui, 'before-question', sectionsOf(lang, question, 'before-question'), isLeaving)}
-      {details.length > 0 && renderDivider(ui, view.surface, 'divider-details')}
+      {renderFirstBlock(ui, question, isLeaving)}
       {details.length > 0 && renderDetailsBlock(ui, lang, card, details)}
-      <Text bold dimColor={isLeaving}>{question.question}</Text>
+      <Box flexDirection="column">
+        <Text bold dimColor={isLeaving}>{question.question}</Text>
+        <Text bold dimColor={isLeaving}>{leadOf(lang, question)}</Text>
+      </Box>
       {isEnded ? (
         <Text key={`ended-${question.id}`}>{t(lang, 'card.ended', { key: question.recommended })}</Text>
       ) : (
@@ -461,8 +462,8 @@ function renderDetailsBlock(ui: Ui, lang: Lang, card: CardContext, sections: Sec
   )
 }
 
-// A divider rule: a 1px SVG rule on the desktop, a row of '─' on the terminal. It separates the first block from the
-// details block, and the options from the nav row.
+// A divider rule: a 1px SVG rule on the desktop, a row of '─' on the terminal. It separates the options from the nav row,
+// and the history from its Clear link.
 function renderDivider(ui: Ui, surface: RenderSurface, key: string): RenderElement {
   if (surface === 'desktop' && 'Svg' in ui) {
     const { Svg } = ui
@@ -487,14 +488,19 @@ function renderUrgency(ui: Ui, lang: Lang, question: Question, isLeaving: boolea
   )
 }
 
-// The explanations of one slot of the card, as a group of sections on the card's own background, the sections gap-spaced.
-// Nothing is drawn for a slot with no section.
-function renderExplanation(ui: Ui, slot: CardSlot, sections: Section[], isLeaving: boolean): RenderElement | false {
-  if (sections.length === 0) return false
-  const { Box } = ui
+// The first block of the card: What it is and The problem as two plain paragraphs, one blank line between them and no
+// heading (firstBlockOf). Nothing is drawn when neither field is set.
+function renderFirstBlock(ui: Ui, question: Question, isLeaving: boolean): RenderElement | false {
+  const paragraphs = firstBlockOf(question)
+  if (paragraphs.length === 0) return false
+  const { Box, Text } = ui
   return (
-    <Box key={`explanation-${slot}`} flexDirection="column" gap={1}>
-      {sections.map(section => renderSection(ui, section, isLeaving))}
+    <Box key="explanation-before-question" flexDirection="column" gap={1}>
+      {paragraphs.map((paragraph, index) => (
+        <Text key={`paragraph-${index}`} dimColor={isLeaving}>
+          {renderBody(ui, paragraph)}
+        </Text>
+      ))}
     </Box>
   )
 }
@@ -548,9 +554,10 @@ function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContex
 
 // "Other…": the last row under the options, a plain link drawn with its letter, "C · Other…" (otherLetterOf). Its field
 // sits on the row under it, under the same "└ " branch glyph the option sub-rows draw. The field is always open, ready to
-// type; the link only focuses it. Enter records the text as the Other pick (submitOther) and keeps the card where it is;
-// the field keeps its own text. The link is bold once Other is the pick; the typed text is not drawn again under it. A
-// surface with no Input (mobile) draws no field, so no Other option either.
+// type; the link only focuses it. Typing keeps the text in the pane's memory (typeOther), with no redraw; the register
+// records it as the Other pick when the field loses focus, on Enter (submitOther) or before a nav action, and the card
+// stays where it is. The field keeps its own text. The link is bold once Other is the pick; the typed text is not drawn
+// again under it. A surface with no Input (mobile) draws no field, so no Other option either.
 function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext): RenderElement | false {
   if (!('Input' in ui)) return false
   const { Box, Button, Input, Text } = ui
@@ -581,6 +588,7 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
               key={`${OTHER_INPUT_PREFIX}${question.id}`}
               placeholder={t(lang, 'input.placeholder')}
               submitLabel={t(lang, 'input.send')}
+              onInput={text => actions.typeOther(question.id, text)}
               onSubmit={text => actions.submitOther(question.id, text)}
             />
           </Box>
@@ -667,22 +675,27 @@ function renderSubmitAll(ui: Ui, lang: Lang, actions: PaneActions, card: CardCon
   )
 }
 
-// One section of the explanation, on one wrapping line: the heading in bold, a colon, then the text, with every command,
-// skill or agent name the agent wrote in bold (piecesOf).
+// The text of an explanation, with every command, skill or agent name the agent wrote drawn in bold (piecesOf).
+function renderBody(ui: Ui, body: string): (RenderElement | string)[] {
+  const { Text } = ui
+  return piecesOf(body).map((piece, index) =>
+    piece.isName ? (
+      <Text key={`name-${index}`} bold>
+        {piece.text}
+      </Text>
+    ) : (
+      piece.text
+    ),
+  )
+}
+
+// One section of the details, on one wrapping line: the heading in bold, a colon, then the text (renderBody).
 function renderSection(ui: Ui, section: Section, isLeaving: boolean): RenderElement {
   const { Text } = ui
   return (
     <Text key={`section-${section.heading}`} dimColor={isLeaving}>
       <Text bold>{`${section.heading}: `}</Text>
-      {piecesOf(section.body).map((piece, index) =>
-        piece.isName ? (
-          <Text key={`name-${index}`} bold>
-            {piece.text}
-          </Text>
-        ) : (
-          piece.text
-        ),
-      )}
+      {renderBody(ui, section.body)}
     </Text>
   )
 }

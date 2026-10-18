@@ -18,6 +18,7 @@ import {
   footerText,
   groupBySession,
   isOpenIn,
+  leavesOtherField,
   listText,
   openQuestions,
   parseAnswer,
@@ -602,12 +603,36 @@ async function jumpToQuestion($: EngineInterface, id: string): Promise<void> {
   await $.ui.scroll({ in: PANE, to: { key: `card-${id}` }, block: 'start' })
 }
 
+// The Other text typed but not recorded yet, by question id. Typing keeps it here, not in the store, so a key does not
+// redraw the pane; it is recorded when the field loses focus, on Enter, and before a nav action (recordPendingOther).
+const pendingOther = new Map<string, string>()
+
+// The key the pane's focus ring stood on last, as the ui.focus hook saw it: undefined for one of the engine's own stops.
+let focusedKey: string | undefined
+
 // Enter in the "Other…" field records its text as the pick and keeps the card; blank text takes the pick away. A question
 // that is not open, or fading out, takes nothing.
 async function submitOther($: EngineInterface, id: string, text: string): Promise<void> {
   const { open, leaving: fading } = await snapshot($)
   if (fading[id] !== undefined || !open.some(question => question.id === id)) return
   await update($, wizardAtom, prev => flow.submittedOther(prunedWizard(prev, open), id, text))
+}
+
+// Records every pending Other text through submitOther, one after another. An entry whose question is no longer open is
+// dropped, not recorded: the card it was typed on is gone.
+async function recordPendingOther($: EngineInterface): Promise<void> {
+  const { open } = await snapshot($)
+  for (const [id, text] of [...pendingOther]) {
+    pendingOther.delete(id)
+    if (open.some(question => question.id === id)) await submitOther($, id, text)
+  }
+}
+
+// A nav action records the pending Other text first, so the move or the write reads the pick the person typed. A failure
+// is logged, and the action goes on.
+async function afterPendingOther($: EngineInterface, act: () => Promise<void>): Promise<void> {
+  await recordPendingOther($).catch((error: unknown) => logFailure($, error))
+  await act()
 }
 
 // Opens the pane with focus; the result says whether it is drawn (a narrow terminal leaves it undrawn).
@@ -634,14 +659,20 @@ async function awayText($: EngineInterface, lang: Lang): Promise<string> {
 const actionsFor = ($: EngineInterface): PaneActions => ({
   clearHistory: () => report($, clearHistory($)),
   dismissEnded: id => report($, withFolder($, folder => dismissEnded($, folder, id))),
-  pick: (id, key) => report($, pickOption($, id, { key })),
-  focusOther: id => report($, focusOther($, id)),
-  submitOne: id => report($, submitOne($, id)),
-  jump: id => report($, jumpToQuestion($, id)),
-  submitOther: (id, text) => report($, submitOther($, id, text)),
-  back: () => report($, moveWizard($, (current, group) => flow.back(current, group))),
-  next: () => report($, moveWizard($, (current, group) => flow.next(current, group))),
-  submit: () => report($, submitCurrent($)),
+  pick: (id, key) => report($, afterPendingOther($, () => pickOption($, id, { key }))),
+  focusOther: id => report($, afterPendingOther($, () => focusOther($, id))),
+  submitOne: id => report($, afterPendingOther($, () => submitOne($, id))),
+  jump: id => report($, afterPendingOther($, () => jumpToQuestion($, id))),
+  typeOther: (id, text) => {
+    pendingOther.set(id, text)
+  },
+  submitOther: (id, text) => {
+    pendingOther.delete(id)
+    report($, submitOther($, id, text))
+  },
+  back: () => report($, afterPendingOther($, () => moveWizard($, (current, group) => flow.back(current, group)))),
+  next: () => report($, afterPendingOther($, () => moveWizard($, (current, group) => flow.next(current, group)))),
+  submit: () => report($, afterPendingOther($, () => submitCurrent($))),
   saveWho: text => report($, saveWho($, text)),
   skipWho: () => report($, saveWho($, '')),
 })
@@ -752,6 +783,23 @@ export const register: Register = on => {
       theme: await read($, themeAtom),
     }
     return renderPane($.ui.resolve(e), view, actionsFor($), lang, heldFor(e.surface, e.requestId))
+  })
+
+  // The ring leaving the Other field: the move is passed on first, then the field's pending text is recorded, so a person
+  // who never pressed Enter keeps it. The hook never blocks, rewrites or re-targets the move.
+  on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    const isLeavingOther = leavesOtherField(focusedKey, e.element)
+    focusedKey = e.element
+    const result = await next(e)
+    if (isLeavingOther) await afterPendingOther($, async () => undefined)
+    return result
+  })
+
+  // Closing the pane drops the pending Other drafts and the remembered ring: their field leaves with the pane.
+  on('ui.close', { id: PANE }, (_$, e, next) => {
+    pendingOther.clear()
+    focusedKey = undefined
+    return next(e)
   })
 
   // The band row above the prompt: drawn only while a question is open and no survey is up.

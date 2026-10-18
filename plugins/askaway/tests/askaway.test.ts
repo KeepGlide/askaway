@@ -7,10 +7,12 @@ import {
   counterText,
   deliveryLine,
   escapeMarkdown,
+  firstBlockOf,
   answerWho,
   footerText,
   groupBySession,
   leadOf,
+  leavesOtherField,
   listText,
   parseAnswer,
   parseDelivery,
@@ -155,6 +157,8 @@ function stubHost(
   })
   on('ui.open', () => ({ value: isPlaced ? { isPlaced: true } : { isPlaced: false, reason: 'narrow terminal' } }))
   on('ui.render', () => ({ type: 'Text', props: {}, children: ['drawn beneath'] }))
+  // Nothing beneath the plugin moves the focus ring: the move lands at once, as the engine's own stops do.
+  on('ui.focus', () => ({}))
   on('fs.list', async (_$, e) => {
     const prefix = `${e.path}/`
     const names = [...files.keys()].filter(file => file.startsWith(prefix) && !file.slice(prefix.length).includes('/'))
@@ -670,10 +674,10 @@ test('model: each explanation section reads in the chosen language and shows onl
   const short = parsedQuestion('q-m-000001', 10)
   expect(sectionsOf('pt', short, 'details')).toEqual([{ heading: '💡 Por que A', body: 'It is smaller.' }])
   expect(sectionsOf('en', short, 'details')).toEqual([{ heading: '💡 Why A', body: 'It is smaller.' }])
-  expect(sectionsOf('en', short, 'before-question')).toEqual([])
+  expect(firstBlockOf(short)).toEqual([])
 
   const full = parsedQuestion('q-m-000002', 10, { context: 'C', analogy: 'An', how: 'H', gains: 'G', losses: 'L' })
-  expect(sectionsOf('pt', full, 'before-question')).toEqual([])
+  expect(firstBlockOf(full)).toEqual([])
   expect(sectionsOf('pt', full, 'details').map(section => section.heading)).toEqual([
     '🔁 Analogia',
     '💡 Por que A',
@@ -697,7 +701,7 @@ test('model: each card slot keeps its sections in the card order, each only when
   const every = parsedQuestion('q-m-000004', 10, {
     what: 'W', problem: 'P', context: 'C', analogy: 'An', how: 'H', gains: 'G', losses: 'L', urgency: 'Blocks in ~8 min', undo: 'Changing later ≈ 10 min',
   })
-  expect(sectionsOf('en', every, 'before-question').map(section => section.heading)).toEqual(['What it is', 'The problem'])
+  expect(firstBlockOf(every)).toEqual(['W', 'P'])
   expect(sectionsOf('en', every, 'before-options')).toEqual([{ heading: '⏱️ Urgency', body: 'Blocks in ~8 min' }])
   expect(sectionsOf('en', every, 'details').map(section => section.heading)).toEqual([
     '🔁 Analogy',
@@ -709,7 +713,6 @@ test('model: each card slot keeps its sections in the card order, each only when
     '🧭 Context and origin',
   ])
   expect(sectionsOf('en', every, 'details')[2]).toEqual({ heading: '↩️ Undo', body: 'Changing later ≈ 10 min' })
-  expect(sectionsOf('pt', every, 'before-question').map(section => section.heading)).toEqual(['O que é', 'O problema'])
   expect(sectionsOf('pt', every, 'before-options')).toEqual([{ heading: '⏱️ Urgência', body: 'Blocks in ~8 min' }])
   expect(sectionsOf('pt', every, 'details').map(section => section.heading)).toEqual([
     '🔁 Analogia',
@@ -747,12 +750,12 @@ test('model: parseQuestion keeps what, problem and each option does, pros and co
 
 test('model: the lead line names the recommended key and the local time, or says paused for a high-risk question', () => {
   const at = new Date(2026, 9, 18, 14, 2).getTime()
-  expect(leadOf('en', parsedQuestion('q-m-000008', at, { recommended: 'B' }))).toBe('Working on B since 14:02 while it waits for you. Your answer still counts: pick another option and it switches; with no answer it stays on B.')
-  expect(leadOf('pt', parsedQuestion('q-m-000008', at, { recommended: 'B' }))).toBe('Trabalhando na B desde 14:02 enquanto espera você. Sua resposta ainda vale: escolha outra opção e ele muda; sem resposta, segue na B.')
-  expect(leadOf('en', parsedQuestion('q-m-000009', at, { risk: 'high' }))).toBe('Paused since 14:02: it waits for your answer before going on.')
-  expect(leadOf('pt', parsedQuestion('q-m-000009', at, { risk: 'high' }))).toBe('Pausado desde 14:02: espera a sua resposta para seguir.')
+  expect(leadOf('en', parsedQuestion('q-m-000008', at, { recommended: 'B' }))).toBe('On B since 14:02. Pick another option to switch; no answer keeps B.')
+  expect(leadOf('pt', parsedQuestion('q-m-000008', at, { recommended: 'B' }))).toBe('Na B desde 14:02. Escolha outra opção para trocar; sem resposta, fica a B.')
+  expect(leadOf('en', parsedQuestion('q-m-000009', at, { risk: 'high' }))).toBe('Paused since 14:02, waiting for your answer.')
+  expect(leadOf('pt', parsedQuestion('q-m-000009', at, { risk: 'high' }))).toBe('Pausado desde 14:02, esperando a sua resposta.')
   const early = new Date(2026, 9, 18, 9, 5).getTime()
-  expect(leadOf('en', parsedQuestion('q-m-000010', early, {}))).toBe('Working on A since 09:05 while it waits for you. Your answer still counts: pick another option and it switches; with no answer it stays on A.')
+  expect(leadOf('en', parsedQuestion('q-m-000010', early, {}))).toBe('On A since 09:05. Pick another option to switch; no answer keeps A.')
 })
 
 test('model: the list header and rows read in each language, with away mode when it is on', () => {
@@ -1149,12 +1152,13 @@ test('the nav row has a separator after the options and Other…: an SVG rule on
   for (const surface of SURFACES) {
     const ui = await mountPane($, surface)
     // The engine keeps keys on Box nodes only, so the Other field and the nav row are found by key, the rules by content.
-    // The details block has a divider above it too, so the separator before the nav row is the last rule drawn.
+    // The details block has no rule above it: the separator before the nav row is the only rule drawn.
     const nodes = nodesOf(await ui.drawn())
     const rule = '─'.repeat(40)
     const keyAt = (key: string): number => nodes.findIndex(node => keyOfNode(node) === key)
     const isRule = (node: Record<string, unknown>): boolean =>
       (node.props as Record<string, unknown> | undefined)?.alt === 'divider' || (Array.isArray(node.children) && node.children.includes(rule))
+    expect(nodes.filter(isRule)).toHaveLength(1)
     const navRuleAt = nodes.map(isRule).lastIndexOf(true)
     const otherAt = keyAt('other-row-q-l1-aaaaaa')
     expect(otherAt).toBeGreaterThan(-1)
@@ -1162,10 +1166,10 @@ test('the nav row has a separator after the options and Other…: an SVG rule on
     expect(keyAt('nav-q-l1-aaaaaa')).toBeGreaterThan(navRuleAt)
     const svgRules = (await ui.findAll({ type: 'Svg' })).filter(found => found.props.alt === 'divider')
     if (surface === 'desktop') {
-      // Two rules: the one above the details block, then the one above the nav row.
-      expect(svgRules).toHaveLength(2)
+      // One rule, the one above the nav row.
+      expect(svgRules).toHaveLength(1)
       expect(svgRules[0]?.props).toMatchObject({ alt: 'divider', height: 21 })
-      expect(String(svgRules[1]?.props.source)).toContain('<rect x="0" y="10" width="320" height="1"')
+      expect(String(svgRules[0]?.props.source)).toContain('<rect x="0" y="10" width="320" height="1"')
       expect(await ui.find({ type: 'Text', text: rule })).toBeUndefined()
     } else {
       expect(svgRules).toHaveLength(0)
@@ -1339,32 +1343,31 @@ async function cardTextsAt1402($: Engine, on: On, env: Record<string, string>, e
   return texts
 }
 
-test('the card draws the lead line under the title in pt-BR: the recommended key and the time', async ($, on) => {
+test('the card draws the lead line right under the question in pt-BR: the recommended key and the time', async ($, on) => {
   const texts = await cardTextsAt1402($, on, {}, {})
-  const lead = 'Trabalhando na B desde 14:02 enquanto espera você. Sua resposta ainda vale: escolha outra opção e ele muda; sem resposta, segue na B.'
-  expect(texts).toContain(lead)
-  // The title line of the details block comes after the lead, and the question after it.
-  expect(texts.indexOf(lead)).toBeGreaterThan(texts.indexOf('Title q-l1-aaaaaa'))
-  expect(texts.indexOf('Detalhes do Askaway:')).toBeGreaterThan(texts.indexOf(lead))
+  const lead = 'Na B desde 14:02. Escolha outra opção para trocar; sem resposta, fica a B.'
+  // The lead is the text drawn straight after the question, and the details block comes before the question.
+  expect(texts.indexOf(lead)).toBe(texts.indexOf('Which way for q-l1-aaaaaa?') + 1)
   expect(texts.indexOf('Detalhes do Askaway:')).toBeLessThan(texts.indexOf('Which way for q-l1-aaaaaa?'))
+  expect(texts.indexOf('Title q-l1-aaaaaa')).toBeLessThan(texts.indexOf(lead))
 })
 
-test('the card draws the lead line under the title in English: the recommended key and the time', async ($, on) => {
+test('the card draws the lead line right under the question in English: the recommended key and the time', async ($, on) => {
   const texts = await cardTextsAt1402($, on, { LANG: 'en_US.UTF-8' }, {})
-  expect(texts).toContain('Working on B since 14:02 while it waits for you. Your answer still counts: pick another option and it switches; with no answer it stays on B.')
-  expect(texts).not.toContain('Trabalhando na B desde 14:02 enquanto espera você. Sua resposta ainda vale: escolha outra opção e ele muda; sem resposta, segue na B.')
+  expect(texts.indexOf('On B since 14:02. Pick another option to switch; no answer keeps B.')).toBe(texts.indexOf('Which way for q-l1-aaaaaa?') + 1)
+  expect(texts).not.toContain('Na B desde 14:02. Escolha outra opção para trocar; sem resposta, fica a B.')
 })
 
 test('a high-risk card in pt-BR says the agent is paused, not on a key', async ($, on) => {
   const texts = await cardTextsAt1402($, on, {}, { risk: 'high' })
-  expect(texts).toContain('Pausado desde 14:02: espera a sua resposta para seguir.')
-  expect(texts.some(text => text.startsWith('Trabalhando na'))).toBe(false)
+  expect(texts).toContain('Pausado desde 14:02, esperando a sua resposta.')
+  expect(texts.some(text => text.startsWith('Na '))).toBe(false)
 })
 
 test('a high-risk card in English says the agent is paused, not on a key', async ($, on) => {
   const texts = await cardTextsAt1402($, on, { LANG: 'en_US.UTF-8' }, { risk: 'high' })
-  expect(texts).toContain('Paused since 14:02: it waits for your answer before going on.')
-  expect(texts.some(text => text.startsWith('Working on'))).toBe(false)
+  expect(texts).toContain('Paused since 14:02, waiting for your answer.')
+  expect(texts.some(text => text.startsWith('On '))).toBe(false)
 })
 
 test('a losses-only question draws the losses section alone, and a gains-only one the gains', async ($, on) => {
@@ -1714,7 +1717,7 @@ test('the card has no details toggle and no e hotkey: every section is drawn at 
   expect(texts).not.toContain('Detalhes')
   expect(texts).not.toContain('Ocultar detalhes')
   for (const button of await ui.findAll({ type: 'Button' })) expect(button.props.hotkey).not.toBe('e')
-  // The title line sits after What it is and before the details; the question and Urgency come after them.
+  // The title line sits after the first block (What, then The problem) and before the details; the question and Urgency come after them.
   const at = (name: string): number => texts.findIndex(text => text.includes(name))
   expect(at('What W')).toBeLessThan(at('Detalhes do Askaway:'))
   expect(at('Detalhes do Askaway:')).toBeLessThan(at('Analogy N'))
@@ -2095,19 +2098,228 @@ test('Other… takes a free-text answer on Enter through the same answer path, a
   await ui.unmount()
 })
 
-test('a per-keystroke change in Other… records nothing: no pick, no bold link, the drawn tree unchanged, Submit all no write', async ($, on) => {
+test('typing in Other… changes nothing drawn and writes nothing: no pick, no bold link, no state write, Submit all writes nothing', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { writes } = stubHost(on, files)
+  // Every state write goes through state.set; the pane's text lives in memory, so no key may reach it.
+  const stateWrites: string[] = []
+  on('state.set', { plugin: 'askaway' }, (_$, e, next) => {
+    stateWrites.push(e.key)
+    return next(e)
+  })
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'other-q-l1-aaaaaa' })
+  const drawnBefore = JSON.stringify(await ui.drawn())
+  const writesBefore = stateWrites.length
+  for (const text of ['U', 'Us', 'Use', 'Use a', 'Use a fork']) {
+    await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text, kind: 'change' })
+    expect(JSON.stringify(await ui.drawn())).toBe(drawnBefore)
+  }
+  expect(stateWrites.length).toBe(writesBefore)
+  expect(JSON.stringify(await ui.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).not.toContain('"bold":true')
+  await ui.press({ key: 'submit-all' })
+  expect(writes).toEqual([])
+  await ui.unmount()
+})
+
+test('Next records the Other text typed and not confirmed, before the card moves on, so Submit all writes it', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
   const { writes } = stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
   await ui.press({ key: 'other-q-l1-aaaaaa' })
-  const before = JSON.stringify(await ui.drawn())
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'U', kind: 'change' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
-  expect(JSON.stringify(await ui.drawn())).toBe(before)
-  expect(JSON.stringify(await ui.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).not.toContain('"bold":true')
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: '  Use a fork  ', kind: 'change' })
+  await ui.press({ key: 'nav-next' })
+  expect(await textsOf(ui)).toContain('Title q-l2-bbbbbb')
+  await ui.press({ key: 'nav-back' })
+  expect(await textsOf(ui)).toContain('Title q-l1-aaaaaa')
+  expect(JSON.stringify(await ui.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).toContain('"bold":true')
+  await ui.press({ key: 'nav-next' })
+  await ui.press({ key: 'opt-q-l2-bbbbbb-A' })
   await ui.press({ key: 'submit-all' })
-  expect(writes).toEqual([])
+  expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb')])
+  expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ key: 'other', text: 'Use a fork' })
+  await ui.unmount()
+})
+
+test('Enter drops the pending draft: a later Next records the text Enter sent, not the older typing', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  const { writes } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'other-q-l1-aaaaaa' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fo', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  await ui.press({ key: 'nav-next' })
+  await ui.press({ key: 'nav-back' })
+  await ui.press({ key: 'nav-next' })
+  await ui.press({ key: 'opt-q-l2-bbbbbb-A' })
+  await ui.press({ key: 'submit-all' })
+  expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb')])
+  expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ key: 'other', text: 'Use a fork' })
+  await ui.unmount()
+})
+
+test('blank Other… text typed after a recorded Other pick takes the pick away when Next leaves the field', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'other-q-l1-aaaaaa' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  expect(JSON.stringify(await ui.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).toContain('"bold":true')
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: '   ', kind: 'change' })
+  await ui.press({ key: 'nav-next' })
+  await ui.press({ key: 'nav-back' })
+  expect(JSON.stringify(await ui.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).not.toContain('"bold":true')
+  await ui.unmount()
+})
+
+test('model: a focus move leaves the Other field only when the ring goes from its field to another element or an engine stop', () => {
+  expect(leavesOtherField('other-input-q-l1-aaaaaa', 'nav-next')).toBe(true)
+  expect(leavesOtherField('other-input-q-l1-aaaaaa', undefined)).toBe(true)
+  expect(leavesOtherField('other-input-q-l1-aaaaaa', 'other-input-q-l1-aaaaaa')).toBe(false)
+  expect(leavesOtherField('nav-next', 'other-input-q-l1-aaaaaa')).toBe(false)
+  expect(leavesOtherField(undefined, 'opt-q-l1-aaaaaa-A')).toBe(false)
+})
+
+// The ring moves through the engine's own ui.focus event: onto `element`, or to one of the engine's stops when it is absent.
+const moveRing = ($: Engine, element?: string) =>
+  $.ui.focus({ component: 'Pane', requestId: 'askaway', origin: { kind: 'person' }, ...(element === undefined ? {} : { element }) })
+
+const otherBold = async (ui: Awaited<ReturnType<typeof mountPane>>, id: string): Promise<boolean> =>
+  JSON.stringify(await ui.find({ type: 'Button', key: `other-${id}` })).includes('"bold":true')
+
+test('a focus move off the Other field records its typed text: the move is passed on, then the pick is recorded', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  // Registered before the host stub, so the recorder sees each move before the stub answers it.
+  const moves: (string | undefined)[] = []
+  on('ui.focus', { requestId: 'askaway' }, (_$, e, next) => {
+    moves.push(e.element)
+    return next(e)
+  })
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await moveRing($, 'other-input-q-l1-aaaaaa')
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
+  expect(await otherBold(ui, 'q-l1-aaaaaa')).toBe(false)
+  await moveRing($, 'nav-next')
+  expect(moves).toEqual(['other-input-q-l1-aaaaaa', 'nav-next'])
+  expect(await otherBold(ui, 'q-l1-aaaaaa')).toBe(true)
+  await ui.unmount()
+})
+
+test('a focus move within the Other field records nothing, and a move to an engine stop without a key does record', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await moveRing($, 'other-input-q-l1-aaaaaa')
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
+  await moveRing($, 'other-input-q-l1-aaaaaa')
+  expect(await otherBold(ui, 'q-l1-aaaaaa')).toBe(false)
+  await moveRing($)
+  expect(await otherBold(ui, 'q-l1-aaaaaa')).toBe(true)
+  await ui.unmount()
+})
+
+test('Back records the Other text typed on the card it leaves', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'nav-next' })
+  await ui.press({ key: 'other-q-l2-bbbbbb' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l2-bbbbbb', text: 'Use a fork', kind: 'change' })
+  await ui.press({ key: 'nav-back' })
+  await ui.press({ key: 'nav-next' })
+  expect(await otherBold(ui, 'q-l2-bbbbbb')).toBe(true)
+  await ui.unmount()
+})
+
+test('Submit all records the Other text typed after the picks, before it writes', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  const { writes } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-A' })
+  await ui.press({ key: 'opt-q-l2-bbbbbb-A' })
+  await ui.press({ key: 'other-q-l2-bbbbbb' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l2-bbbbbb', text: 'Use a fork', kind: 'change' })
+  await ui.press({ key: 'submit-all' })
+  expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb')])
+  expect(readJson(files, path('a', 'q-l2-bbbbbb'))).toMatchObject({ key: 'other', text: 'Use a fork' })
+  await ui.unmount()
+})
+
+test('an option pick records the pending Other text first, so the pick stands and no older draft overrides it on Next', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'other-q-l1-aaaaaa' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
+  await ui.press({ key: 'opt-q-l1-aaaaaa-A' })
+  await ui.press({ key: 'nav-back' })
+  expect(await otherBold(ui, 'q-l1-aaaaaa')).toBe(false)
+  expect(await ui.find({ type: 'Button', key: 'opt-q-l1-aaaaaa-A' })).toMatchObject({ props: { variant: 'primary' } })
+  await ui.unmount()
+})
+
+test('a question that left the board drops its pending Other text: Next records no Other pick for it', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  const { clock, writes } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'other-q-l1-aaaaaa' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
+  files.delete(path('q', 'q-l1-aaaaaa'))
+  await clock.advance(5000)
+  await ui.press({ key: 'opt-q-l2-bbbbbb-A' })
+  await ui.press({ key: 'submit-all' })
+  expect(writes).toEqual([path('a', 'q-l2-bbbbbb')])
+  await ui.unmount()
+})
+
+test('a tree jump records the pending Other text on the question it leaves', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'other-q-l1-aaaaaa' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
+  await pressTreeLink(ui, 'jump', 'q-l2-bbbbbb')
+  await ui.press({ key: 'nav-back' })
+  expect(await otherBold(ui, 'q-l1-aaaaaa')).toBe(true)
   await ui.unmount()
 })
 
@@ -3122,7 +3334,7 @@ test('the card has no n/total counter, no More button, no m hotkey and no JEV te
   await ui.unmount()
 })
 
-test('the details block sits between What it is and the question; the Urgency box follows the question and the options column has gap 2', async ($, on) => {
+test('the details block sits between the first block and the question; the Urgency box follows the question and the options column has gap 2', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { what: 'W', urgency: 'Soon' })]])
   stubHost(on, files)
   await $.session.start(SESSION)
@@ -3177,15 +3389,15 @@ const expectInOrder = (texts: string[], lines: string[]): void => {
   expect(found).toEqual([...found].sort((a, b) => a - b))
 }
 
-test('the card draws What, The problem, then the details block (title, Analogy, Why to Context) before the question, then Urgency and the options with their sub-lines, in pt-BR', async ($, on) => {
+test('the card draws the first block as two plain paragraphs, then the details block (title, Analogy, Why to Context) before the question, then Urgency and the options with their sub-lines, in pt-BR', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, FULL_CARD)]])
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
   expectInOrder(await textsOf(ui), [
     '⏱️ Urgência: Soon',
-    'O que é: W',
-    'O problema: P',
+    'W',
+    'P',
     'Detalhes do Askaway:',
     '🔁 Analogia: An',
     '💡 Por que A: It is smaller.',
@@ -3228,7 +3440,7 @@ test('the section titles are bold and their bodies regular; the details block ha
     expect(inBlock.some(node => node.type === 'Text' && childrenOf(node).includes('?'))).toBe(surface === 'terminal')
     // Each section title is a bold run; its body, drawn in the same line, is not bold.
     const boldRuns = nodes.filter(isBoldText).flatMap(childrenOf)
-    for (const heading of ['O que é', 'O problema', '🔁 Analogia', '💡 Por que A', '↩️ Como desfazer', '🛠️ Como', '🎁 O que ganhamos', '⚖️ O que perdemos', '🧭 Contexto e origem', '⏱️ Urgência']) {
+    for (const heading of ['🔁 Analogia', '💡 Por que A', '↩️ Como desfazer', '🛠️ Como', '🎁 O que ganhamos', '⚖️ O que perdemos', '🧭 Contexto e origem', '⏱️ Urgência']) {
       expect(boldRuns).toContain(`${heading}: `)
     }
     expect(boldRuns).toContain('Which way for q-l1-aaaaaa?')
@@ -3244,8 +3456,8 @@ test('the card draws the same order in English: the details block with its title
   const ui = await mountPane($)
   expectInOrder(await textsOf(ui), [
     '⏱️ Urgency: Soon',
-    'What it is: W',
-    'The problem: P',
+    'W',
+    'P',
     'Askaway Details:',
     '🔁 Analogy: An',
     '💡 Why A: It is smaller.',

@@ -556,10 +556,15 @@ export function ageLabel(lang: Lang, ts: number, now: number): string {
   return t(lang, 'age.days', { n: Math.round(hours / 24) })
 }
 
-// Where an explanation section sits on the card: the first block (What it is, The problem), the details block (Analogy,
-// then Why to Context, under the divider and the "Askaway Details:" title), or the box between the question and the
-// options (Urgency). The sections keep that order.
-export type CardSlot = 'before-question' | 'details' | 'before-options'
+// Where an explanation section sits on the card: the box between the title and the details (Urgency), or the details
+// block (Analogy, then Why to Context, under the "Askaway Details:" title). The sections keep that order.
+export type CardSlot = 'details' | 'before-options'
+
+// The first block of the card, What it is and The problem: one plain paragraph each, in that order, each one only when its
+// field is set. It has no heading.
+export function firstBlockOf(question: Question): string[] {
+  return [question.what, question.problem].filter((text): text is string => text !== undefined)
+}
 
 // The explanation sections of one slot, in the approved order; each one only when its field is set.
 export function sectionsOf(lang: Lang, question: Question, slot: CardSlot): Section[] {
@@ -567,10 +572,7 @@ export function sectionsOf(lang: Lang, question: Question, slot: CardSlot): Sect
   const add = (heading: string, body: string | undefined): void => {
     if (body !== undefined) sections.push({ heading, body })
   }
-  if (slot === 'before-question') {
-    add(t(lang, 'section.what'), question.what)
-    add(t(lang, 'section.problem'), question.problem)
-  } else if (slot === 'before-options') {
+  if (slot === 'before-options') {
     add(t(lang, 'section.urgency'), question.urgency)
   } else {
     add(t(lang, 'section.analogy'), question.analogy)
@@ -590,7 +592,7 @@ function clockOf(ts: number): string {
   return `${padTwoDigits(date.getHours())}:${padTwoDigits(date.getMinutes())}`
 }
 
-// The bold line under the card title: the recommended key the agent already follows, or "paused" for a high-risk question.
+// The bold line under the card's question: the recommended key the agent already follows, or "paused" for a high-risk question.
 export function leadOf(lang: Lang, question: Question): string {
   const time = clockOf(question.ts)
   return question.risk === 'high'
@@ -608,6 +610,12 @@ export function listText(lang: Lang, questions: readonly Question[], isAway: boo
 
 // The key prefix of the Other field.
 export const OTHER_INPUT_PREFIX = 'other-input-'
+
+// True when a focus move takes the ring off the Other field: the element it stood on was a field of that prefix, and the
+// ring moves to another element or to one of the engine's own stops (no element). The register records the field's text then.
+export function leavesOtherField(previous: string | undefined, next: string | undefined): boolean {
+  return previous?.startsWith(OTHER_INPUT_PREFIX) === true && next !== previous
+}
 
 // The pieces of an explanation text: plain runs, and the names a reader may act on, drawn in bold. A name
 // is a slash command (`/reload-plugins`, `/askaway lang pt` up to its first space) or anything the agent wrote between

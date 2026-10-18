@@ -67,8 +67,8 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   title (its own `title`, else the `spawnedFrom.title` its child records) gives both fields null.
   A root whose file is missing is taken as the last `sessionId` reached, titled from its child's
   `spawnedFrom`.
-  `what` ("What it is": what the thing is, what the spec says, what the code does today, the discrepancy),
-  `problem` ("The problem": the concrete consequence if nothing is decided, with an example), `context`,
+  `what` (the first paragraph of the card: what the thing is, what the spec says, what the code does today, the discrepancy),
+  `problem` (the second paragraph of the card: the concrete consequence if nothing is decided, with an example), `context`,
   `why`, `how` (how the option works), `gains`, `losses`, `analogy`, `urgency` and `undo` are required
   explanation fields for the panel, and each option's `does` (what happens if chosen), `pros` and `cons`
   are required too: `ask` refuses an entry with any of them blank (see `ask`). Questions filed before
@@ -360,36 +360,10 @@ status list). `hooks/pane.tsx`, `renderPane`.
     `urgency_level` ("low", "medium", "high") of the question; when it is absent, the words of `urgency` decide (high: now,
     today, immediately, urgent, agora, hoje, imediat-, urgente, alta; medium: this week, soon, days, semana, breve, dias,
     moderad-, média), else low;
-  - the question text, bold;
-  - the lead line, bold: "Working on <key> since <HH:MM> while it waits for you. Your answer still counts: pick another option and it switches; with no answer it stays on <key>.", or "Paused since <HH:MM>: it waits for your answer before going on." for a `high` risk question (`leadOf`,
-    `hooks/model.ts`; pt: "Trabalhando na <key> desde <HH:MM> enquanto espera você. Sua resposta ainda vale: escolha outra opção e ele muda; sem resposta, segue na <key>.", "Pausado desde <HH:MM>: espera a sua resposta para seguir.");
-  - the explanation group before the question, drawn (not folded) when one of its sections is set: plain text on the
-    card's own background, with no box and no fill (`renderExplanation`), its sections spaced by `gap={1}`. Its sections, each
-    drawn only when its field is set: "What it is" (`what`; pt "O que é"), "The problem" (`problem`; pt "O problema"),
-    (Analogy moves to the details block below);
-  - the question text, bold;
-  - the options, one full-width Button each, "<key> · Label" (for example "A · Label"), with "(Recommended)" (pt
-    "(Recomendada)") after the label of the recommended one. The recommended option is bold while not picked; the picked
-    option is the primary button. Under each option, its own lines, indented one cell (`paddingLeft={1}`), dim only while
-    the card fades: the tradeoff line "└ <tradeoff> · fit N" (the first letter of the tradeoff capitalized; pt "· aderência N";
-    with no tradeoff "└ fit N"; a null fit draws nothing). Also drawn at once: "What happens: <does>", "Pros: <pros>" and
-    "Cons: <cons>" (pt "O que acontece", "Prós", "Contras"). The options are in a column with `gap={2}` and
-    `marginTop={1}`, so two blank lines part them from the explanation box (`renderQuestion`, `renderOption`,
-    `hooks/pane.tsx`);
-  - "<L> · Other…", where <L> is the letter after the last option's key ("C · Other…" with options A and B; Portuguese:
-    "C · Outra…"), a plain Button, its text underlined after a dim link mark `▪ ` (`LINK_MARK`), bold while its pick is Other. Its field is on the row under it,
-    prefixed with the same "└ " branch glyph the option sub-rows draw (`BRANCH_PREFIX`), indented one cell and dim only
-    while the card fades, with no label: its placeholder is the only text. The field is always open (no press needed, no
-    autofocus, so the keys stay with the card until the person clicks in). Pressing the link only focuses that field
-    (`$.ui.focus`, key `other-input-<id>`). The field has no `value` prop: it keeps the text the person types, across
-    redraws, and the hook never redraws it. Enter (the Input's `onSubmit`, `submitOther`, `flow.submittedOther`) records
-    the trimmed text as the Other pick and keeps the card and the field where they are; a blank Enter takes that pick away.
-    Typing alone records nothing: the pick, the bold link and the `✓` tree mark change only on Enter. The field's
-    submit label is "Keep" (pt "Guardar"), the word for the text staying put. The typed text is not drawn again under the
-    link. A surface with no Input draws no Other option (`renderOther`);
-
-  - the details block, drawn when one of its sections is set (`renderDetailsBlock`, key `details-<id>`), under a divider rule
-    (`renderDivider`, key `divider-details`). It is always open: there is no toggle and no `e` hotkey. Its first line is the
+  - the first block, drawn as two plain paragraphs with no heading, one blank line apart, on the card's own background:
+    the `what` text, then the `problem` text, each only when its field is set (`firstBlockOf`, `renderFirstBlock`, key
+    `explanation-before-question`); names the agent wrote between backticks, or slash commands, drawn in bold;
+  - the details block, drawn when one of its sections is set (`renderDetailsBlock`, key `details-<id>`), with no rule above it: the Urgency line and the first block come before it. It is always open: there is no toggle and no `e` hotkey. Its first line is the
     title: the Askaway mark (`renderLogo`: the SVG on the desktop, the glyph on the terminal), then "Askaway Details:" (pt
     "Detalhes do Askaway:"), in bold. Its sections, each drawn only when its field is set, in this order: "🔁 Analogy"
     (`analogy`; pt "🔁 Analogia"), "💡 Why <rec>" (`why`; pt "💡 Por que A", the letter is the recommended key), "↩️ Undo"
@@ -400,6 +374,34 @@ status list). `hooks/pane.tsx`, `renderPane`.
     `renderSection`). The sections come from `sectionsOf` (slot `details`). The block has no border. Its background is the fill of its theme family (`DETAILS_FILL`,
     `hooks/look.ts`): `#282828` for a dark theme, `#EEEDE9` for a light one (provisional). A theme the plugin does not resolve (`auto`, `custom:<slug>`) gets no fill: the block carries no background, and the engine's own theme shows through. Its padding is one cell across
     and one row above and below, so the text does not touch the fill's edge (`renderDetailsBlock`, `hooks/pane.tsx`).
+  - the question text, bold;
+  - the lead line, bold, right under the question: "On <key> since <HH:MM>. Pick another option to switch; no answer keeps <key>.",
+    or "Paused since <HH:MM>, waiting for your answer." for a `high` risk question (`leadOf`, `hooks/model.ts`; pt: "Na <key> desde
+    <HH:MM>. Escolha outra opção para trocar; sem resposta, fica a <key>.", "Pausado desde <HH:MM>, esperando a sua resposta.");
+  - the options, one full-width Button each, "<key> · Label" (for example "A · Label"), with "(Recommended)" (pt
+    "(Recomendada)") after the label of the recommended one. The recommended option is bold while not picked; the picked
+    option is the primary button. Under each option, its own lines, indented one cell (`paddingLeft={1}`), dim only while
+    the card fades: the tradeoff line "└ <tradeoff> · fit N" (the first letter of the tradeoff capitalized; pt "· aderência N";
+    with no tradeoff "└ fit N"; a null fit draws nothing). Also drawn at once: "What happens: <does>", "Pros: <pros>" and
+    "Cons: <cons>" (pt "O que acontece", "Prós", "Contras"). The options are in a column with `gap={2}` and
+    `marginTop={1}`, so two blank lines part them from the lead line (`renderQuestion`, `renderOption`,
+    `hooks/pane.tsx`);
+  - "<L> · Other…", where <L> is the letter after the last option's key ("C · Other…" with options A and B; Portuguese:
+    "C · Outra…"), a plain Button, its text underlined after a dim link mark `▪ ` (`LINK_MARK`), bold while its pick is Other. Its field is on the row under it,
+    prefixed with the same "└ " branch glyph the option sub-rows draw (`BRANCH_PREFIX`), indented one cell and dim only
+    while the card fades, with no label: its placeholder is the only text. The field is always open (no press needed, no
+    autofocus, so the keys stay with the card until the person clicks in). Pressing the link only focuses that field
+    (`$.ui.focus`, key `other-input-<id>`). The field has no `value` prop: it keeps the text the person types, across
+    redraws. Each change of the text (the Input's `onInput`, `typeOther`) only keeps it in the pane's memory: no store
+    write and no redraw. The text is recorded as the Other pick (`submitOther`, `flow.submittedOther`: trimmed, capped)
+    at these points: on Enter in the field (the Input's `onSubmit`; the card and the field stay where they are); when the
+    focus ring leaves the field (the `ui.focus` hook, `leavesOtherField`, records first and then lets the move through);
+    and before an option pick, the Other link, Next, Back, Submit all, a tree row's Submit and a tree jump (`afterPendingOther`).
+    A pending text whose question has left the board is dropped, not recorded; closing the pane (`ui.close`) drops them all. A blank text takes that
+    pick away, as blank Enter does. Until one of those points, the pick, the bold link and the `✓` tree mark stay as they were. The field's
+    submit label is "Keep" (pt "Guardar"), the word for the text staying put. The typed text is not drawn again under the
+    link. A surface with no Input draws no Other option (`renderOther`);
+
   - a separator: a 1px rule on the desktop, a row of "─" on the terminal (`renderDivider`);
   - the nav row: [← Back] (Portuguese: "← Voltar") on every question, dim on the first; [Next →] (Portuguese:
     "Próxima →") on every question but the last; on the last one, [Submit all (n)] (Portuguese: "Enviar tudo (n)"),
@@ -412,7 +414,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
   so no hotkey fires from typing.
 - **Choosing**: an option records the pick and moves on: to the first question without a pick after the current one
   (wrapping to the start), or, once every question of the group has a pick, to the last question, where Submit all is.
-  "Other…" with its text (Enter in its field) records the pick and keeps the card (see above). After each pick the group
+  "Other…" with its text (Enter in its field, or the field losing focus, or a nav action) records the pick and keeps the card (see above). After each pick the group
   stays selected. Nothing is written until Submit all.
   A card that is fading after a press takes no pick.
 - **Next** moves to the next question whether or not it has a pick; **Back** moves to the previous one. Next does
@@ -451,8 +453,9 @@ status list). `hooks/pane.tsx`, `renderPane`.
 ## Focus and clicks
 
 Decision: every Button of the pane and of the band keeps its press handle across redraws, on the desktop and on the
-terminal alike. The plugin does not hold the focus ring any more (there is no `ui.focus` hook); the engine moves the
-ring as it does for any plugin, and the pane's hotkeys (the option letters on both surfaces, the letter of "Other…", and `z`, `x`, `w` or `p`, `f`, `w` for Back, Next and Submit all) are its keyboard path.
+terminal alike. The plugin does not hold the focus ring: the engine moves it as it does for any plugin. Its one `ui.focus` hook
+(`hooks/register.tsx`) passes the move on first (`await next(e)`), then records the text of the Other field the move left
+(see Other…); it never blocks, rewrites or re-targets a move. Its `ui.close` hook drops the pending Other texts. The ring, and the pane's hotkeys (the option letters on both surfaces, the letter of "Other…", and `z`, `x`, `w` or `p`, `f`, `w` for Back, Next and Submit all) are its keyboard path.
 
 Why: the engine hands a Button a new press handle on every redraw, unless the very same element object comes back. On
 the desktop a click moves the focus onto the Button, and that move redraws the site just before the press arrives. The
