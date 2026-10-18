@@ -150,7 +150,7 @@ export function parseEndedIds(stdout: string): string[] | undefined {
 const WHO_MAX = 40
 const UNKNOWN_WHO = 'unknown'
 
-function whoText(raw: string | undefined): string | undefined {
+export function whoText(raw: string | undefined): string | undefined {
   const flat = (raw ?? '').replace(/\p{Cc}/gu, ' ').trim().replace(/\s+/g, ' ')
   if (flat === '') return undefined
   const chars = [...flat]

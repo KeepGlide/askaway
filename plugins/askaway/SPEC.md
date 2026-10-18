@@ -77,8 +77,9 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   `--text <string>` for key `other`, and `ASKAWAY_HOME` set to the state folder it reads. The plugin root is
   `$.plugin.root`. The reply is one JSON line: `written: true` when the panel's answer landed, `written: false` when an
   answer already held the slot. Either way the panel reads the record on disk from `a/<id>.json` and shows it, so the
-  board holds the CLI's own stamp (`ts`, `who`, `session`). The panel sends no `who`: the CLI stamps it (ASKAWAY_WHO,
-  else the OS user name). A run that cannot start (no `python3`), exits
+  board holds the CLI's own stamp (`ts`, `who`, `session`). The panel sends the name the person gave it (the plugin store key `who`, set by the one-time question in the pane or by
+  `/askaway who <name>`) as `ASKAWAY_WHO`; with none stored the CLI stamps it (ASKAWAY_WHO, else the OS user name). The
+  name is declared, not verified. A run that cannot start (no `python3`), exits
   non-zero or prints no `written` is an error: nothing is recorded, the card fades as usual, and the error is logged.
   Earlier versions wrote `other` answers too; the panel reads them like any other answer.
 - `d/<id>.json` — delivery marker: `{"id":"...","session":"<session that received it>","ts":<ms>}`.
@@ -257,6 +258,8 @@ It fails open: any error exits 0 with no output. The command hooks are declared 
 - `/askaway lang pt-BR|en|auto` — sets the language; the default is `auto`, the environment's locale (see "Language").
 - Damaged files: a damaged `q/` file (no JSON object) holds the pause of its session while it is open; the pause reason names it and `askaway.py prune`. A damaged `a/` file keeps the pause (status `damaged answer`) until an `answer`, with any `--by`, overwrites it; `create_once` replaces only a file that does not read as a JSON object.
 - **Bash and file guard** (`bash_tamper_reason`, `_tamper_denial`): runs in every session, away or not, on Bash, Edit, Write and NotebookEdit. It denies (1) an answer typed in a shell: a command word that runs the askaway script or module (`python`, `python3.x`, `-m askaway`, a bare `askaway.py`, or a glob or a variable standing for it) followed by `answer`, or by a word that could expand to it, unless that command sets `ASKAWAY_HOME` to a literal path under /tmp or to `$(mktemp ...)` (inline, or exported by an earlier segment; a bare assignment does not reach the child process); (2) code that writes the state folder, or answers, in `python -c`, `-e` and a heredoc, and in `sh -c` and `eval` text; (3) a write into the state folder: a redirection target, an operand of `cp`, `mv`, `tee`, `touch`, `ln`, `install`, `truncate`, `rsync`, `rm`, `unlink`, `shred`, `rmdir`, `sed -i` or `dd of=`, after `~`, `$HOME`, `${HOME}`, `$ASKAWAY_HOME` and `cd` are applied; deleting also refuses a path above the folder. Reading (`cat`, `jq`, `less`, `python3 -m json.tool`) stays allowed, and a Write, Edit or NotebookEdit into the folder is denied. The protected folders are the default `~/.claude/state/askaway` and `ASKAWAY_HOME` when it lies outside /tmp; paths are resolved (symlinks followed) before the check. **The guard is a deterrent against the agent's own shell, not a guarantee.** It does not model `xargs`, `find -exec`, a command word held in a variable, a script file's own code, or the code of interpreters beyond their `-c`/`-e` string; the user's own shell is not guarded.
+- `/askaway who [name]` — stores the name panel answers are signed with (store key `who`; the pane asks for it once, a
+  skip stores an empty name and ends the question); without a name it shows the stored one.
 - `/askaway away` — toggles `away.json` and reports the new state.
 
 There are no other public commands. The `/inbox` commands of earlier versions are not part of v1.

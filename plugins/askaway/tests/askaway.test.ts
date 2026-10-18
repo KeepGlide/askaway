@@ -2968,3 +2968,54 @@ test('Dismiss on an ended card removes the question through prune --id, and send
   expect(writes).toEqual([])
   await ui.unmount()
 })
+
+test('the pane asks for the answerer name once; Save stores it and the question goes away', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files, true, {}, {}, { LANG: '' })
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(await textsOf(ui)).toContain('Your name, shown on the answers you give. Asked once; change it with /askaway who <name>.')
+  await $.ui.input({ plugin: 'askaway', key: 'who-input', text: '  Ana\tSilva ' })
+  expect(await textsOf(ui)).not.toContain('Your name, shown on the answers you give. Asked once; change it with /askaway who <name>.')
+  expect((await run($, 'who')).text).toBe('Askaway signs your answers as Ana Silva. Change it with /askaway who <name>.')
+  await ui.unmount()
+})
+
+test('Skip ends the name question for good, and a stored name is never asked again', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files, true, { who: '' }, {}, { LANG: '' })
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(await ui.find({ type: 'Button', key: 'who-skip' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('/askaway who <name> stores the name; with no name it shows it, or says none is set', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files, true, {}, {}, { LANG: '' })
+  await $.session.start(SESSION)
+  expect((await run($, 'who')).text).toBe('Askaway has no name for you yet. Set one with /askaway who <name>.')
+  expect((await run($, 'who Ana  Maria')).text).toBe('Askaway will sign your answers as Ana Maria.')
+  expect((await run($, 'who')).text).toBe('Askaway signs your answers as Ana Maria. Change it with /askaway who <name>.')
+})
+
+test('the stored name goes to the CLI as ASKAWAY_WHO on a panel answer', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { calls } = stubHost(on, files, true, { who: 'Ana' })
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-A' })
+  await ui.press({ key: 'submit-all' })
+  expect(calls[0]?.env?.ASKAWAY_WHO).toBe('Ana')
+  await ui.unmount()
+})
+
+test('the name question reads in Portuguese when the language is pt-BR', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(await textsOf(ui)).toContain('Seu nome, mostrado nas respostas que você dá. Perguntado uma vez; mude com /askaway who <nome>.')
+  expect(await ui.find({ type: 'Button', key: 'who-skip' })).toBeDefined()
+  await ui.unmount()
+})

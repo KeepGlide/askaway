@@ -240,13 +240,14 @@ On the desktop, the KeepGlide mark sits beside the counter and beside **Submit a
 | `/askaway lang en` | Shows them in English. |
 | `/askaway lang auto` | Follows your locale again. |
 | `/askaway away` | Turns away mode on or off and reports the new state. |
+| `/askaway who <name>` | Sets the name your panel answers are signed with; without a name it shows the current one. The panel asks for it once, the first time a question is open. |
 
 | Setting | Default | How to change it |
 |---|---|---|
 | State folder | `~/.claude/state/askaway` | Environment variable `ASKAWAY_HOME` |
 | Language | `auto`: the locale. The first set of `LC_ALL`, `LC_MESSAGES`, `LANG`, `LANGUAGE` decides; a value that starts with `pt` is Portuguese, anything else English | `/askaway lang pt-BR`, `/askaway lang en` or `/askaway lang auto` |
 | Away mode | Off | `/askaway away` (stored in `away.json` in the state folder) |
-| Who answered | `ASKAWAY_WHO` when it holds a name, else the OS user name, else `unknown` | Environment variable `ASKAWAY_WHO`. Each answer records it as `who`, and `status`, `list` and `export` show it |
+| Who answered | The panel signs with the name you gave it; the CLI uses `ASKAWAY_WHO` when it holds a name, else the OS user name, else `unknown` | `/askaway who <name>` (panel), environment variable `ASKAWAY_WHO` (CLI). Each answer records it as `who`, and `status`, `list` and `export` show it. The name is **declared**, not verified: anyone who can type a name can sign with it |
 | Prune window | 30 days | Environment variable `ASKAWAY_PRUNE_DAYS`, in whole days; `0` prunes delivered and expired items at once |
 
 Away mode is one of three ways an agent learns you are away; the others are the permission mode `bypassPermissions` and the environment variable `CLAUDE_CODE_SESSION_ATTENDED=0`.

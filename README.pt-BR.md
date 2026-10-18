@@ -240,13 +240,14 @@ No desktop, a marca KeepGlide fica ao lado do contador e ao lado de **Enviar tud
 | `/askaway lang en` | Mostra em inglês. |
 | `/askaway lang auto` | Volta a seguir o seu locale. |
 | `/askaway away` | Liga ou desliga o modo ausente e informa o novo estado. |
+| `/askaway who <nome>` | Define o nome com que as respostas do painel são assinadas; sem nome, mostra o atual. O painel pergunta uma vez, na primeira vez que há uma pergunta aberta. |
 
 | Ajuste | Padrão | Como mudar |
 |---|---|---|
 | Pasta de estado | `~/.claude/state/askaway` | Variável de ambiente `ASKAWAY_HOME` |
 | Idioma | `auto`: o locale. Decide a primeira variável definida entre `LC_ALL`, `LC_MESSAGES`, `LANG`, `LANGUAGE`; um valor que começa com `pt` é português, qualquer outro é inglês | `/askaway lang pt-BR`, `/askaway lang en` ou `/askaway lang auto` |
 | Modo ausente | Desligado | `/askaway away` (guardado em `away.json` na pasta de estado) |
-| Quem respondeu | `ASKAWAY_WHO` quando tem um nome, senão o nome do usuário do sistema, senão `unknown` | Variável de ambiente `ASKAWAY_WHO`. Cada resposta grava isso em `who`, e `status`, `list` e `export` mostram o campo |
+| Quem respondeu | O painel assina com o nome que você deu; a CLI usa `ASKAWAY_WHO` quando tem um nome, senão o nome do usuário do sistema, senão `unknown` | `/askaway who <nome>` (painel), variável de ambiente `ASKAWAY_WHO` (CLI). Cada resposta grava isso em `who`, e `status`, `list` e `export` mostram o campo. O nome é **declarado**, não verificado: quem digita um nome assina com ele |
 | Janela de limpeza | 30 dias | Variável de ambiente `ASKAWAY_PRUNE_DAYS`, em dias inteiros; `0` remove de uma vez os itens entregues e expirados |
 
 O modo ausente é uma das três formas de o agente saber que você está ausente; as outras são o modo de permissão `bypassPermissions` e a variável de ambiente `CLAUDE_CODE_SESSION_ATTENDED=0`.

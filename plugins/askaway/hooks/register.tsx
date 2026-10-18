@@ -21,6 +21,7 @@ import {
   parseAnswer,
   parseAnswerWritten,
   parseEndedIds,
+  whoText,
   parseAway,
   parseDelivery,
   parseQuestion,
@@ -42,6 +43,8 @@ const FADE_MS = 250
 // The plugin's own store keys: the ids of the expired status lines the person dismissed, and the chosen language.
 const CLEARED_KEY = 'cleared'
 const LANG_KEY = 'lang'
+// The name the person signs answers with: a name, '' once they skipped the question, absent before it was asked.
+const WHO_KEY = 'who'
 // The choices of /askaway lang, as typed (case does not matter; `pt` and `pt_br` still work); `pt-BR` is stored as
 // the dictionary's `pt`, and `auto` follows the environment. A Map, so `constructor` and the like are not choices.
 const LANG_CHOICES: ReadonlyMap<string, string> = new Map([
@@ -74,6 +77,8 @@ const turn = atom({ plugin: 'askaway', key: 'turn' } as const, { isBusy: false }
 const langAtom = atom({ plugin: 'askaway', key: 'lang' } as const, DEFAULT_LANG)
 // The open questions whose asking session has ended (`list --open` marks them): the card shows a notice for them.
 const endedAtom = atom({ plugin: 'askaway', key: 'ended' } as const, [] as string[])
+// The stored answerer name: null before the question was asked, '' after a skip, else the name.
+const whoAtom = atom({ plugin: 'askaway', key: 'who' } as const, null as string | null)
 const wizardAtom = atom({ plugin: 'askaway', key: 'wizard' } as const, flow.EMPTY_WIZARD)
 
 // Files are written once and never change, so a parsed file stays until its name leaves the folder.
@@ -399,7 +404,9 @@ async function answerViaCli($: EngineInterface, home: string, id: string, key: s
   const argv = ['python3', `${$.plugin.root}/scripts/askaway.py`, 'answer', id, key, '--by', 'panel', '--strict']
   if (text !== undefined) argv.push('--text', text)
   const token = await mintPanelToken($, home)
-  const run = await $.process.run(argv, { env: { ASKAWAY_HOME: home, ASKAWAY_PANEL_TOKEN: token } })
+  const who = await read($, whoAtom)
+  const env = { ASKAWAY_HOME: home, ASKAWAY_PANEL_TOKEN: token, ...(who ? { ASKAWAY_WHO: who } : {}) }
+  const run = await $.process.run(argv, { env })
   const written = parseAnswerWritten(run.stdout)
   if (run.exitCode !== 0 || written === undefined) {
     throw new Error(`askaway answer failed: ${(run.stderr || run.stdout).trim()}`)
@@ -422,6 +429,24 @@ async function dismissStatus($: EngineInterface, id: string): Promise<void> {
   const ids = [...new Set([...(await read($, cleared)), id])]
   await $.store.set(CLEARED_KEY, ids)
   await update($, cleared, () => ids)
+}
+
+// Stores the name answers are signed with (a skip stores ''). The CLI caps and cleans it again (ASKAWAY_WHO).
+async function saveWho($: EngineInterface, text: string): Promise<void> {
+  const name = whoText(text) ?? ''
+  await $.store.set(WHO_KEY, name)
+  await update($, whoAtom, () => name)
+}
+
+// /askaway who [name]: shows the stored name, or stores the one given.
+async function whoReply($: EngineInterface, lang: Lang, name: string): Promise<string> {
+  if (name === '') {
+    const current = await read($, whoAtom)
+    return current ? t(lang, 'command.whoShow', { name: current }) : t(lang, 'command.whoNone')
+  }
+  await saveWho($, name)
+  const stored = await read($, whoAtom)
+  return stored ? t(lang, 'command.whoSet', { name: stored }) : t(lang, 'command.whoNone')
 }
 
 // Flips away.json and returns the new state.
@@ -581,6 +606,8 @@ const actionsFor = ($: EngineInterface): PaneActions => ({
   back: () => report($, moveWizard($, (current, group) => flow.back(current, group))),
   next: () => report($, moveWizard($, (current, group) => flow.next(current, group))),
   submit: () => report($, submitCurrent($)),
+  saveWho: text => report($, saveWho($, text)),
+  skipWho: () => report($, saveWho($, '')),
 })
 
 export const register: Register = on => {
@@ -597,6 +624,8 @@ export const register: Register = on => {
     const storedIds = await $.store.get(CLEARED_KEY)
     const ids = Array.isArray(storedIds) ? storedIds.filter((id): id is string => typeof id === 'string') : []
     await update($, cleared, () => ids)
+    const storedWho = await $.store.get(WHO_KEY)
+    await update($, whoAtom, () => (typeof storedWho === 'string' ? storedWho : null))
     await update($, turn, () => ({ isBusy: false }))
     await update($, wizardAtom, () => flow.EMPTY_WIZARD)
     const folder = await folderOf($)
@@ -627,8 +656,10 @@ export const register: Register = on => {
   // /askaway away toggles away mode.
   on('command.run', { command: 'askaway' }, async ($, e) => {
     const [verb = '', value = ''] = e.args.trim().split(/\s+/)
+    const rest = e.args.trim().slice(verb.length).trim()
     const lang = await read($, langAtom)
     if (verb === 'lang') return { text: await setLang($, value) }
+    if (verb === 'who') return { text: await whoReply($, lang, rest) }
     if (verb === 'away') return { text: await awayText($, lang) }
     if (verb !== '') return { text: t(lang, 'command.langInvalid') }
     const opened = await openPane($)
@@ -660,6 +691,7 @@ export const register: Register = on => {
       footer: footerText(lang, current, now),
       expanded: await read($, expanded),
       ended: await read($, endedAtom),
+      askWho: (await read($, whoAtom)) === null,
       groups,
       active,
       wizard,

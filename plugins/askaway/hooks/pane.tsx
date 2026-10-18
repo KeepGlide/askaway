@@ -47,11 +47,15 @@ export type PaneView = {
   expanded: Readonly<Record<string, boolean>>
   // The ids of open questions whose asking session has ended: their card shows a notice and Dismiss, no options.
   ended: readonly string[]
+  // True until the person gave a name or skipped: the pane then asks for it above the card, once.
+  askWho: boolean
 }
 
 export type PaneActions = {
   dismiss: (id: string) => void
   dismissEnded: (id: string) => void
+  saveWho: (text: string) => void
+  skipWho: () => void
   pick: (id: string, key: string) => void
   toggleOther: (id: string) => void
   toggleDetails: (id: string) => void
@@ -96,6 +100,7 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
         </Box>
       </Box>
       {view.groups.length > 0 && renderTree({ ui, lang, view, actions, held })}
+      {view.askWho && view.questions.length > 0 && renderAskWho(ui, lang, actions, held)}
       {screen !== undefined && renderQuestion(ui, lang, view, actions, screen, held)}
       {view.lines.map(line => renderStatusLine(ui, actions, line, held))}
       {view.footer !== undefined && view.questions.length === 0 && renderFooter(ui, view.footer)}
@@ -106,6 +111,28 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
 }
 
 // The footer: one muted line under the status lines. Text only, never a row of the tree, and drawn only with no card up.
+// The one-time question for the answerer's name: the sentence, a name field and Skip. Drawn above the card until answered.
+function renderAskWho(ui: Ui, lang: Lang, actions: PaneActions, held: HeldButtons): RenderElement | false {
+  if (!('Input' in ui)) return false
+  const { Box, Button, Input, Text } = ui
+  const skip = t(lang, 'who.skip')
+  return (
+    <Box key="ask-who" flexDirection="column" gap={1} borderStyle="round" paddingX={1}>
+      <Text>{t(lang, 'who.prompt')}</Text>
+      <Input
+        key="who-input"
+        label={t(lang, 'who.label')}
+        placeholder={t(lang, 'who.placeholder')}
+        submitLabel={t(lang, 'who.save')}
+        onSubmit={text => actions.saveWho(text)}
+      />
+      {held.hold('who-skip', [skip], () => actions.skipWho(), press => (
+        <Button key="who-skip" label={skip} variant="secondary" onPress={press} />
+      ))}
+    </Box>
+  )
+}
+
 function renderFooter(ui: Ui, text: string): RenderElement {
   const { Text } = ui
   return <Text key="footer" dimColor>{text}</Text>
