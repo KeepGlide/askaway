@@ -465,6 +465,68 @@ def test_answer_to_a_question_without_a_session_records_the_shell_session(home, 
     assert stored(home, "a", item)["session"] == SESSION
 
 
+def test_answer_other_stores_its_trimmed_text_as_the_panel_writes_it(home, capsys, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    item = ask_item(capsys)
+    result = cli(capsys, "answer", item, "other", "--by", "panel", "--text", "  Use SQLite  ")
+    assert result == {"id": item, "key": "other", "written": True}
+    record = stored(home, "a", item)
+    assert set(record) == {"id", "key", "by", "who", "session", "ts", "text"}
+    assert record["key"] == "other" and record["by"] == "panel" and record["who"] == WHO
+    assert record["text"] == "Use SQLite" and record["session"] == SESSION
+    assert cli(capsys, "status", item)["text"] == "Use SQLite"
+
+
+def test_answer_other_is_first_writer_wins_and_keeps_only_the_first_text(home, capsys):
+    item = ask_item(capsys)
+    first = cli(capsys, "answer", item, "other", "--text", "Use SQLite")
+    second = cli(capsys, "answer", item, "other", "--text", "Use Postgres")
+    assert first == {"id": item, "key": "other", "written": True}
+    assert second == {"id": item, "key": "other", "written": False}
+    assert stored(home, "a", item)["text"] == "Use SQLite"
+    assert [p.name for p in (home / "a").iterdir()] == [f"{item}.json"]
+
+
+def test_answer_text_after_a_lettered_answer_is_not_stored(home, capsys):
+    item = ask_item(capsys)
+    cli(capsys, "answer", item, "A")
+    assert cli(capsys, "answer", item, "other", "--text", "Use SQLite") == {"id": item, "key": "A", "written": False}
+    assert "text" not in stored(home, "a", item)
+
+
+def test_answer_text_without_the_other_key_is_not_stored(home, capsys):
+    item = ask_item(capsys)
+    assert cli(capsys, "answer", item, "B", "--text", "Use SQLite") == {"id": item, "key": "B", "written": True}
+    assert "text" not in stored(home, "a", item)
+
+
+@pytest.mark.parametrize("text_args", [[], ["--text", ""], ["--text", "   "]])
+def test_answer_other_needs_some_text(text_args, home, capsys):
+    item = ask_item(capsys)
+    refused = cli(capsys, "answer", item, "other", *text_args)
+    assert "needs --text" in refused["error"]
+    assert not (home / "a").exists()
+
+
+def test_panel_answer_with_text_is_accepted_from_a_non_shell_caller(home, capsys, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    item = ask_item(capsys)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID")
+    assert cli(capsys, "answer", item, "other", "--by", "panel", "--text", "Use SQLite") == {
+        "id": item, "key": "other", "written": True}
+    record = stored(home, "a", item)
+    assert record["by"] == "panel" and record["text"] == "Use SQLite" and record["session"] == SESSION
+
+
+def test_cli_other_answer_is_refused_from_another_session_and_claims_nothing(home, capsys, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    item = ask_item(capsys)
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "other-session")
+    refused = cli(capsys, "answer", item, "other", "--text", "Use SQLite")
+    assert "another session" in refused["error"]
+    assert not (home / "a" / f"{item}.json").exists()
+
+
 # ---- who ---------------------------------------------------------------
 
 def test_answer_records_the_os_user_as_who_when_no_override_is_set(home, capsys, monkeypatch):
@@ -1694,7 +1756,7 @@ def test_wait_picks_up_an_answer_written_while_it_polls(home, capsys, monkeypatc
     item = ask_item(capsys)
 
     def answer_during_the_first_poll(_seconds: float) -> None:
-        askaway.cmd_answer(item, "A", "panel")
+        askaway.cmd_answer(item, "A", "panel", None)
 
     monkeypatch.setattr(askaway.time, "sleep", answer_during_the_first_poll)
     assert cli(capsys, "wait", item, "--timeout", "5") == {"id": item, "status": "answered", "key": "A"}

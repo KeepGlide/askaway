@@ -251,11 +251,12 @@ def item_status(item_id: str) -> tuple[str, str | None]:
 
 
 OTHER_TEXT_MAX = 500
+OTHER_KEY: Final = "other"
 
 
 def other_text(answer: Mapping[str, Any] | None) -> str | None:
     """The free text of an "Other" answer, on one line and capped, or None."""
-    if not answer or answer.get("key") != "other" or not isinstance(answer.get("text"), str):
+    if not answer or answer.get("key") != OTHER_KEY or not isinstance(answer.get("text"), str):
         return None
     text = " ".join(answer["text"].split())[:OTHER_TEXT_MAX]
     return text or None
@@ -566,16 +567,29 @@ def answer_who(answer: Mapping[str, Any] | None) -> str | None:
     return who if isinstance(who, str) and who else None
 
 
-def cmd_answer(item_id: str, key: str, by: str) -> dict[str, Any]:
+def answer_text(key: str, text: str | None) -> str | None:
+    """The free text an answer keeps: trimmed, as the panel trims it. Only the Other key keeps text."""
+    if key != OTHER_KEY:
+        return None
+    kept = (text or "").strip()
+    if not kept:
+        raise ValueError("the Other answer needs --text with some text")
+    return kept
+
+
+def cmd_answer(item_id: str, key: str, by: str, text: str | None) -> dict[str, Any]:
     if by not in ANSWER_SOURCES:
         raise ValueError(f"--by must be one of: {', '.join(sorted(ANSWER_SOURCES))}")
     entry = read_json(item_path("q", item_id))
     if entry is None:
         raise ValueError("unknown inbox id")
-    if key not in option_keys(entry):
+    kept = answer_text(key, text)
+    if key != OTHER_KEY and key not in option_keys(entry):
         raise ValueError("unknown option key")
     record = {"id": item_id, "key": key, "by": by, "who": answerer_name(),
               "session": answer_session(entry, by), "ts": now_ms()}
+    if kept is not None:
+        record["text"] = kept
     if create_once(item_path("a", item_id), record):
         return {"id": item_id, "key": key, "written": True}
     stored = read_json(item_path("a", item_id)) or {}
@@ -602,7 +616,7 @@ def _list_row(entry: Mapping[str, Any]) -> dict[str, Any]:
     row = {"id": entry["id"], "title": entry.get("title"), "status": status,
            "recommended": entry.get("recommended"), "key": key}
     answer = read_json(item_path("a", entry["id"]))
-    text = other_text(answer) if key == "other" else None
+    text = other_text(answer) if key == OTHER_KEY else None
     if text:
         row["text"] = text
     who = answer_who(answer)
@@ -772,8 +786,9 @@ def build_parser() -> argparse.ArgumentParser:
     answer.add_argument("id")
     answer.add_argument("key")
     answer.add_argument("--by", default="cli")
+    answer.add_argument("--text")
     answer.add_argument("--strict", action="store_true")
-    answer.set_defaults(run=lambda a: cmd_answer(a.id, a.key, a.by))
+    answer.set_defaults(run=lambda a: cmd_answer(a.id, a.key, a.by, a.text))
 
     status = commands.add_parser("status")
     status.add_argument("id")
