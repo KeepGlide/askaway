@@ -295,15 +295,29 @@ export function sectionsOf(lang: Lang, question: Question): Section[] {
   const add = (heading: string, body: string | undefined): void => {
     if (body !== undefined) sections.push({ heading, body })
   }
+  add(t(lang, 'section.urgency'), question.urgency)
   add(t(lang, 'section.context'), question.context)
   add(t(lang, 'section.analogy'), question.analogy)
   add(t(lang, 'section.why', { key: question.recommended }), question.why)
+  add(t(lang, 'section.undo'), question.undo)
   add(t(lang, 'section.how'), question.how)
   add(t(lang, 'section.gains'), question.gains)
   add(t(lang, 'section.losses'), question.losses)
-  add(t(lang, 'section.urgency'), question.urgency)
-  add(t(lang, 'section.undo'), question.undo)
   return sections
+}
+
+// The local clock time of a question's timestamp, HH:MM.
+function clockOf(ts: number): string {
+  const date = new Date(ts)
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
+// The bold line under the card title: the recommended key the agent already follows, or "paused" for a high-risk question.
+export function leadOf(lang: Lang, question: Question): string {
+  const time = clockOf(question.ts)
+  return question.risk === 'high'
+    ? t(lang, 'card.lead.paused', { time })
+    : t(lang, 'card.lead.agent', { key: question.recommended, time })
 }
 
 // The text the /askaway command answers when the pane waits undrawn.

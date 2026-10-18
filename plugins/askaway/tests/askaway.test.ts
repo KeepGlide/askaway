@@ -5,6 +5,7 @@ import {
   counterText,
   deliveryLine,
   groupBySession,
+  leadOf,
   listText,
   parseQuestion,
   piecesOf,
@@ -349,31 +350,48 @@ test('model: each explanation section reads in the chosen language and shows onl
   expect(sectionsOf('en', lossesOnly)[1]).toEqual({ heading: '⚖️ What we lose', body: 'L' })
 })
 
-test('model: urgency and undo draw last, after gains and losses, each only when set, in both languages', () => {
+test('model: urgency draws first and undo right after why, each only when set, in both languages', () => {
   const every = parsedQuestion('q-m-000004', 10, {
     context: 'C', analogy: 'An', how: 'H', gains: 'G', losses: 'L', urgency: 'Blocks in ~8 min', undo: 'Changing later ≈ 10 min',
   })
   expect(sectionsOf('en', every).map(section => section.heading)).toEqual([
+    '⏱️ Urgency',
     '🧭 Context and origin',
     '🔁 Analogy',
     '💡 Why A',
+    '↩️ Undo',
     '🛠️ How',
     '🎁 What we gain',
     '⚖️ What we lose',
-    '⏱️ Urgency',
-    '↩️ Undo',
   ])
-  expect(sectionsOf('en', every).slice(6)).toEqual([
-    { heading: '⏱️ Urgency', body: 'Blocks in ~8 min' },
-    { heading: '↩️ Undo', body: 'Changing later ≈ 10 min' },
+  expect(sectionsOf('en', every)[0]).toEqual({ heading: '⏱️ Urgency', body: 'Blocks in ~8 min' })
+  expect(sectionsOf('en', every)[4]).toEqual({ heading: '↩️ Undo', body: 'Changing later ≈ 10 min' })
+  expect(sectionsOf('pt', every).map(section => section.heading)).toEqual([
+    '⏱️ Urgência',
+    '🧭 Contexto e origem',
+    '🔁 Analogia',
+    '💡 Por que A',
+    '↩️ Como desfazer',
+    '🛠️ Como',
+    '🎁 O que ganhamos',
+    '⚖️ O que perdemos',
   ])
-  expect(sectionsOf('pt', every).slice(6).map(section => section.heading)).toEqual(['⏱️ Urgência', '↩️ Como desfazer'])
 
   const withoutEither = parsedQuestion('q-m-000005', 10, { gains: 'G' })
   expect(sectionsOf('en', withoutEither).map(section => section.heading)).toEqual(['💡 Why A', '🎁 What we gain'])
 
   const urgencyOnly = parsedQuestion('q-m-000006', 10, { urgency: 'Can wait' })
-  expect(sectionsOf('en', urgencyOnly).slice(1)).toEqual([{ heading: '⏱️ Urgency', body: 'Can wait' }])
+  expect(sectionsOf('en', urgencyOnly)[0]).toEqual({ heading: '⏱️ Urgency', body: 'Can wait' })
+})
+
+test('model: the lead line names the recommended key and the local time, or says paused for a high-risk question', () => {
+  const at = new Date(2026, 9, 18, 14, 2).getTime()
+  expect(leadOf('en', parsedQuestion('q-m-000008', at, { recommended: 'B' }))).toBe('The agent is already on B since 14:02')
+  expect(leadOf('pt', parsedQuestion('q-m-000008', at, { recommended: 'B' }))).toBe('O agente já seguiu com B desde 14:02')
+  expect(leadOf('en', parsedQuestion('q-m-000009', at, { risk: 'high' }))).toBe('The agent is paused since 14:02')
+  expect(leadOf('pt', parsedQuestion('q-m-000009', at, { risk: 'high' }))).toBe('O agente está pausado desde 14:02')
+  const early = new Date(2026, 9, 18, 9, 5).getTime()
+  expect(leadOf('en', parsedQuestion('q-m-000010', early, {}))).toBe('The agent is already on A since 09:05')
 })
 
 test('model: the list header and rows read in each language, with away mode when it is on', () => {
@@ -842,7 +860,7 @@ test('each explanation section shows only when its field is set, in one box unde
   await ui.unmount()
 })
 
-test('the card draws urgency and undo last in the explanation box, with their Portuguese labels', async ($, on) => {
+test('the card draws urgency first in the explanation box and undo right after why, with their Portuguese labels', async ($, on) => {
   const files = new Map([
     [
       path('q', 'q-l3-cccccc'),
@@ -853,15 +871,55 @@ test('the card draws urgency and undo last in the explanation box, with their Po
   await $.session.start(SESSION)
   const ui = await mountPane($)
   const texts = await textsOf(ui)
+  const urgencyLine = texts.indexOf('⏱️ Urgência: Blocks in ~8 min')
+  const whyLine = texts.indexOf('💡 Por que A: It is smaller.')
+  const undoLine = texts.indexOf('↩️ Como desfazer: Changing later ≈ 10 min')
   const gainsLine = texts.indexOf('🎁 O que ganhamos: Fast reads.')
   const lossesLine = texts.indexOf('⚖️ O que perdemos: A file to back up.')
-  const urgencyLine = texts.indexOf('⏱️ Urgência: Blocks in ~8 min')
-  const undoLine = texts.indexOf('↩️ Como desfazer: Changing later ≈ 10 min')
-  expect(gainsLine).toBeGreaterThanOrEqual(0)
+  expect(urgencyLine).toBeGreaterThanOrEqual(0)
+  expect(whyLine).toBeGreaterThan(urgencyLine)
+  expect(undoLine).toBeGreaterThan(whyLine)
+  expect(gainsLine).toBeGreaterThan(undoLine)
   expect(lossesLine).toBeGreaterThan(gainsLine)
-  expect(urgencyLine).toBeGreaterThan(lossesLine)
-  expect(undoLine).toBeGreaterThan(urgencyLine)
   await ui.unmount()
+})
+
+// A card for a question at 14:02 local time (built from local fields, so it reads 14:02 in any time zone).
+const AT_1402 = new Date(2026, 9, 18, 14, 2).getTime()
+async function cardTextsAt1402($: Engine, on: On, env: Record<string, string>, extra: Record<string, unknown>): Promise<string[]> {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', AT_1402, { recommended: 'B', ...extra })]])
+  stubHost(on, files, true, {}, {}, env)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  const texts = await textsOf(ui)
+  await ui.unmount()
+  return texts
+}
+
+test('the card draws the lead line under the title in pt-BR: the recommended key and the time', async ($, on) => {
+  const texts = await cardTextsAt1402($, on, {}, {})
+  const lead = 'O agente já seguiu com B desde 14:02'
+  expect(texts).toContain(lead)
+  expect(texts.indexOf(lead)).toBe(texts.indexOf('Which way for q-l1-aaaaaa?') - 1)
+  expect(texts.indexOf(lead)).toBeGreaterThan(texts.indexOf('Title q-l1-aaaaaa'))
+})
+
+test('the card draws the lead line under the title in English: the recommended key and the time', async ($, on) => {
+  const texts = await cardTextsAt1402($, on, { LANG: 'en_US.UTF-8' }, {})
+  expect(texts).toContain('The agent is already on B since 14:02')
+  expect(texts).not.toContain('O agente já seguiu com B desde 14:02')
+})
+
+test('a high-risk card in pt-BR says the agent is paused, not on a key', async ($, on) => {
+  const texts = await cardTextsAt1402($, on, {}, { risk: 'high' })
+  expect(texts).toContain('O agente está pausado desde 14:02')
+  expect(texts.some(text => text.startsWith('O agente já seguiu'))).toBe(false)
+})
+
+test('a high-risk card in English says the agent is paused, not on a key', async ($, on) => {
+  const texts = await cardTextsAt1402($, on, { LANG: 'en_US.UTF-8' }, { risk: 'high' })
+  expect(texts).toContain('The agent is paused since 14:02')
+  expect(texts.some(text => text.startsWith('The agent is already on'))).toBe(false)
 })
 
 test('a losses-only question draws the losses section alone, and a gains-only one the gains', async ($, on) => {

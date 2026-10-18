@@ -15,6 +15,7 @@ import {
   OTHER_KEY,
   ageLabel,
   counterText,
+  leadOf,
   piecesOf,
   projectLabel,
   riskLabel,
@@ -201,9 +202,9 @@ const hotkeyFor = (card: CardContext, key: string | undefined): string | undefin
 const letterFor = (card: CardContext, key: string): string | undefined =>
   card.surface === 'terminal' ? hotkeyFor(card, key) : undefined
 
-// One question on screen: the title in bold with the risk and age beside it, the question, the explanation box, two blank
-// lines, the numbered options with "Other…", a separator, and the Back / Next or Submit all row. One blank line sits under
-// the nav row.
+// One question on screen: the title in bold with the risk and age beside it, the bold lead line under it (what the agent
+// does about the question), the question, the explanation box, two blank lines, the numbered options with "Other…", a
+// separator, and the Back / Next or Submit all row. One blank line sits under the nav row.
 function renderQuestion(
   ui: Ui,
   lang: Lang,
@@ -230,6 +231,7 @@ function renderQuestion(
         <Text bold dimColor={isLeaving}>{questionLabel(question)}</Text>
         <Text dimColor>{`${riskLabel(lang, question.risk)} · ${ageLabel(lang, question.ts, view.now)}`}</Text>
       </Box>
+      <Text bold dimColor={isLeaving}>{leadOf(lang, question)}</Text>
       <Text bold dimColor={isLeaving}>{question.question}</Text>
       {sections.length > 0 && renderExplanation(ui, sections, isLeaving)}
       <Box flexDirection="column" gap={2} marginTop={1}>
