@@ -2,8 +2,14 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.21, set by the beta.21 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.22, set by the beta.22 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.22] - 2026-10-18
+
+### Fixed
+
+- The root session's rows now really sit under the family title: beta.21 compared the record's `session` (the CLI uuid) with `family` (a Desktop `local_<uuid>`), which never match, so the title was still drawn twice. The root check compares `desktop_session` with `family` (`isRootSession` in `hooks/model.ts`; `HistorySession.isRoot`). A question filed before `desktop_session` existed (beta.19 or older) keeps its session row.
 
 ## [0.4.0-beta.21] - 2026-10-18
 
