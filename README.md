@@ -21,7 +21,7 @@ A question card appears in the Askaway panel for each decision an agent filed wh
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Early access (0.4.0-beta.19):** the mod API moves between Claude Code releases, so expect changes until a stable release. The changes of this version are listed in [CHANGELOG.md](CHANGELOG.md).
+> ⚠️ **Early access (0.4.0-beta.20):** the mod API moves between Claude Code releases, so expect changes until a stable release. The changes of this version are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## 💡 What it is
 
@@ -200,7 +200,7 @@ The card draws these parts from top to bottom. The labels are the English ones; 
 
 The card opens with the title, the Urgency line (coloured by its grade), the explanation before the question (**What it is** and **The problem**, two plain paragraphs with no heading), the **Askaway Details:** block (the mark and the title, then **Analogy**, **💡 Why A**, **↩️ Undo**, **🛠️ How**, **🎁 What we gain**, **⚖️ What we lose** and **🧭 Context and origin**), the question, the lead line under it, the options with their tradeoff, fit, the **What happens**, **Pros** and **Cons** lines, and the nav row. The details are always open: there is no link or key to open them.
 
-1. **Title row:** the title in bold, then the risk label and the age, for example `⚠️ medium risk · 12 min ago`. A question filed without `title` gets its question clipped to 60 characters as its title (the CLI does it). The pane cuts a stored empty title to 24 characters. The risk wraps under the title when there is no room.
+1. **Title row:** the title as a small heading, then ` - See session - ` (a link that opens the session that asked, when it ran in the Desktop), then the risk label and the age, for example `⚠️ medium risk · 12 min ago`; where the surface draws no Markdown, the title is bold text with the risk and age beside it, no link. A question filed without `title` gets its question clipped to 60 characters as its title (the CLI does it). The pane cuts a stored empty title to 24 characters. The risk wraps under the title when there is no room.
 2. **Urgency:** under the title, a line **⏱️ Urgency** (`urgency`) when it is set, its text coloured by grade: `urgency_level` (`low`, `medium`, `high`), or the words of the text when the level is absent.
 3. **Explanation before the question:** the sections that are set, as plain paragraphs with no headings: the **What it is** text (`what`), then the **The problem** text (`problem`). Then the **Askaway Details:** block (with the mark): **🔁 Analogy** (`analogy`), **💡 Why A** (`why`; the letter is the recommended key), **↩️ Undo** (`undo`), **🛠️ How** (`how`), **🎁 What we gain** (`gains`), **⚖️ What we lose** (`losses`) and **🧭 Context and origin** (`context`) last. The block has no border: it sits on a fill that follows the theme (dark `#282828`, light `#EEEDE9`). Section titles are bold.
 4. **The question:** the question text, in bold. Always present.

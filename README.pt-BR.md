@@ -21,7 +21,7 @@ Um cartão de pergunta aparece no painel do Askaway para cada decisão que um ag
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Acesso antecipado (0.4.0-beta.19):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável. As mudanças desta versão estão listadas no [CHANGELOG.md](CHANGELOG.md).
+> ⚠️ **Acesso antecipado (0.4.0-beta.20):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável. As mudanças desta versão estão listadas no [CHANGELOG.md](CHANGELOG.md).
 
 ## 💡 O que é
 
@@ -200,7 +200,7 @@ O cartão desenha estas partes de cima para baixo. Os rótulos são os do painel
 
 O cartão abre com o título, a Urgência (na cor do seu grau), a explicação antes da pergunta (**O que é** e **O problema**, dois parágrafos simples, sem título), o bloco **Detalhes do Askaway:** (o logo e o título, depois **Analogia**, **💡 Por que A**, **↩️ Como desfazer**, **🛠️ Como**, **🎁 O que ganhamos**, **⚖️ O que perdemos** e **🧭 Contexto e origem**), a pergunta, a linha de estado logo abaixo dela, as opções com a troca, a aderência, as linhas **O que acontece**, **Prós** e **Contras**, e a linha de navegação. Os detalhes ficam sempre abertos: não há link nem tecla para abri-los.
 
-1. **Linha do título:** o título em negrito, seguido do rótulo de risco e da idade, por exemplo `⚠️ risco médio · há 12 min`. Uma pergunta registrada sem `title` recebe a pergunta cortada em 60 caracteres como título (a CLI faz isso). O painel corta em 24 caracteres só um título armazenado vazio. O risco quebra para baixo do título quando não cabe na linha.
+1. **Linha do título:** o título como um cabeçalho pequeno, depois ` - Ver sessão - ` (um link que abre a sessão que perguntou, quando ela rodou no Desktop), depois o rótulo de risco e a idade, por exemplo `⚠️ risco médio · há 12 min`; onde a superfície não desenha Markdown, o título é texto em negrito com o risco e a idade ao lado, sem link. Uma pergunta registrada sem `title` recebe a pergunta cortada em 60 caracteres como título (a CLI faz isso). O painel corta em 24 caracteres só um título armazenado vazio. O risco quebra para baixo do título quando não cabe na linha.
 2. **Urgência:** logo abaixo do título, uma linha **⏱️ Urgência** (`urgency`), quando estiver preenchida, com o texto na cor do seu grau: `urgency_level` (`low`, `medium`, `high`), ou as palavras do texto quando o grau não vier.
 3. **Explicação antes da pergunta:** as seções preenchidas, como parágrafos simples sem título: o texto de **O que é** (`what`) e depois o de **O problema** (`problem`). Depois, o bloco **Detalhes do Askaway:** (com o logo): **🔁 Analogia** (`analogy`), **💡 Por que A** (`why`; a letra é a chave recomendada), **↩️ Como desfazer** (`undo`), **🛠️ Como** (`how`), **🎁 O que ganhamos** (`gains`), **⚖️ O que perdemos** (`losses`) e **🧭 Contexto e origem** (`context`) por último. O bloco não tem borda: fica sobre um fundo que segue o tema (escuro `#282828`, claro `#EEEDE9`). Os títulos das seções vão em negrito.
 4. **A pergunta:** o texto da pergunta, em negrito. Sempre presente.

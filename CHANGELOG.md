@@ -2,8 +2,15 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.19, set by the beta.19 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.20, set by the beta.20 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.20] - 2026-10-18
+
+### Added
+
+- `ask` records `desktop_session`, the Claude Desktop sessionId (`local_<uuid>`) of the asking session, next to `family` (`scripts/askaway.py`).
+- The card's title row is one Markdown heading, "### <title> - See session - <risk> · <age>": the title a size up from the body, and "See session" a link to the asking session's Desktop window (`#<desktop_session>`), in the surface's link look; left out when the question has no Desktop session (`renderTitleRow` in `hooks/pane.tsx`, `card.session` in `hooks/i18n.ts`).
 
 ## [0.4.0-beta.19] - 2026-10-18
 
