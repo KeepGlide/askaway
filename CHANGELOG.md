@@ -2,8 +2,29 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.26, set by the beta.26 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.27, set by the beta.27 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.27] - 2026-10-19
+
+Owner's replies to the 30 questions of the third gauntlet round: 12 keep the current behaviour, 13 change code, 5 change only the docs. Two could not be done inside the engine (an accessible name for the Other field, recording the Other text on a window switch) and are recorded as limits; the tree rows stay links without hotkeys, by the owner's choice.
+
+### Changed
+
+- A delivered History line stays until Clear all; the 30 s fade is gone (`historyOf` in `hooks/model.ts`).
+- A row's Submit keeps the card on the question on screen; Submit all still returns to the first (`clearPicks`, `submitOne` in `hooks/register.tsx`).
+- The footer's not-yet-read and expired counts leave out the rows Clear all hid (`footerText`).
+- The lead line adds the date when the question was asked on an earlier day, "On B since 17/10 14:05" (`leadOf`; `hooks/i18n.ts`).
+- On the terminal, family and session labels in the History are plain text (links stay on the Desktop) and the nav labels carry their letters, "← Back (z)", "Next → (x)", "Submit all (N) (w)" (`hooks/pane.tsx`).
+- Dismiss on an ended card reads "Dismiss (removes)" / "Dispensar (remove)".
+- The delivery line quotes `who`, the title and each option label as JSON strings on both surfaces, so a quote or a newline inside them cannot break the line (`_literal` in `scripts/askaway.py`; `deliveryLine` in `hooks/model.ts`).
+- `wait` on a question filed with `run_kind` `subagent` prints the reply line and leaves the delivery marker to the main session's deliver hook, so the main session also gets the line (`cmd_wait`).
+- An id in `cleared.json` whose reply file prune removed is dropped at the next poll, so the file no longer grows without bound (`applyCleared`).
+- SPEC.md: the card never folds (the per-option lines and the details block are always drawn); Clear all is one-way from the pane and touches no q/, a/ or d/ file; a new Security section records that the CLI trusts `CLAUDE_CODE_SESSION_ID` from the environment.
+
+### Removed
+
+- The `deliveredAt` atom and the `recordDeliveries`/`shownAt` plumbing, which only served the 30 s fade.
 
 ## [0.4.0-beta.26] - 2026-10-19
 
