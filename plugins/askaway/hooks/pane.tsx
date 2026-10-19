@@ -254,6 +254,8 @@ function renderBranchSession(ui: Ui, session: TreeSession, isFinal: boolean): Re
 // logo, a blank line, then the same branches.
 function renderHistory(tree: TreeContext, history: readonly HistoryGroup[]): RenderElement {
   const { Box, Text } = tree.ui
+  // Only the Desktop opens a session from a link: the terminal draws the History's labels plain.
+  const linked = tree.view.surface === 'desktop'
   return (
     <Box key="history" flexDirection="column" gap={1}>
       <Box flexDirection="row" gap={1}>
@@ -265,13 +267,13 @@ function renderHistory(tree: TreeContext, history: readonly HistoryGroup[]): Ren
           renderBranch(tree.ui, {
             key: `history-group-${group.key}`,
             label: group.label,
-            href: group.href,
+            href: linked ? group.href : undefined,
             sessions: group.sessions.map(session => ({
               key: `history-session-${session.key}`,
               label: session.label,
               isRoot: session.isRoot,
-              href: session.href,
-              rows: session.entries.map(entry => (place: RowPlace) => renderHistoryEntry(tree.ui, entry, place)),
+              href: linked ? session.href : undefined,
+              rows: session.entries.map(entry => (place: RowPlace) => renderHistoryEntry(tree.ui, entry, place, linked)),
             })),
           }),
         )}
@@ -281,12 +283,12 @@ function renderHistory(tree: TreeContext, history: readonly HistoryGroup[]): Ren
 }
 
 // One answer's row, one line shaped as a picked row of the open tree: the ○ every history row carries, the question's
-// title, " ✓ - " and the answer line. Where the surface draws Markdown and the question's Desktop session is known, the
-// title is a link to that session (`#<desktop_session>`), which the surface opens itself, as the card's See session does.
-function renderHistoryEntry(ui: Ui, entry: HistoryEntry, place: RowPlace): RenderElement {
+// title, " ✓ - " and the answer line. Where `linked` (the Desktop) and the question's Desktop session is known, the title is
+// a link to that session (`#<desktop_session>`), which the surface opens itself, as the card's See session does.
+function renderHistoryEntry(ui: Ui, entry: HistoryEntry, place: RowPlace, linked: boolean): RenderElement {
   const { Box, Text } = ui
   const tail = ` ✓ - ${entry.line}`
-  if (entry.session === undefined || !('Markdown' in ui)) {
+  if (!linked || entry.session === undefined || !('Markdown' in ui)) {
     return (
       <Box key={`history-${entry.id}`} paddingLeft={place.indent}>
         <Text>{`${place.lead}○ ${entry.title}${tail}`}</Text>
@@ -433,6 +435,13 @@ const letterFor = (card: CardContext, key: NavKey): string | undefined => {
   return free[NAV_ORDER.indexOf(key)]
 }
 
+// The terminal draws a Button's label alone, not its hotkey, so its letter goes into the label: "← Back (z)". The desktop
+// draws the hotkey itself and keeps the label as it is.
+const navLabelOf = (card: CardContext, key: NavKey, label: string): string => {
+  const letter = letterFor(card, key)
+  return card.surface === 'terminal' && letter !== undefined ? `${label} (${letter})` : label
+}
+
 // One question on screen: the title row (renderTitleRow), the Urgency box under it (when set), the first
 // block (What it is and The problem, plain paragraphs), then the details block: the "Askaway Details:" title and Analogy,
 // Why to Context. Then the question, the dim lead line under it, the options with their tradeoff, fit, what happens,
@@ -460,13 +469,13 @@ function renderQuestion(
   const details = sectionsOf(lang, question, 'details')
   return (
     <Box key={`card-${question.id}`} flexDirection="column" gap={1} borderStyle="round" borderDimColor={isLeaving} paddingX={1} paddingBottom={1}>
-      {renderTitleRow(ui, lang, question, isLeaving, view.now)}
+      {renderTitleRow(ui, lang, question, isLeaving, view.now, view.surface)}
       {renderUrgency(ui, lang, question, isLeaving)}
       {renderFirstBlock(ui, question, isLeaving)}
       {details.length > 0 && renderDetailsBlock(ui, lang, card, details)}
       <Box flexDirection="column">
         <Text bold dimColor={isLeaving}>{question.question}</Text>
-        {!isEnded && <Text dimColor>{leadOf(lang, question)}</Text>}
+        {!isEnded && <Text dimColor>{leadOf(lang, question, view.now)}</Text>}
       </Box>
       {isEnded ? (
         <Text key={`ended-${question.id}`}>{t(lang, 'card.ended', { key: question.recommended })}</Text>
@@ -518,9 +527,10 @@ function renderDivider(ui: Ui, surface: RenderSurface, key: string): RenderEleme
 
 // The title row. Where the surface draws Markdown: one heading line, "### <title> - See session - <risk> · <age>", the
 // title a size up from the body, and "See session" a link (in the surface's link look, as the tree rows) to the asking
-// session's Desktop window, `#<desktop_session>`; the link and its dashes are left out when the question knows no Desktop
-// session. The surface opens the link itself (no onLinkPress). Else the bold title and the dim risk and age side by side.
-function renderTitleRow(ui: Ui, lang: Lang, question: Question, isLeaving: boolean, now: number): RenderElement {
+// session's Desktop window, `#<desktop_session>`. The link and its dashes are left out when the question knows no Desktop
+// session, and on the terminal, where no session opens. The surface opens the link itself (no onLinkPress). Else the bold
+// title and the dim risk and age side by side.
+function renderTitleRow(ui: Ui, lang: Lang, question: Question, isLeaving: boolean, now: number, surface: RenderSurface): RenderElement {
   const { Box, Text } = ui
   const status = `${riskLabel(lang, question.risk)} · ${ageLabel(lang, question.ts, now)}`
   if (!('Markdown' in ui)) {
@@ -533,7 +543,7 @@ function renderTitleRow(ui: Ui, lang: Lang, question: Question, isLeaving: boole
     )
   }
   const { Markdown } = ui
-  const session = question.desktop_session === undefined ? [] : [`[${t(lang, 'card.session')}](#${question.desktop_session})`]
+  const session = question.desktop_session === undefined || surface === 'terminal' ? [] : [`[${t(lang, 'card.session')}](#${question.desktop_session})`]
   const text = `### ${[escapeMarkdown(questionLabel(question)), ...session, status].join(' - ')}`
   return <Markdown key={`title-${question.id}`} text={text} dimColor={isLeaving} />
 }
@@ -670,7 +680,7 @@ function renderNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, 
   const { Box, Button } = ui
   const { question, isLeaving, held } = card
   const isBackOff = !screen.canBack || isLeaving
-  const label = t(lang, 'nav.back')
+  const label = navLabelOf(card, 'back', t(lang, 'nav.back'))
   const hotkey = letterFor(card, 'back')
   const onPress = () => {
     if (isBackOff) return
@@ -692,7 +702,7 @@ function renderEndedNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardCont
   const { Box, Button } = ui
   const { question, isLeaving, held } = card
   const isBackOff = !screen.canBack || isLeaving
-  const backLabel = t(lang, 'nav.back')
+  const backLabel = navLabelOf(card, 'back', t(lang, 'nav.back'))
   const dismissLabel = t(lang, 'card.dismiss')
   const hotkey = letterFor(card, 'back')
   return (
@@ -711,7 +721,7 @@ function renderEndedNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardCont
 function renderNext(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: Screen): RenderElement {
   const { Button } = ui
   const isOff = !screen.canNext || card.isLeaving
-  const label = t(lang, 'nav.next')
+  const label = navLabelOf(card, 'next', t(lang, 'nav.next'))
   const hotkey = letterFor(card, 'next')
   const onPress = () => {
     if (isOff) return
@@ -725,7 +735,7 @@ function renderNext(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext,
 function renderSubmitAll(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: Screen): RenderElement {
   const { Box, Button } = ui
   const isOff = !screen.canSubmit || card.isLeaving
-  const label = t(lang, 'review.submit', { n: screen.total })
+  const label = navLabelOf(card, 'submit', t(lang, 'review.submit', { n: screen.total }))
   const hotkey = letterFor(card, 'submit')
   // The press goes through even while the button is drawn off: an Other text typed but not recorded yet (no Enter, no
   // blur) is recorded by the submit action first, and submitGroup checks again that every question has a pick.

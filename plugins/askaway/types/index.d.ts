@@ -102,8 +102,6 @@ declare module 'claude-code' {
       seen: { isPrimed: boolean; ids: string[] }
       // Ids of answers whose History line the person cleared (delivered, ended or expired lines; the plugin's store keeps them under "cleared").
       cleared: string[]
-      // The poll time at which the pane first saw each delivery marker (0 when it was there before the session).
-      deliveredAt: Record<string, number>
       // The answered cards still fading out (250 ms after the press): question id → press time. Drawn dim, then gone.
       leaving: Record<string, number>
       // Whether this session is inside a model turn of its own (turn.start to turn.complete; subagent turns excluded).

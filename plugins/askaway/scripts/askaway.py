@@ -1242,11 +1242,26 @@ def _mark_delivered(item_id: str) -> bool:
     return False
 
 
+def _asked_by_subagent(item_id: str) -> bool:
+    """A subagent asked this question: its wait prints the line and leaves the marker to the main session."""
+    return (read_json(item_path("q", item_id)) or {}).get("run_kind") == "subagent"
+
+
 def _answered_line(item_id: str) -> str | None:
     entry, answer = read_json(item_path("q", item_id)), read_json(item_path("a", item_id))
     if entry is None or answer is None:
         return None
     return _answer_line(entry, answer)
+
+
+def _wait_line(item_id: str, status: str) -> str | None:
+    """The delivery line a wait prints. A subagent's wait prints it for an answered or delivered reply and never
+    writes the marker; the main session's wait prints it only when its own call closes the delivery now."""
+    if _asked_by_subagent(item_id):
+        return _answered_line(item_id) if status in WAIT_ANSWERED else None
+    if status == "answered" and _mark_delivered(item_id):
+        return _answered_line(item_id)
+    return None
 
 
 def cmd_wait(item_id: str, timeout: float) -> dict[str, Any]:
@@ -1261,10 +1276,9 @@ def cmd_wait(item_id: str, timeout: float) -> dict[str, Any]:
         time.sleep(min(WAIT_POLL_S, remaining))
         status, key = question_status(item_id)
     reply = _status_reply(item_id, status, key)
-    if status == "answered" and _mark_delivered(item_id):
-        line = _answered_line(item_id)  # the asking session receives the line with its answer
-        if line is not None:
-            reply["line"] = line
+    line = _wait_line(item_id, status)
+    if line is not None:
+        reply["line"] = line
     return reply
 
 
@@ -1861,7 +1875,7 @@ def _receives(entry: Mapping[str, Any], session: str | None, cwd: object) -> boo
 
 def _key_text(entry: Mapping[str, Any], key: object) -> str:
     label = option_label(entry, key)
-    return f"{key} · {label}" if label else str(key)
+    return f"{key} · {_literal(label)}" if label else str(key)
 
 
 def _one_line(text: str) -> str:
@@ -1874,19 +1888,24 @@ def _one_line(text: str) -> str:
 def _answer_wording(answer: Mapping[str, Any]) -> str:
     """Who gave the answer, in the words the model reads: the channel and its name, or the agent itself."""
     who = answer_who(answer) or UNKNOWN_WHO
-    return ANSWER_WORDING.get(str(answer.get("by")), "Answered by {who}").format(who=who)
+    return ANSWER_WORDING.get(str(answer.get("by")), "Answered by {who}").format(who=_literal(who))
+
+
+def _literal(text: str) -> str:
+    """Text as a JSON string literal of data: a quote or a line break in it cannot end or forge the line."""
+    return json.dumps(text, ensure_ascii=False)
 
 
 def _other_wording(text: str) -> str:
     """The user's own words as a JSON string literal, so a quote or backslash in them cannot end the framing early."""
-    return f"their own answer (Other): {json.dumps(text, ensure_ascii=False)}{OTHER_FRAMING}"
+    return f"their own answer (Other): {_literal(text)}{OTHER_FRAMING}"
 
 
 def _delivery_line(entry: Mapping[str, Any], answer: Mapping[str, Any]) -> str:
     key, recommended = answer.get("key"), entry.get("recommended")
     other = other_text(answer)
     chosen = _other_wording(other) if other else _key_text(entry, key)
-    line = f"{_answer_wording(answer)}: {chosen}. Askaway question {entry['id']} ({entry['title']})."
+    line = f"{_answer_wording(answer)}: {chosen}. Askaway question {entry['id']} ({_literal(entry['title'])})."
     if key != recommended:
         line += f" (you were using {_key_text(entry, recommended)})"
     return _one_line(line)  # a title or label with a line break must not forge a second line

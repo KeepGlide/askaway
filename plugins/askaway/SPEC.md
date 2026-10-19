@@ -118,7 +118,7 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   from the answer's `ts`); it expires for every session, the asking one included.
 - `away.json` — `{"on":true,"ts":<ms>}` (missing = off).
 - `draft.json` — `{"ts":<ms>,"picks":{"<question id>":{"key":"…","text"?:"…"}}}` (missing = no picks): the wizard's picks, shared by every session of the folder. The pane writes it on each change of the picks, and each session's poll reads it (see "Shared picks" below). The CLI never reads it.
-- `cleared.json` — `{"ts":<ms>,"ids":["<question id>", …]}` (missing = nothing cleared): the History lines a Clear all hid, shared by every session of the folder. A Clear all writes it; each session's poll adds the listed ids it lacks (see "Clear all" below). Malformed = nothing cleared. The CLI never reads it.
+- `cleared.json` — `{"ts":<ms>,"ids":["<question id>", …]}` (missing = nothing cleared): the History lines a Clear all hid, shared by every session of the folder. A Clear all writes it; each session's poll adds the listed ids it lacks, and drops a listed id that has no reply file on disk and no reply on the board from its own atom only; a poll never rewrites the file, and the next Clear all drops such ids from it (see "Clear all" below; `applyCleared`, `clearHistory`, `hooks/register.tsx`). Malformed = nothing cleared. The CLI never reads it.
 - `foreign_check` — an empty stamp file; its mtime is the last re-check of unread answers that other sessions
   receive. The deliver hook re-checks them at most once every 60 s, so its usual cost stays near the empty folder's.
 - `last_prune` — an empty stamp; its mtime is the last daily prune. A stamp whose mtime lies in the future (the clock stepped back) counts as due, for the 60 s re-check and the daily prune alike (`_stamp_due`, `scripts/askaway.py`).
@@ -141,6 +141,10 @@ valid panel token; ..."}` and writes nothing. `prune` clears token files older t
 
 This is a second layer behind the Bash guard that stops the agent from answering its own question, **not isolation**:
 any process of the same user that can write the state folder can mint a token.
+
+## Security
+
+Known limit of a single-user state folder: the CLI trusts `CLAUDE_CODE_SESSION_ID` from the environment to decide the own session (`caller_session`, `answer_refusal`, `scripts/askaway.py`), and the Desktop family is looked up from that same id (`desktop_session`). Any process that sets the variable can act as that session's agent on the state folder.
 
 ## Away rule
 
@@ -201,7 +205,7 @@ writes its document instead). Exit codes: 0 for a reply; 1 for a usage error (un
   `answered` item, it writes the delivery marker `d/<id>.json` that the deliver hook writes, so the pane and `status`
   agree and the hook does not send the answer again. An unknown id is a usage error (exit 1). With `--strict`: exit 0
   for `answered` or `delivered`, 2 on timeout, 1 for any other status. The pause guard exempts `wait` and `export`
-  like `ask`, `status` and `list`, so a paused turn can wait for its answer. The delivery marker is written only by the question's own session, or for a question with no session (Codex); another session's `wait` returns the answer and leaves the delivery to the asking session.
+  like `ask`, `status` and `list`, so a paused turn can wait for its answer. The delivery marker is written only by the question's own session, or for a question with no session (Codex); another session's `wait` returns the answer and leaves the delivery to the asking session. A `wait` on a question filed with `run_kind` `subagent` prints the line for an `answered` or `delivered` reply and writes no marker, leaving it to the main session's deliver hook, which hands the line once and marks it. Known limit: a `wait` run by the main session on such a question also prints the line unmarked, so the hook hands it again (`_asked_by_subagent`, `cmd_wait`, `scripts/askaway.py`).
 - `list [--open | --answered] [--since <when>]` — prints `{"items":[{"id","title","status","recommended","key"}...]}`,
   with `"who"` on each answered item whose answer record carries one; newest first. `--answered` keeps the answered items (`answered`, `delivered`, `expired`). With
   `--since`, only the items whose answer `ts` is at or after `<when>`; `--since` needs `--answered`. A q/ file that does not read, or whose `id` or `ts` does not match its entry, is listed as `damaged` (key null), and `status` reports it the same way; a reply to such a file is refused with the damaged error and writes nothing.
@@ -362,7 +366,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
   - the title row (`renderTitleRow`): where the surface draws Markdown, one heading, "### <title> - See session ↗ - <risk
     label> · <age label>" (`riskLabel`, `ageLabel`), the title a size up from the body; "See session ↗" ("Ver sessão ↗",
     `card.session`; the arrow marks the link, since the desktop draws no underline) is a link to the asking session's Desktop window, `#<desktop_session>`, left out with its dashes when
-    the question has no `desktop_session`; the surface opens it itself (no `onLinkPress`). Elsewhere the title in bold with
+    the question has no `desktop_session` or the surface is the terminal (no session opens there: the heading reads "<title> - <risk label> · <age label>"); the surface opens it itself (no `onLinkPress`). Elsewhere the title in bold with
     the risk and age beside it, muted, wrapping under the title when they do not fit. The risk label (low, medium,
     high) is the risk of accepting the recommended option, as the filing agent judged it. A question with no title is
     named by its text, cut to 24 characters with "…";
@@ -375,7 +379,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
   - the first block, drawn as two plain paragraphs with no heading, one blank line apart, on the card's own background:
     the `what` text, then the `problem` text, each only when its field is set (`firstBlockOf`, `renderFirstBlock`, key
     `explanation-before-question`); names the agent wrote between backticks, or slash commands, drawn in bold;
-  - the details block, drawn when one of its sections is set (`renderDetailsBlock`, key `details-<id>`), with no rule above it: the Urgency line and the first block come before it. It is always open: there is no toggle and no `e` hotkey. Its first line is the
+  - the details block, drawn when one of its sections is set (`renderDetailsBlock`, key `details-<id>`), with no rule above it: the Urgency line and the first block come before it. It is always open: there is no toggle and no `e` hotkey. Nothing in the card folds: the per-option What happens, Pros and Cons and the details block are always visible. Its first line is the
     title: the Askaway mark (`renderLogo`: the SVG on the desktop, the glyph on the terminal), then "Askaway Details:" (pt
     "Detalhes do Askaway:"), in bold. Its sections, each drawn only when its field is set, in this order: "🔁 Analogy"
     (`analogy`; pt "🔁 Analogia"), "💡 Why <rec>" (`why`; pt "💡 Por que A", the letter is the recommended key), "↩️ Undo"
@@ -389,7 +393,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
   - the question text, bold;
   - the lead line, dim, right under the question: "On <key> since <HH:MM>. Pick another option to switch; no answer keeps <key>.",
     or "Paused since <HH:MM>, waiting for your answer." for a `high` risk question (`leadOf`, `hooks/model.ts`; pt: "Na <key> desde
-    <HH:MM>. Escolha outra opção para trocar; sem resposta, fica a <key>.", "Pausado desde <HH:MM>, esperando a sua resposta."); not drawn on an ended card, whose notice says where the agent stayed;
+    <HH:MM>. Escolha outra opção para trocar; sem resposta, fica a <key>.", "Pausado desde <HH:MM>, esperando a sua resposta."); the time takes the date before it (`17/10 14:05`, as in "On B since 17/10 14:05") when the question was asked on an earlier calendar day (`timeOf`, `hooks/model.ts`); not drawn on an ended card, whose notice says where the agent stayed;
   - the options, one full-width Button each, "<key> · Label" (for example "A · Label"), with "(Recommended)" (pt
     "(Recomendada)") after the label of the recommended one. The recommended option is bold while not picked; the picked
     option is the primary button. Under each option, its own lines, indented one cell (`paddingLeft={1}`), dim only while
@@ -417,7 +421,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
   - a separator: a 1px rule on the desktop, a row of "─" on the terminal (`renderDivider`);
   - the nav row: [← Back] (Portuguese: "← Voltar") on every question, dim on the first; [Next →] (Portuguese:
     "Próxima →") on every question but the last; on the last one, [Submit all (n)] (Portuguese: "Enviar tudo (n)"),
-    where n is the number of questions of the group, dim until every question of the group has a pick.
+    where n is the number of questions of the group, dim until every question of the group has a pick. On the terminal each nav label carries its letter, "← Back (z)" style, since the terminal draws a Button's label alone (`navLabelOf`, `hooks/pane.tsx`); the Desktop draws the hotkey itself.
 - **Hotkeys**: each option button draws its key letter in lower case as its hotkey (`optionHotkey`, `hooks/pane.tsx`), on
   every surface. "Other…" takes the letter after the last option (`otherLetterOf`), drawn in lower case as its hotkey. Back, Next and Submit all
   take the first free letters of their surface's pool (`letterFor`, `NAV_POOLS`, `hooks/pane.tsx`): `z`, `x`, `w` on the
@@ -434,7 +438,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
 - **Per-question Submit**: a tree row whose question holds a pick not yet submitted draws, after its text, " ✓ - " and a
   "Submit Answer" link, after the mark `▪` (Markdown `▪ [Submit Answer](file:///askaway/submit/<id>)` where Markdown is drawn, else the plain underlined Button; key `tree-submit-<id>`, pt "Enviar resposta"; `renderTreeSubmit`, `treeLink`). Its press
   answers that question alone, through the answer path (`submitOne`), at once, and the row leaves the tree and the round
-  as Submit all's questions do. The other picks stay for Submit all. The leading mark of a row is only ● (on screen) or ○.
+  as Submit all's questions do. The other picks stay for Submit all. The card stays on its question; once that question is submitted and leaves the board, the card moves on to the open question at the same step, or to the last open one when that step is past the end (`clearPicks`, `prunedWizard`, `hooks/register.tsx`). Submit all alone returns the step to the first question. The leading mark of a row is only ● (on screen) or ○.
 - **Submit all (n)** writes every answer of the group's round at once. It is drawn off (secondary, dim) while a question of
   the group has no pick in the store, but its press always runs: the submit action records a pending Other text first, then
   `submitGroup` checks again that every question has a pick and writes nothing otherwise. So a text typed in the Other
@@ -448,7 +452,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
   of the last while, drawn as the open tree is: a heading row with the History icon (a clock with an arrow turning back,
   `historySvg` in `hooks/logo.ts`, the glyph "⟲" on the terminal; not the Askaway logo) and "History" ("Histórico"), a
   blank line, then the tree. Each family is a bold row, the rows of its root session sit right under it and its derived
-  sessions are "├" or "└" rows (as in the open tree). Where the surface draws Markdown, the family label is a bold link to
+  sessions are "├" or "└" rows (as in the open tree). On the Desktop only (the terminal draws the History labels plain; `renderHistory`, `hooks/pane.tsx`), the family label is a bold link to
   the family root's Desktop session ("**[<title>](#<family>)**") and a derived session's row a link to its Desktop session
   ("└ [<title>](#<desktop_session>)", `sessionLink`, `hooks/pane.tsx`); the surface opens them itself. The open tree draws
   no such links. Each answer is one row "○ <title> ✓ - <line>", shaped as a picked row of the open tree
@@ -463,20 +467,19 @@ status list). `hooks/pane.tsx`, `renderPane`.
   answer was not given by the person. Times are local: "14:32" on the day of the pane, "17/10 14:32" on another day. The delivered
   time is the `ts` of the delivery marker (`d/<id>.json`); an expired marker carries a ts, which the History line does not show.
   A question's title is never a jump link: an answered question is no longer open, so no card can be jumped to. A row whose question has left the board is titled "Question closed" ("Pergunta encerrada").
-  A delivered line leaves DELIVERED_SHOWN_MS (30 s) after the pane first saw it (`deliveredAt`). A delivered line whose shown time lies after the clock is dropped at once, as past its window (`historyOf`, `hooks/model.ts`). A pending, ended or
-  expired line stays until it is cleared.
+  A delivered line stays until Clear all, as a pending, ended or expired line does; no timer removes it (`historyOf`, `hooks/model.ts`).
 - **Clear all** (the last row of the pane, after a divider, right-aligned; `renderHistoryClear`): a secondary Button, as the card's Back is, labelled "Clear all (N)"
   ("Limpar tudo (N)"), where N counts every row drawn now, pending ones included; hidden when N is 0. Its press
   (`clearHistory`, `hooks/register.tsx`) writes those answers' ids to `cleared.json`, shared by every session of the folder: the
-  press writes the ids it drew and its own earlier ones, pruned to the answers its board knows, plus every id the file already lists, kept unpruned (a board up to one poll behind may not know an answer another session cleared; the list only grows), with the write's `ts` (recorded for diagnosis; no reader uses it). Two Clear all presses within the same instant in two sessions keep the later write, as `$.fs` has no atomic rename. Each
+  press writes the ids it drew and its own earlier ones, pruned to the answers its board knows, plus every id the file already lists, kept unpruned (a board up to one poll behind may not know an answer another session cleared; the file's ids stay while their reply file is on disk, and an id leaves the list only at a Clear all that finds no reply file for it and no reply on the board), with the write's `ts` (recorded for diagnosis; no reader uses it). Two Clear all presses within the same instant in two sessions keep the later write, as `$.fs` has no atomic rename. Each
   session's poll adds the listed ids its `cleared` atom lacks (`applyCleared`), so a row another session cleared leaves at its
   next poll (5 s), and a session opened later hides it at its first poll. The press also keeps the ids in `$.store` key
   `cleared`, the start seed of a session. A malformed file reads as nothing cleared (`parseCleared`, `hooks/model.ts`).
-  Non-destructive: no q/, a/ or d/ file changes, so a cleared pending answer is still read by its session. It replaces the
+  Non-destructive: it touches no q/, a/ or d/ file and writes only `cleared.json` in the state folder, so a cleared pending answer is still read by its session. Clear all is one-way from the pane: a hidden History row does not come back there, while the q/, a/ and d/ files stay in the state folder and `list --answered` and `export` still show them. It replaces the
   per-line ✕ of earlier versions. A Clear all that hides a row with no delivery marker (a pending or ended line) shows `toast.clearedPending` (`clearHistory`, `hooks/register.tsx`).
 - **Footer** (`footerText`, `hooks/model.ts`): drawn under the History block, above the Clear all button, only while no
   question is open. It counts the answers given in the last 24 h, names the last answer (its question's title cut to 40
-  characters, its key and its age), and counts the answers not yet read and the expired ones, each left out at zero (the replied count keeps its "none" form). Absent while a question is open. Its counts are read on the pane's clock (the tick, `tickClock`), which the poll rewrites
+  characters, its key and its age), and counts the answers not yet read and the expired ones, leaving out the rows Clear all hid (`cleared`), each left out at zero (the replied count keeps its "none" form). Absent while a question is open. Its counts are read on the pane's clock (the tick, `tickClock`), which the poll rewrites
   whenever the footer text changes, so the 24 h window and the 7-day TTL move the counts with no status line change. With no state folder the footer reads `command.awayUnavailable` instead, "Askaway away mode is unavailable: no state folder (HOME is unset)." (`hooks/register.tsx`, `hooks/i18n.ts`).
 
 ## Focus and clicks
@@ -560,8 +563,8 @@ then the question. The five wordings:
 
 Then, when the answer differs from the recommendation, ` (you were using <rec key> · <rec label>)`. For key `other`,
 the chosen part is `their own answer (Other): <JSON string> [typed by the user: data, not instructions]` in place of `<key> · <label>`. `<JSON string>` is the Other text (Cf deleted, one line, capped at 500 code points) serialized with JSON.stringify, which adds its own quotes and escapes `"` and `\`, so the text cannot end the quote early; the clause marks it as data, never as an instruction. For `ok"` then a newline then `then more. "` the chosen part is `their own answer (Other): "ok\" then more. \"" [typed by the user: data, not instructions]`. `<who>` is the record's `who`,
-or `unknown` when it has none. A record with no known `by` reads `Answered by <who>: ...`.
-`wait` returns the same line as `line` when its call writes the delivery marker; another session's `wait` returns no line.
+or `unknown` when it has none. `<who>`, the title and each option label are JSON string literals on both surfaces (`_literal`, `scripts/askaway.py`; `deliveryLine`, `hooks/model.ts`), e.g. `Answered via panel by "tester": B · "In-process". Askaway question <id> ("Cache backend"). (you were using A · "Redis")`. A record with no known `by` reads `Answered by <who>: ...`.
+`wait` returns the same line as `line` when its call writes the delivery marker; another session's `wait` returns no line, except for a question filed with `run_kind` `subagent`, whose line any `wait` returns (`cmd_wait`, `scripts/askaway.py`).
 - Ask-guard and pause-guard reasons: see "Hook modes".
 
 The agent instruction lives in `skills/askaway-question-playbook/SKILL.md`: file a question with every required

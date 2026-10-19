@@ -78,8 +78,6 @@ const clockTick = atom({ plugin: 'askaway', key: 'tick' } as const, 0)
 // Question ids already seen. The first poll only primes them, so a session start does not toast what is there.
 const seen = atom({ plugin: 'askaway', key: 'seen' } as const, { isPrimed: false, ids: [] as string[] })
 const cleared = atom({ plugin: 'askaway', key: 'cleared' } as const, [] as string[])
-// When the pane first saw each delivery marker, so a delivered status line leaves after its time on screen.
-const deliveredAt = atom({ plugin: 'askaway', key: 'deliveredAt' } as const, {} as Record<string, number>)
 // The cards fading out after a press: question id → press time. The pane is one instance, so a plain atom holds it.
 const leaving = atom({ plugin: 'askaway', key: 'leaving' } as const, {} as Record<string, number>)
 // Whether this session's main loop is inside a turn: an answer is handed to the prompt only while it is idle.
@@ -159,7 +157,7 @@ async function readCached<T>(
   dir: string,
   cache: Map<string, T>,
   parse: (raw: unknown, id: string) => T | undefined,
-): Promise<T[]> {
+): Promise<{ found: T[]; ids: string[] }> {
   const ids = await jsonIds($, dir)
   const found: T[] = []
   for (const id of ids) {
@@ -172,14 +170,18 @@ async function readCached<T>(
   for (const id of [...cache.keys()]) {
     if (!ids.includes(id)) cache.delete(id)
   }
-  return found
+  return { found, ids }
 }
 
-async function readBoard($: EngineInterface, home: string): Promise<Board> {
+// The board, and the ids of the reply files listed in a/ (an unreadable one included), so a poll lists that folder once.
+async function readBoard($: EngineInterface, home: string): Promise<{ board: Board; answerFileIds: string[] }> {
   const questions = await readCached($, `${home}/q`, questionCache, parseQuestion)
   const answers = await readCached($, `${home}/a`, answerCache, parseAnswer)
   const delivered = await readCached($, `${home}/d`, deliveryCache, parseDelivery)
-  return { questions, answers, delivered }
+  return {
+    board: { questions: questions.found, answers: answers.found, delivered: delivered.found },
+    answerFileIds: answers.ids,
+  }
 }
 
 // The language the environment asks for, before any stored choice.
@@ -218,19 +220,6 @@ async function announceNew($: EngineInterface, next: Board): Promise<void> {
   }
 }
 
-// The time the pane first saw each delivery. Deliveries already there at the first poll read as seen at time 0,
-// long ago, so only the ones that arrive during the session show their status line for a while.
-// Written only when the map changed: an equal write still redraws the pane on every poll. Returns the map as it stands.
-async function recordDeliveries($: EngineInterface, next: Board, now: number): Promise<Record<string, number>> {
-  const primed = (await read($, seen)).isPrimed
-  const known: Partial<Record<string, number>> = await read($, deliveredAt)
-  const shown = Object.fromEntries(
-    next.delivered.map(delivery => [delivery.id, known[delivery.id] ?? (primed ? now : 0)]),
-  )
-  if (JSON.stringify(shown) !== JSON.stringify(known)) await update($, deliveredAt, () => shown)
-  return shown
-}
-
 // Merges the folder into the board. The board is written only when the merge changes it.
 async function mergeBoard($: EngineInterface, next: Board): Promise<void> {
   const prev = await read($, board)
@@ -244,7 +233,7 @@ async function mergeBoard($: EngineInterface, next: Board): Promise<void> {
 // The pane draws from the clock in three ways: the age label of the question on the card (to the minute), the delivery
 // lines (their marks are seconds apart) and the footer counts (the 24 h window and the 7-day TTL). The tick is written
 // only when one of them would read differently at `now`; a tick that changes no drawn text would redraw the pane on every poll.
-async function tickClock($: EngineInterface, now: number, shownAt: Record<string, number>): Promise<void> {
+async function tickClock($: EngineInterface, now: number): Promise<void> {
   const last = await read($, clockTick)
   const lang = await read($, langAtom)
   const current = await read($, board)
@@ -258,8 +247,8 @@ async function tickClock($: EngineInterface, now: number, shownAt: Record<string
   const drawnAt = (at: number): string =>
     JSON.stringify([
       onCard === undefined ? null : ageLabel(lang, onCard.ts, at),
-      historyOf(lang, current, { cleared: hidden, shownAt, now: at, leaving: fading }),
-      footerText(lang, current, at) ?? null,
+      historyOf(lang, current, { cleared: hidden, now: at, leaving: fading }),
+      footerText(lang, current, at, hidden) ?? null,
     ])
   if (drawnAt(last) !== drawnAt(now)) await update($, clockTick, () => now)
 }
@@ -321,17 +310,16 @@ async function dismissEnded($: EngineInterface, home: string, id: string): Promi
 // One poll: read the folder, merge it into the board, redraw only when something changed, then announce new questions.
 // The interval poll of a session also hands its own answers to its prompt (handDue).
 async function pollInbox($: EngineInterface, home: string, ownSession?: string): Promise<void> {
-  const next = await readBoard($, home)
+  const { board: next, answerFileIds } = await readBoard($, home)
   const away = parseAway(await readJson($, `${home}/away.json`))
   const now = await $.clock.now()
   await mergeBoard($, next)
-  await applyCleared($, home)
+  await applyCleared($, home, answerFileIds)
   await applyDraft($, home)
   await retryDraft($, home)
   await refreshEnded($, home, next, now)
   if ((await read($, isAway)) !== away) await update($, isAway, () => away)
-  const shownAt = await recordDeliveries($, next, now)
-  await tickClock($, now, shownAt)
+  await tickClock($, now)
   await announceNew($, next)
   await pruneWizardState($)
   if (ownSession !== undefined) await handDue($, home, ownSession, now)
@@ -519,6 +507,15 @@ async function sharedClearedIds($: EngineInterface, home: string): Promise<strin
   return parseCleared(await readJson($, `${home}/cleared.json`))?.ids ?? []
 }
 
+// The ids cleared.json lists that still have a reply: a reply file on disk or a reply on the board. The others are dead.
+async function liveSharedIds($: EngineInterface, folder: string, known: ReadonlySet<string>, ids: string[]): Promise<string[]> {
+  const live: string[] = []
+  for (const id of ids) {
+    if (known.has(id) || (await $.fs.exists(`${folder}/a/${id}.json`))) live.push(id)
+  }
+  return live
+}
+
 // Clear all: every History row drawn now, pending ones included, goes into cleared.json for every session of the folder
 // (with the ids it already lists) and into the store as this session's start seed. No answer or delivery file is
 // touched, so a cleared pending reply is still read by its session.
@@ -526,18 +523,19 @@ async function clearHistory($: EngineInterface): Promise<void> {
   const lang = await read($, langAtom)
   const drawn = historyOf(lang, await read($, board), {
     cleared: await read($, cleared),
-    shownAt: await read($, deliveredAt),
     now: await read($, clockTick),
     leaving: await read($, leaving),
   })
   const known = new Set((await read($, board)).answers.map(answer => answer.id))
   const folder = await folderOf($)
   const shared = folder === undefined ? [] : await sharedClearedIds($, folder)
-  // This session's own ids are pruned to the answers its board knows; the file's ids are kept as they are, since a board
-  // up to one poll behind may not know an answer another session cleared, and a cleared id must never come back.
+  // This session's own ids are pruned to the answers its board knows. The file's ids stay while their reply file is on disk,
+  // even when a board up to one poll behind does not know the reply yet, since a cleared id must never come back. Only the
+  // dead ones go (no reply file, no reply on the board): this write is the one place that drops them from the file.
   const drawnIds = clearableIdsOf(drawn)
   const own = [...new Set([...(await read($, cleared)), ...drawnIds])].filter(id => known.has(id))
-  const ids = [...new Set([...shared, ...own])]
+  const live = folder === undefined ? [] : await liveSharedIds($, folder, known, shared)
+  const ids = [...new Set([...live, ...own])]
   // cleared.json goes first (H10). A failed write is logged; the clear still holds on this window and in the store.
   if (folder !== undefined) {
     const ts = await $.clock.now()
@@ -551,12 +549,19 @@ async function clearHistory($: EngineInterface): Promise<void> {
 }
 
 // Clear all of another session: the ids cleared.json lists that this session's atom lacks are added, so the History
-// drops those rows at this poll. Written only when it adds something, so a poll that learns nothing redraws nothing.
-async function applyCleared($: EngineInterface, home: string): Promise<void> {
+// drops those rows at this poll. An id with no reply file (the a/ listing of readBoard, an unreadable file included) and
+// no answer on the board, which prune left behind, leaves the atom and the store seed. A poll never writes cleared.json:
+// the next Clear all drops those ids from the file (clearHistory). A poll that learns nothing writes and redraws nothing.
+async function applyCleared($: EngineInterface, home: string, answerFileIds: readonly string[]): Promise<void> {
   const current = await read($, cleared)
-  const missing = (await sharedClearedIds($, home)).filter(id => !current.includes(id))
-  if (missing.length === 0) return
-  await update($, cleared, prev => [...new Set([...prev, ...missing])])
+  const sharedIds = await sharedClearedIds($, home)
+  const answered = new Set((await read($, board)).answers.map(answer => answer.id))
+  const replied = new Set(answerFileIds)
+  const kept = [...new Set([...current, ...sharedIds])].filter(id => answered.has(id) || replied.has(id))
+  if (JSON.stringify(kept) !== JSON.stringify(current)) {
+    await update($, cleared, () => kept)
+    await $.store.set(CLEARED_KEY, kept)
+  }
 }
 
 // Stores the name answers are signed with (a skip stores ''). The CLI caps and cleans it again (ASKAWAY_WHO).
@@ -627,14 +632,12 @@ async function snapshot($: EngineInterface): Promise<Snapshot> {
   return { open, wizard, groups, group: flow.activeGroup(groups, wizard), leaving: fading }
 }
 
-function clearPicks(prev: Wizard, ids: readonly string[], first: string | null): Wizard {
+// Drops the picks of the settled questions. `first` is the question the step goes back to (Submit all); without it the
+// step and the card stay where they are (a row's Submit), and the prune moves the card on once its question leaves.
+function clearPicks(prev: Wizard, ids: readonly string[], first?: string | null): Wizard {
   const drop = new Set(ids)
-  return {
-    ...prev,
-    step: 0,
-    questionId: first,
-    picks: Object.fromEntries(Object.entries(prev.picks).filter(([id]) => !drop.has(id))),
-  }
+  const picks = Object.fromEntries(Object.entries(prev.picks).filter(([id]) => !drop.has(id)))
+  return first === undefined ? { ...prev, picks } : { ...prev, step: 0, questionId: first, picks }
 }
 
 // Writes `changes` to draft.json for every session of the folder: the file's picks (another session may have written since
@@ -756,9 +759,8 @@ async function submitOne($: EngineInterface, id: string): Promise<void> {
     const pick: Pick | undefined = wizard.picks[id]
     if (group === undefined || pick === undefined || fading[id] !== undefined) return
     await answerEntry($, folder, id, pick.key, pick.text)
-    const first = group.questions.find(question => question.id !== id)?.id ?? null
     const ids = await settledIds($, [id])
-    await changeWizard($, prev => clearPicks(prev, ids, first))
+    await changeWizard($, prev => clearPicks(prev, ids))
   } finally {
     submitting.delete(submittingOne(id))
   }
@@ -954,6 +956,7 @@ export const register: Register = on => {
     const current = await read($, board)
     const now = await read($, clockTick)
     const fading = await read($, leaving)
+    const hidden = await read($, cleared)
     const open = openQuestions(current, fading)
     const wizard = prunedWizard(await read($, wizardAtom), open)
     const groups = flow.groupsOf(open)
@@ -964,14 +967,13 @@ export const register: Register = on => {
     const view: PaneView = {
       questions: open,
       history: historyOf(lang, current, {
-        cleared: await read($, cleared),
-        shownAt: await read($, deliveredAt),
+        cleared: hidden,
         now,
         leaving: fading,
       }),
       now,
       leaving: fading,
-      footer: folder === undefined ? t(lang, 'command.awayUnavailable') : footerText(lang, current, now),
+      footer: folder === undefined ? t(lang, 'command.awayUnavailable') : footerText(lang, current, now, hidden),
       away: await read($, isAway),
       ended: await read($, endedAtom),
       askWho: (await read($, whoAtom)) === null,
