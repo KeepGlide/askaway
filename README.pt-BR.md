@@ -21,7 +21,7 @@ Um cartão de pergunta aparece no painel do Askaway para cada decisão que um ag
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Acesso antecipado (0.4.0-beta.25):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável. As mudanças desta versão estão listadas no [CHANGELOG.md](CHANGELOG.md).
+> ⚠️ **Acesso antecipado (0.4.0-beta.26):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável. As mudanças desta versão estão listadas no [CHANGELOG.md](CHANGELOG.md).
 
 ## 💡 O que é
 
@@ -186,13 +186,13 @@ Enquanto há perguntas abertas, uma faixa fica acima do prompt: `2 perguntas agu
 1. Aperte `1` com o prompt vazio, ou clique em **Responder** na faixa, para abrir o painel. O cabeçalho mostra o logo do Askaway, o título **Perguntas aguardando** e o contador, como `2 pendentes · 1 grupo`.
 2. A árvore lista cada família de sessões com perguntas abertas, uma abaixo da outra, com o título da sessão raiz em negrito. As perguntas da própria sessão raiz ficam logo abaixo desse título (o título nunca se repete como linha de sessão); embaixo delas, as sessões derivadas da família (`├` ou `└`) guardam as suas perguntas. Uma marca mostra em que ponto está cada pergunta: `●` a que está na tela, `○` aguardando. Uma pergunta com opção escolhida mostra depois do texto `✓ - ▪ Enviar resposta`: esse **Enviar resposta** manda só a resposta dela, na hora; as demais escolhas esperam o **Enviar tudo**. Nada é enviado antes de um dos dois. Os nomes de família e de sessão são texto, não botões; cada linha de pergunta é um link, desenhado pontilhado e sublinhado no Desktop, e apertar uma leva ao cartão dela.
 3. Clique numa opção para registrá-la. O painel avança para a próxima pergunta sem resposta, voltando ao início se preciso, ou para a última pergunta quando todas já têm resposta. Nada é enviado ainda.
-4. Para responder com as suas palavras, o campo embaixo de **Outra…** fica sempre aberto: clique nele e digite. Aperte Enter (o botão do campo diz **Guardar**) para registrar o texto como sua resposta; o cartão fica onde está, então aperte **Próxima** ou **Enviar tudo** quando quiser. Um campo em branco tira a resposta. O link **Outra…** só leva o foco ao campo.
+4. Para responder com as suas palavras, o campo embaixo de **Outra…** fica sempre aberto: clique nele e digite. Aperte Enter (o botão do campo diz **Guardar**) para registrar o texto como sua resposta; o cartão fica onde está, então aperte **Próxima** ou **Enviar tudo** quando quiser. O texto também é registrado quando o campo perde o foco e em **Enviar tudo**. Um campo em branco tira a resposta. O link **Outra…** só leva o foco ao campo.
 5. **← Voltar** vai para a pergunta anterior. **Próxima →** vai para a seguinte, com ou sem resposta. Ele aparece em todas as perguntas, menos na última.
 6. Na última pergunta do grupo, o botão de avançar é **Enviar tudo (N)**, em que N é o número de perguntas do grupo na tela. Ele só fica disponível quando todas as perguntas têm resposta. Ao apertá-lo, todas as respostas do grupo vão para as sessões que perguntaram. Nada é enviado antes desse botão.
 
 Embaixo do cartão, o bloco **Histórico** é desenhado como a árvore acima: um ícone de histórico (um relógio voltando) e **Histórico** como cabeçalho, depois as respostas do último tempo, agrupadas por família e sessão, cada uma como uma única linha `○`: o título da pergunta, ` ✓ - ` e a resposta com o ponto em que está (`Resposta A · enviada 14:32`, depois `entregue 14:33 (lida pela sessão)` quando a sessão a leu, `a sessão encerrou antes de ler`, ou `expirou sem ser lida`: nenhuma sessão a leu em 7 dias; nada é acrescentado enquanto ela espera). Quando a pergunta veio de uma sessão do Desktop, o rótulo da família, a linha da sessão e o título da pergunta são links que abrem essas sessões. Uma linha lida sai 30 segundos depois que o painel a mostra; as outras ficam. **Limpar tudo (N)** no fim do painel remove todas as linhas mostradas, inclusive as que aguardam (o arquivo da resposta fica, então a sessão ainda a lê).
 
-Quando nenhuma pergunta está aberta, o painel mostra uma linha de rodapé sob o Histórico, com as contagens: `Nada aguardando · 1 respondida nas últimas 24 h · última: <título> → A, <idade> · 1 ainda não lida · 1 expirada`. Ela some enquanto uma pergunta está aberta.
+Quando nenhuma pergunta está aberta, o painel mostra uma linha de rodapé sob o Histórico, com as contagens: `1 respondida nas últimas 24 h · última: <título> → A, <idade> · 1 ainda não lida · 1 expirada`. A primeira parte vira `nenhuma respondida nas últimas 24 h` quando nenhuma resposta cai nas últimas 24 h; as partes de não lidas e expiradas aparecem só quando não são zero. Ela some enquanto uma pergunta está aberta.
 
 ### Anatomia de um cartão
 
@@ -204,7 +204,7 @@ O cartão abre com o título, a Urgência (na cor do seu grau), a explicação a
 2. **Urgência:** logo abaixo do título, uma linha **⏱️ Urgência** (`urgency`), quando estiver preenchida, com o texto na cor do seu grau: `urgency_level` (`low`, `medium`, `high`), ou as palavras do texto quando o grau não vier.
 3. **Explicação antes da pergunta:** as seções preenchidas, como parágrafos simples sem título: o texto de **O que é** (`what`) e depois o de **O problema** (`problem`). Depois, o bloco **Detalhes do Askaway:** (com o logo): **🔁 Analogia** (`analogy`), **💡 Por que A** (`why`; a letra é a chave recomendada), **↩️ Como desfazer** (`undo`), **🛠️ Como** (`how`), **🎁 O que ganhamos** (`gains`), **⚖️ O que perdemos** (`losses`) e **🧭 Contexto e origem** (`context`) por último. O bloco não tem borda: fica sobre um fundo que segue o tema (escuro `#282828`, claro `#EEEDE9`). Os títulos das seções vão em negrito.
 4. **A pergunta:** o texto da pergunta, em negrito. Sempre presente.
-5. **Linha de estado:** em negrito, logo abaixo da pergunta: o que o agente faz agora e o que acontece se ninguém responder: `Na A desde 14:05. Escolha outra opção para trocar; sem resposta, fica a A.`, ou `Pausado desde 14:05, esperando a sua resposta.` para uma pergunta de risco `high`.
+5. **Linha de estado:** discreta, logo abaixo da pergunta: o que o agente faz agora e o que acontece se ninguém responder: `Na opção A desde 14:05. Escolha outra opção para trocar; sem resposta, fica a opção A.`, ou `Pausado desde 14:05, esperando a sua resposta.` para uma pergunta de risco `high`.
 6. **As opções:** cada uma é um botão de largura total, `A · Rótulo`, com `(Recomendada)` depois do rótulo da recomendada. Embaixo, uma linha `└ troca · aderência 88` (a aderência é a estimativa do agente), depois **O que acontece** (`does`), **Prós** (`pros`) e **Contras** (`cons`), que aparecem logo. A opção escolhida é o botão preenchido; a recomendada fica em negrito até ser escolhida. A última é **Outra…**, com a letra depois da última opção (`C · Outra…` com duas opções).
 7. **A linha de navegação:** um separador, depois **← Voltar** (apagado na primeira pergunta), **Próxima →** (em todas, menos na última), ou na última **Enviar tudo (N)** (veja o passo 6 acima).
 
@@ -226,7 +226,7 @@ O rótulo de risco é o risco de aceitar a opção recomendada, como o agente av
 - Não há tecla `e`: o cartão mostra os detalhes sempre. Uma letra que uma das opções do cartão usa é pulada, e as teclas passam para as próximas letras livres da mesma lista.
 - Para ditado, diga uma tecla de navegação pela sua letra: `p` (Voltar), `f` (Próxima) ou `w` (Enviar tudo) no desktop.
 - O botão **Responder** da faixa mantém a tecla `1`.
-- Nenhuma tecla de atalho funciona enquanto o campo **Outra…** tem texto digitado, então o texto digitado não aperta botão.
+- Nenhuma tecla de atalho dispara enquanto o campo **Outra…** tem o foco; as teclas vão para o campo.
 
 No desktop, a marca KeepGlide fica ao lado do contador e ao lado de **Enviar tudo (N)**.
 
@@ -339,6 +339,8 @@ python3 "<askaway>/scripts/askaway.py" wait <id> --strict
 ├── a/<id>.json   a resposta, vale a primeira gravação
 ├── d/<id>.json   a marca de entrega
 ├── away.json     modo ausente: {"on": true, "ts": ...}
+├── draft.json    as escolhas do assistente, compartilhadas por todas as sessões da pasta
+├── cleared.json  as linhas do Histórico que um Limpar tudo ocultou, compartilhadas por todas as sessões da pasta
 ├── foreign_check quando as respostas não lidas de outras sessões foram conferidas por último (a data de modificação), no máximo uma vez por minuto
 └── last_prune    quando a última limpeza rodou (a data de modificação)
 ```
@@ -359,7 +361,7 @@ A pasta de estado pertence a um usuário, e todas as sessões do Claude Code que
   - `PreToolUse` em `Edit|Write|NotebookEdit|Bash|Agent|mcp__.*` roda `hook pause-guard`: lê `q/`, `a/` e `d/` e não grava nada.
 - **Títulos de sessão:** ao registrar uma pergunta, `ask` lê o transcrito da sessão que perguntou, `~/.claude/projects/<pasta do projeto>/<sessão>.jsonl`, e guarda só as suas entradas de título (`custom-title`, `agent-name`, `ai-title`). Não lê prompts nem respostas. O título dá nome à sessão no cartão.
 - **Marcadores de liberação do Claude Desktop:** `deliver` procura `<sessão>.desktop-released.json` na mesma pasta do projeto, para fechar as respostas de uma sessão que o Claude Desktop liberou.
-- **Painel (mod):** lê `q/`, `a/` e `d/`; grava respostas só pela CLI (`answer --by panel`), o interruptor do modo ausente e as próprias chaves de armazenamento (a escolha de idioma).
+- **Painel (mod):** lê `q/`, `a/` e `d/`; grava respostas só pela CLI (`answer --by panel`), o interruptor do modo ausente, `draft.json` e `cleared.json` na pasta de estado, e as próprias chaves de armazenamento (a escolha de idioma).
 - **Limpeza:** no máximo uma vez por dia, `deliver` remove itens fechados (entregues ou expirados) resolvidos há mais de `ASKAWAY_PRUNE_DAYS` dias (padrão 30) e arquivos temporários antigos.
 - **A CLI e os ganchos gravam só dentro da pasta de estado.** Cada arquivo é gravado primeiro num arquivo temporário e depois renomeado. Nada é enviado pela rede, e nada é gravado nos seus projetos ou transcritos.
 

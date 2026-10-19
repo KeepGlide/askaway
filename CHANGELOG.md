@@ -2,8 +2,29 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.25, set by the beta.25 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.26, set by the beta.26 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.26] - 2026-10-19
+
+Third gauntlet round (40 personas over betas 14 to 25): 150 findings, 64 adopted as bugs or real value, 17 skipped, 2 decision changes refused, 30 owner questions recorded.
+
+### Fixed
+
+- Shared picks: a `draft.json` that exists but does not read is left alone instead of overwritten; a pick whose write failed is kept and retried at the next poll, with one toast (`toast.pickNotSaved`); a draft stamped more than a minute ahead of the clock is ignored; each write stamps `ts` at least one past the last draft seen, so a stepped-back clock still wins; Submit applies the latest draft first; the ids a Submit settled are not re-applied from a stale draft (`saveDraft`, `applyDraft`, `changeWizard` in `hooks/register.tsx`; `keepOpen` exported from `hooks/wizard.ts`).
+- Clear all writes `cleared.json` before the store and the atom, so a failed write keeps the other sessions in step; a Clear all that hides pending lines says so (`toast.clearedPending`).
+- A reply the CLI refused or failed no longer fades silently: the pane toasts `toast.replyFailed` or `toast.replyHeld` (with the key holding the slot) and Submit all goes on to the next question.
+- `list --open` runs only when the bound session ids change or every 30 s, and a click forces it; the ids settled by a Submit are dropped from the tree at once.
+- Clock steps back: a reply stamped after now is handed at once (`promptsDue`), a delivered History line whose shown time lies ahead is dropped (`historyOf`), and the CLI's re-check and prune stamps count a future mtime as due (`_stamp_due`).
+- Dismiss passes `--strict` to `prune --id`, so a refusal exits 1; `prune --id` removes an open question with no session; `prune` removes a reply file that does not read, with its question and delivery files.
+- A question file nested past the recursion limit, or whose id or ts does not match its entry, reads as `damaged` in `list` and `status`; a reply on such a file says it is damaged; a held question with no title is named by its id and still pauses; a duplicate of a paused question returns `action "pause"`.
+- Other text: control characters become spaces, the ellipsis counts inside the 500 code-point cap, and Unicode format characters are removed from titles, option labels, Desktop titles and the one-line text (`model.ts` `singleLine`; `askaway.py` `_read_text`, `_one_line`).
+- `-h`/`--help` prints one JSON line with the command names; an entry that is not valid JSON or an empty stdin says how to fix it; a `fit` that is not an integer 0 to 100 is refused with that reason; a blank `urgency_level` counts as absent; a Desktop id without the `local_` prefix is stored as null; a fork whose parent record is missing is its own family; a second shell reply returns the stored key with `by` and `who`.
+- Pane: the counter, the tree marks, the footer (no "Nothing waiting" line; empty parts hidden), the age word ("just now" / "há instantes"), the delivered note, the history quote cap and the away hint were corrected (`hooks/pane.tsx`, `hooks/model.ts`, `hooks/i18n.ts`, `hooks/logo-element.tsx`); with no state folder the footer shows that away mode is unavailable.
+
+### Changed
+
+- SPEC.md, the READMEs and the question playbook skill follow the code again: shared files in the data-folder tree, dim lead line, hotkeys off while the Other field has focus, the Other text recorded on Enter, focus loss and Submit all, `wait --timeout`, `--strict`, absolute CLI path outside Claude Code, the subagent `run_kind`, the paused-duplicate reply and the `placeholder` warning.
 
 ## [0.4.0-beta.25] - 2026-10-19
 
