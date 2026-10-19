@@ -46,7 +46,7 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
    "risk":"low|medium|high","pause":false,"source":"cli"}
   ```
   `fit` is an int 0-100 (older questions may hold null; the panel then draws no fit for that option).
-  `urgency_level` is optional: `low`, `medium` or `high` (any case, stored lower-case), the grade the pane colours Urgency by; without it the pane grades the urgency text by keywords. Any other value is refiled, naming `urgency_level`.
+  `urgency_level` is optional: `low`, `medium` or `high` (any case, stored lower-case), the grade the pane colours Urgency by; without it the pane grades the urgency text by keywords. Any other value is refiled, naming `urgency_level`. A blank `urgency_level` counts as absent, like null.
   `session_title` is filled by `ask`, not by the caller: it is the window title of the asking
   session, read from its transcript `~/.claude/projects/<dir>/<session>.jsonl`. The folder is
   derived from `project`: every char outside `[A-Za-z0-9]` becomes `-`; all folders are globbed
@@ -68,9 +68,10 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   to 80 chars. The walk starts at the session's record and follows `forkedFromSessionId` first,
   then `spawnedFrom.sessionId`, loading each ancestor by its file name (`<sessionId>.json`) until a
   record has neither link. At most 8 links are followed. A cycle, a longer chain, or a root with no
-  title (its own `title`, else the `spawnedFrom.title` its child records) gives both fields null.
+  title (its own `title`, else the `spawnedFrom.title` its child records) makes the session its own family, with its own `sessionId` and title; both fields are null only when that session has no title.
   A root whose file is missing is taken as the last `sessionId` reached, titled from its child's
-  `spawnedFrom`.
+  `spawnedFrom`; a fork whose parent file is missing and has no such title is its own family too.
+  The `local_` prefix is required: a Desktop session id or family root without it is stored as null (`desktop_session`, `family`).
   `what` (the first paragraph of the card: what the thing is, what the spec says, what the code does today, the discrepancy),
   `problem` (the second paragraph of the card: the concrete consequence if nothing is decided, with an example), `context`,
   `why`, `how` (how the option works), `gains`, `losses`, `analogy`, `urgency` and `undo` are required
@@ -120,6 +121,7 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
 - `cleared.json` — `{"ts":<ms>,"ids":["<question id>", …]}` (missing = nothing cleared): the History lines a Clear all hid, shared by every session of the folder. A Clear all writes it; each session's poll adds the listed ids it lacks (see "Clear all" below). Malformed = nothing cleared. The CLI never reads it.
 - `foreign_check` — an empty stamp file; its mtime is the last re-check of unread answers that other sessions
   receive. The deliver hook re-checks them at most once every 60 s, so its usual cost stays near the empty folder's.
+- `last_prune` — an empty stamp; its mtime is the last daily prune. A stamp whose mtime lies in the future (the clock stepped back) counts as due, for the 60 s re-check and the daily prune alike (`_stamp_due`, `scripts/askaway.py`).
 
 
 Status (derived, never stored): `open` (no a/), `answered` (a/ but no d/, and the answer is not yet
@@ -148,9 +150,9 @@ The user counts as away when ANY of: hook input `permission_mode == "bypassPermi
 ## CLI
 
 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" <cmd>`. Output is one JSON line on stdout (`export`
-writes its document instead). Exit codes: 0 for a reply; 1 for a usage error (unknown command, unknown id or option key, bad option value), always, with a one-line `{"error": ...}` and nothing on stderr; `--strict` (below) adds exit 1 for a refile or an error, and exit 2 for a `wait` timeout.
+writes its document instead). Exit codes: 0 for a reply; 1 for a usage error (unknown command, unknown id or option key, bad option value), always, with a one-line `{"error": ...}` and nothing on stderr; `--strict` (below) adds exit 1 for a refile or an error, and exit 2 for a `wait` timeout. `askaway.py -h` or `--help` prints one JSON line `{"commands": [...]}` and exits 0 (top level only).
 
-- `ask` — reads the entry JSON (the fields above minus v/id/ts/source) from stdin or `--json '<...>'`.
+- `ask` — reads the entry JSON (the fields above minus v/id/ts/source) from stdin or `--json '<...>'`. An entry that is not valid JSON is refiled with an `error` that names the quoting problem (check the quotes and escapes), and an empty entry is refiled with `no entry: pass --json or pipe it on stdin`.
   `title` defaults to the question clipped to 60 chars. Fills `session` from env
   `CLAUDE_CODE_SESSION_ID`, `project` from the working directory, and `run_kind` defaults to `main`
   (`codex` when env `CODEX_*` vars exist and there is no session id). Validates: at least 2
@@ -170,14 +172,14 @@ writes its document instead). Exit codes: 0 for a reply; 1 for a usage error (un
   An incomplete or invalid entry files nothing and prints
   `{"action":"refile","recommended":<given or null>,"error":"...","missing":[...],"by_option":{"B":["does","pros"]},"keys_received":["B","A"]}`:
   `missing` lists the refused top-level fields, `by_option` the refused fields of each option, `keys_received`
-  the option keys as given (`[]` when they were not a list). The caller completes the named fields and files again.
+  the option keys as given (`[]` when they were not a list). The caller completes the named fields and files again. A `fit` that is not null and not an integer 0 to 100 is refused in `error` as `option <key>: fit: must be an integer 0 to 100`.
   A new ask whose session and question text (case and spacing ignored) match an open question of that session
   prints `{"id":<existing>,"recommended":<its>,"action":"open","duplicate":true}` and files nothing. A question
-  with no session is never a duplicate.
+  with no session is never a duplicate. A duplicate of a paused question (`pause` true) prints `"action":"pause"` instead of `"open"`.
   Prints `{"id","recommended","action":"continue|pause"}`. An internal error prints
   `{"action":"continue","recommended":<given or null>,"error":"internal error"}`, or
   `{"action":"pause",...}` when the entry asked for `risk` `high` (nothing was filed in either case).
-- `answer <id> <key> [--by cli] [--text <string>]` — writes a/ if absent (the panel calls it with `--by panel`, `--strict`, and `--text` for key `other`); prints `{"id","key","written":bool}`. `--text` is the free text of key `other` (trimmed; its format characters (Cf) are deleted, its control characters and line breaks become spaces, runs of spaces collapse to one, and it is capped at 500 code points, on write and on read; required for `other`, dropped for a lettered key). Keys are case-insensitive (`b`, `other`, `OTHER`); the reply and the record carry the canonical key (`B`, `other`).
+- `answer <id> <key> [--by cli] [--text <string>]` — writes a/ if absent (the panel calls it with `--by panel`, `--strict`, and `--text` for key `other`); prints `{"id","key","written":bool}`. `--text` is the free text of key `other` (trimmed; its format characters (Cf) are deleted, its control characters and line breaks become spaces, runs of spaces collapse to one, and it is capped at 500 code points, on write and on read; required for `other`, dropped for a lettered key). Keys are case-insensitive (`b`, `other`, `OTHER`); the reply and the record carry the canonical key (`B`, `other`). When the text is clipped, the `…` counts inside the 500 code points. A second reply to a question already replied to, from any session, prints its stored key with `"written":false` plus the stored `by` and `who` (each when set).
   Session rule: a `cli` answer to a question with a session is refused unless the caller's
   `CLAUDE_CODE_SESSION_ID` equals that session (a shell with no session is refused too); the refusal
   prints `{"error":"answer refused: ..."}`, exit 0, and writes nothing, so the slot stays free. Panel
@@ -188,7 +190,7 @@ writes its document instead). Exit codes: 0 for a reply; 1 for a usage error (un
   carries them (`by` is the channel that answered: `panel`, `cli`, `agent`, `accept_all` or `accept_recommended`). `status` is `open`, `answered`, `delivered` or `expired`; `damaged` when the question file does not
   read (key null); `damaged answer` when the answer file does not read (answered, key unknown). An unknown id is a
   usage error (exit 1).
-- `--strict` (opt-in, on `ask`, `answer`, `status` and `wait`) — a refile or an error exits 1 instead of 0; `wait`
+- `--strict` (opt-in, on `ask`, `answer`, `status`, `wait` and `prune`) — a refile or an error exits 1 instead of 0 (a refused `prune --id` too); `wait`
   also exits 2 on a timeout and 1 on any status other than `answered` or `delivered`. The JSON line is printed as
   usual. Without the flag the exit code stays 0 (usage errors exit 1 either way). A repeated `answer` that loses the
   first-writer race (`written:false`) is not an error.
@@ -202,7 +204,7 @@ writes its document instead). Exit codes: 0 for a reply; 1 for a usage error (un
   like `ask`, `status` and `list`, so a paused turn can wait for its answer. The delivery marker is written only by the question's own session, or for a question with no session (Codex); another session's `wait` returns the answer and leaves the delivery to the asking session.
 - `list [--open | --answered] [--since <when>]` — prints `{"items":[{"id","title","status","recommended","key"}...]}`,
   with `"who"` on each answered item whose answer record carries one; newest first. `--answered` keeps the answered items (`answered`, `delivered`, `expired`). With
-  `--since`, only the items whose answer `ts` is at or after `<when>`; `--since` needs `--answered`.
+  `--since`, only the items whose answer `ts` is at or after `<when>`; `--since` needs `--answered`. A q/ file that does not read, or whose `id` or `ts` does not match its entry, is listed as `damaged` (key null), and `status` reports it the same way; a reply to such a file is refused with the damaged error and writes nothing.
   `<when>` is a duration counted back from now (`30m`, `2h`, `7d`) or an ISO 8601 timestamp; a
   timestamp without a zone is read as UTC. Any other value is an error.
 - `export [--since <when>] [--format json|jsonl|csv]` — writes every question, newest first, with its answer record
@@ -215,12 +217,12 @@ writes its document instead). Exit codes: 0 for a reply; 1 for a usage error (un
   JSON result line; exit 0.
 - `away on|off|status` — writes or reads away.json; prints `{"away":bool}`.
 - `prune --id <id>` — removes one open question whose asking session has ended (the card's Dismiss) with its files;
-  prints `{"removed":1}`, or `{"error":...}` for a question that is answered or whose session is alive. `list` rows of an
+  prints `{"removed":1}`, or `{"error":...}` for a question that is answered or whose session is alive. A question with a null or empty `session` is removed without that check; any other session that has not ended is still refused. `list` rows of an
   open question whose session has ended carry `"ended": true`; the pane polls `list --open` for them and draws the
-  ended-session card (a notice instead of the options, Next on, Dismiss; no answer can be sent).
+  ended-session card (a notice instead of the options, Next on, Dismiss; no answer can be sent). The pane runs `list --open` only when the set of open questions that name a session changes, or at most every 30 s (`ENDED_RECHECK_MS`); a reply press (Submit all or a row's Submit) forces the check (`refreshEnded`, `hooks/register.tsx`).
 - `prune [--days N]` — deletes q/a/d files of closed items (`delivered` or `expired`) whose closing
   time is older than N days: the delivery marker's `ts` for `delivered`, the answer's `ts` for
-  `expired`; never the question's `ts`. Prints `{"removed":n}`. A damaged q/ file (no JSON object) is removed with its a/ and d/ files whatever `--days` is; the daily prune (the deliver hook's slow path) never removes one, so the user clears it.
+  `expired`; never the question's `ts`. Prints `{"removed":n}`. A damaged q/ file (no JSON object, or an id or ts that does not match it) is removed with its a/ and d/ files whatever `--days` is; the daily prune (the deliver hook's slow path) never removes one, so the user clears it. A damaged a/ file (one that does not read as a JSON object) with no d/ marker is removed the same way, with its q/ file, whatever `--days` is; one whose d/ marker exists (delivered) is kept for the retention window; the daily prune never removes one either.
   N defaults to env `ASKAWAY_PRUNE_DAYS` when it is a whole number of days (1 to 6 digits, `0`
   allowed, surrounding spaces ignored), else 30; `--days` overrides both. Any other value (empty,
   negative, decimal, a word, more than 6 digits) falls back to 30. The window never reaches an open,
@@ -282,7 +284,7 @@ It fails open: any error exits 0 with no output. The command hooks are declared 
 
 - `/askaway` — opens the panel. When the panel is not placed, it answers with a text list of the open questions.
 - `/askaway lang pt-BR|en|auto` — sets the language; the default is `auto`, the environment's locale (see "Language").
-- Damaged files: a damaged `q/` file (no JSON object) holds the pause of its session while it is open; the pause reason names it and `askaway.py prune`. A damaged `a/` file keeps the pause (status `damaged answer`) until an `answer`, with any `--by`, overwrites it; `create_once` replaces only a file that does not read as a JSON object.
+- Damaged files: a damaged `q/` file (no JSON object, or an id or ts that does not match it) holds the pause of its session while it is open; the pause reason names it and `askaway.py prune`. A damaged `a/` file keeps the pause (status `damaged answer`) until an `answer`, with any `--by`, overwrites it; `create_once` replaces only a file that does not read as a JSON object.
 - **Bash and file guard** (`bash_tamper_reason`, `_tamper_denial`): runs in every session, away or not, on Bash, Edit, Write and NotebookEdit. It denies (1) an answer typed in a shell: a command word that runs the askaway script or module (`python`, `python3.x`, `-m askaway`, a bare `askaway.py`, or a glob or a variable standing for it) followed by `answer`, or by a word that could expand to it, unless that command sets `ASKAWAY_HOME` to a literal path under /tmp or to `$(mktemp ...)` (inline, or exported by an earlier segment; a bare assignment does not reach the child process); (2) code that writes the state folder, or answers, in `python -c`, `-e` and a heredoc, and in `sh -c` and `eval` text; (3) a write into the state folder: a redirection target, an operand of `cp`, `mv`, `tee`, `touch`, `ln`, `install`, `truncate`, `rsync`, `rm`, `unlink`, `shred`, `rmdir`, `sed -i` or `dd of=`, after `~`, `$HOME`, `${HOME}`, `$ASKAWAY_HOME` and `cd` are applied; deleting also refuses a path above the folder. Reading (`cat`, `jq`, `less`, `python3 -m json.tool`) stays allowed, and a Write, Edit or NotebookEdit into the folder is denied. The protected folders are the default `~/.claude/state/askaway` and `ASKAWAY_HOME` when it lies outside /tmp; paths are resolved (symlinks followed) before the check. **The guard is a deterrent against the agent's own shell, not a guarantee.** It does not model `xargs`, `find -exec`, a command word held in a variable, a script file's own code, or the code of interpreters beyond their `-c`/`-e` string; the user's own shell is not guarded.
 - `/askaway quiet [on|off]` — stores the flag (store key `quiet`, default off) and reports it. While on, a new question
   raises no toast and a pressed card is not dimmed before it leaves (no `leaving` entry, so no fade).
@@ -309,7 +311,7 @@ Brazilian Portuguese, with identical key sets). The model-facing lines are alway
   button (Portuguese: "Responder"). The button has hotkey `1` (a bare digit works from an empty composer)
   and opens the panel.
 - When a new open question arrives, the mod shows one toast: `New question: <title>` (Portuguese: `Nova pergunta: <title>`).
-  A question already waiting when the session starts does not toast; the first poll only primes the seen ids.
+  A question already waiting when the session starts does not toast; the first poll only primes the seen ids. The mod shows four more toasts, English texts from `hooks/i18n.ts`: `toast.replyFailed` ("Could not send your reply; the question is still open.") when the CLI cannot write a reply, `toast.replyHeld` ("Another window already replied {key}; that reply stays.") when a reply is refused, `toast.pickNotSaved` ("Could not save your pick; retrying.") when draft.json cannot be written, and `toast.clearedPending` ("Cleared {n}; waiting replies still reach their sessions") when a Clear all hides a row with no delivery marker.
 
 ## Panel
 
@@ -323,7 +325,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
 - **Header**: the Askaway logo, then "Questions waiting" ("Perguntas aguardando"; `pane.heading`, `hooks/i18n.ts`), with the counter on the right. The logo is the violet
   SVG on the desktop (`hooks/logo.ts`, `#8B5CF6`) and the bold "?" glyph on the terminal
   (`hooks/logo-element.tsx`, `LOGO_GLYPH`). The counter reads "<n> pending · <n> groups" ("<n> pendentes · <n> grupos"), or
-  "Nothing pending" ("Nenhuma pendente") when no question is open (`counterText`, `hooks/model.ts`).
+  "Nothing pending" ("Nenhuma pendente") when no question is open (`counterText`, `hooks/model.ts`); while away mode is on, ", away mode on" (", modo ausente ligado", `list.awayOn`) follows it. The pane draws that suffix from its `away` flag, which the register sets from away.json (`hooks/pane.tsx`, `hooks/register.tsx`).
 - **Tree of the open questions** (drawn when at least one question is open). The questions are grouped by GROUP =
   their `family` when they have one, else their `project` (`groupKeyOf`, `hooks/model.ts`), in the order of each group's
   oldest question. Every open group is drawn in turn, one under the other, in a Box keyed `group-<group key>`. No group
@@ -341,7 +343,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
     The rows of the root session (its `desktop_session` equal to the group key) come first, one step under the label, with no
     lead and no session row (`renderRootRows`, `hooks/pane.tsx`). Its derived sessions are rows below them: "├ <session>", and
     "└ <session>" for the last one, indented with the Box's `paddingLeft`. Each question of a session is a row
-    with a mark and its title: ● the question on screen (bold), ✓ picked, ○ not yet picked.
+    with a mark and its title: ● the question on screen (bold), ○ the others; a picked row ends with " ✓ - " and its Submit link.
     The questions of a session that is not the last are indented with `paddingLeft={1}` and prefixed "│  "; those
     of the last session are indented with `paddingLeft={4}` (`renderBranchSession`, `renderTreeQuestion`, `hooks/pane.tsx`).
   - The card shows the questions of one group at a time (the group on screen); the other groups stay in the tree only,
@@ -387,7 +389,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
   - the question text, bold;
   - the lead line, dim, right under the question: "On <key> since <HH:MM>. Pick another option to switch; no answer keeps <key>.",
     or "Paused since <HH:MM>, waiting for your answer." for a `high` risk question (`leadOf`, `hooks/model.ts`; pt: "Na <key> desde
-    <HH:MM>. Escolha outra opção para trocar; sem resposta, fica a <key>.", "Pausado desde <HH:MM>, esperando a sua resposta.");
+    <HH:MM>. Escolha outra opção para trocar; sem resposta, fica a <key>.", "Pausado desde <HH:MM>, esperando a sua resposta."); not drawn on an ended card, whose notice says where the agent stayed;
   - the options, one full-width Button each, "<key> · Label" (for example "A · Label"), with "(Recommended)" (pt
     "(Recomendada)") after the label of the recommended one. The recommended option is bold while not picked; the picked
     option is the primary button. Under each option, its own lines, indented one cell (`paddingLeft={1}`), dim only while
@@ -439,9 +441,9 @@ status list). `hooks/pane.tsx`, `renderPane`.
   field and followed straight by a click on Submit all is the answer, with no Enter and no focus move. On each press the card dims at once; each
   answer is sent to the CLI (`askaway.py answer --by panel`, see the answer record above), which writes `a/` first-writer-wins, and the card fades for 250 ms (`FADE_MS`). Then the
   picks of those questions are cleared and the step goes back to the first question. When other groups stay open, the
-  card then shows the first question of the first group still open.
+  card then shows the first question of the first group still open. A reply that fails does not stop the round: Submit all goes on to the next question and clears only the picks whose reply is on the board or whose session ended (`submitGroup`, `hooks/register.tsx`).
 - **Picks** survive a re-poll. Picks, and an open Other field, of questions that are no longer open are dropped.
-- **Shared picks**: every session of the state folder shows the same picks. Each change of the picks (an option, an Other text, Submit all, a row's Submit) writes `draft.json` with the picks and the write's `ts` (`changeWizard`, `saveDraft`, `hooks/register.tsx`). Each session's poll applies a draft whose `ts` is newer than the last one it wrote or applied (`applyDraft`; a malformed file is ignored), so the newest write wins; a session that starts applies the folder's draft at its first poll. Only the picks are shared: the step, the group and the card stay per session. Each write merges this session's changed ids into the file's picks (`saveDraft` reads the file first), so the picks another session made within the same poll interval (5 s) are kept; two sessions that change the same id within that interval keep the later write. An answer stays first-writer-wins: a second reply to a question already answered is refused by the CLI (`written: false`), and the pane takes the stored answer.
+- **Shared picks**: every session of the state folder shows the same picks. Each change of the picks (an option, an Other text, Submit all, a row's Submit) writes `draft.json` with the picks and the write's `ts` (`changeWizard`, `saveDraft`, `hooks/register.tsx`). Each session's poll applies a draft whose `ts` is newer than the last one it wrote or applied (`applyDraft`; a malformed file is ignored), so the newest write wins; a `draft.json` that exists but does not read holds this session's first write (the picks are kept and retried at the next poll, with `toast.pickNotSaved`), and the retry overwrites it from this session's picks and logs it; a session that starts applies the folder's draft at its first poll. Only the picks are shared: the step, the group and the card stay per session. Each write merges this session's changed ids into the file's picks (`saveDraft` reads the file first), so the picks another session made within the same poll interval (5 s) are kept; two sessions that change the same id within that interval keep the later write. Each write's ts is the later of the clock and the last draft ts this session wrote or applied plus one (`saveDraft`), and `applyDraft` ignores a draft more than DRAFT_SKEW_MS (60 s) ahead of the clock. After a clock step back larger than a minute, a window's drafts sit ahead of the other windows' clocks and are ignored by them until the clock catches up; no pick is lost, since the merge is per id. An answer stays first-writer-wins: a second reply to a question already answered is refused by the CLI (`written: false`), and the pane takes the stored answer. A refused reply raises `toast.replyHeld`, which names the key that holds the question (`writeAnswer`, `hooks/register.tsx`).
 - **History** (under the card, above the footer; `historyOf`, `hooks/model.ts`; `renderHistory`, `hooks/pane.tsx`): the answers
   of the last while, drawn as the open tree is: a heading row with the History icon (a clock with an arrow turning back,
   `historySvg` in `hooks/logo.ts`, the glyph "⟲" on the terminal; not the Askaway logo) and "History" ("Histórico"), a
@@ -457,11 +459,11 @@ status list). `hooks/pane.tsx`, `renderPane`.
   pela sessão)"); a pending line ends at the sent time (nothing says it is waiting: the line only grows once the session
   answers back), an ended one ends "the session ended before reading
   it" ("a sessão encerrou antes de ler"), an expired one "expired unread" ("expirou sem ser lida"). An Other answer names its
-  letter and its text (`Answer C (Other: "…")`). "answered by agent" or "answered by <name>" (a CLI answer) appears only when the
+  letter and its text (`Answer C (Other: "…")`), cut to 80 code points with an ellipsis; the reply file keeps the whole text. "answered by agent" or "answered by <name>" (a CLI answer) appears only when the
   answer was not given by the person. Times are local: "14:32" on the day of the pane, "17/10 14:32" on another day. The delivered
   time is the `ts` of the delivery marker (`d/<id>.json`); an expired marker carries a ts, which the History line does not show.
-  A question's title is never a jump link: an answered question is no longer open, so no card can be jumped to.
-  A delivered line leaves DELIVERED_SHOWN_MS (30 s) after the pane first saw it (`deliveredAt`). A pending, ended or
+  A question's title is never a jump link: an answered question is no longer open, so no card can be jumped to. A row whose question has left the board is titled "Question closed" ("Pergunta encerrada").
+  A delivered line leaves DELIVERED_SHOWN_MS (30 s) after the pane first saw it (`deliveredAt`). A delivered line whose shown time lies after the clock is dropped at once, as past its window (`historyOf`, `hooks/model.ts`). A pending, ended or
   expired line stays until it is cleared.
 - **Clear all** (the last row of the pane, after a divider, right-aligned; `renderHistoryClear`): a secondary Button, as the card's Back is, labelled "Clear all (N)"
   ("Limpar tudo (N)"), where N counts every row drawn now, pending ones included; hidden when N is 0. Its press
@@ -471,11 +473,11 @@ status list). `hooks/pane.tsx`, `renderPane`.
   next poll (5 s), and a session opened later hides it at its first poll. The press also keeps the ids in `$.store` key
   `cleared`, the start seed of a session. A malformed file reads as nothing cleared (`parseCleared`, `hooks/model.ts`).
   Non-destructive: no q/, a/ or d/ file changes, so a cleared pending answer is still read by its session. It replaces the
-  per-line ✕ of earlier versions.
-- **Footer** (`footerText`, `hooks/model.ts`; pt "Nada aguardando" first): drawn under the History block, above the Clear all button, only while no
+  per-line ✕ of earlier versions. A Clear all that hides a row with no delivery marker (a pending or ended line) shows `toast.clearedPending` (`clearHistory`, `hooks/register.tsx`).
+- **Footer** (`footerText`, `hooks/model.ts`): drawn under the History block, above the Clear all button, only while no
   question is open. It counts the answers given in the last 24 h, names the last answer (its question's title cut to 40
-  characters, its key and its age), and counts the answers not yet read and the expired ones. Absent while a question is open. Its counts are read on the pane's clock (the tick, `tickClock`), which the poll rewrites
-  whenever the footer text changes, so the 24 h window and the 7-day TTL move the counts with no status line change.
+  characters, its key and its age), and counts the answers not yet read and the expired ones, each left out at zero (the replied count keeps its "none" form). Absent while a question is open. Its counts are read on the pane's clock (the tick, `tickClock`), which the poll rewrites
+  whenever the footer text changes, so the 24 h window and the 7-day TTL move the counts with no status line change. With no state folder the footer reads `command.awayUnavailable` instead, "Askaway away mode is unavailable: no state folder (HOME is unset)." (`hooks/register.tsx`, `hooks/i18n.ts`).
 
 ## Focus and clicks
 
@@ -523,7 +525,7 @@ The details block's fill follows the theme. The engine's theme row (`$.config.li
 
 ## Polling
 
-The mod lists `q/`, `a/` and `d/` with `$.fs.list` on a `$.clock` timer every 5 s while the session runs
+The mod lists `q/`, `a/` and `d/` with `$.fs.list`, and reads `draft.json` and `cleared.json` (`applyDraft`, `applyCleared`), on a `$.clock` timer every 5 s while the session runs
 (`hooks/register.tsx`: `POLL_MS`, `readBoard`).
 It merges the folder into the board and never takes back an answer that a press wrote: a local
 answer stays while its question is listed and the folder read does not show it yet.
@@ -532,7 +534,7 @@ answer stays while its question is listed and the folder read does not show it y
 
 In each session's interval poll, when the session is idle (no main-loop turn running: `turn.start`
 begins a turn and `turn.complete` without `agentId` ends it), the answers whose question has
-`session` equal to this session's id, at least 5 s old, with no d/ marker, are handed to the prompt.
+`session` equal to this session's id, at least 5 s old, with no d/ marker, are handed to the prompt. An answer whose ts lies after the clock is handed at once, without the 5 s wait (`promptsDue`, `hooks/model.ts`).
 All due answers of one asking session go in ONE `$.prompt.submit({ text })`, one line per answer,
 joined by "\n". The d/ markers (`via:"prompt"`) are written first, only where absent.
 
@@ -545,7 +547,7 @@ joined by "\n". The d/ markers (`via:"prompt"`) are written first, only where ab
 ## Model-facing lines (English, never translated; `askaway.py` `_delivery_line` and `model.ts` `deliveryLine` stay identical)
 
 `_delivery_line` is one line: control characters and line breaks in the title, the labels and an
-Other text become spaces, so a title cannot start a second line of the delivery.
+Other text become spaces, so a title cannot start a second line of the delivery. Unicode format characters (category Cf) are deleted from titles, option labels, Desktop titles and this one-line text.
 
 The line opens with who answered, from the answer record's `by` and `who`, then the chosen option or Other text,
 then the question. The five wordings:

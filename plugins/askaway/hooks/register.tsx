@@ -43,8 +43,12 @@ const PANE = 'askaway'
 const PLUGIN = 'askaway'
 const TITLE = 'Askaway'
 const POLL_MS = 5000
+// A draft.json stamped more than this past the clock is not applied: a far-future stamp would hold off every later draft.
+const DRAFT_SKEW_MS = 60_000
 // An answered card stays listed, dimmed, for this long after the press; then it leaves and its status line shows.
 const FADE_MS = 250
+// The `list --open` run that finds the ended sessions repeats at most this often while the linked open questions do not change (H11).
+const ENDED_RECHECK_MS = 30_000
 // The plugin's own store keys: the ids of the History lines the person cleared, and the chosen language.
 const CLEARED_KEY = 'cleared'
 const LANG_KEY = 'lang'
@@ -92,6 +96,13 @@ const quietAtom = atom({ plugin: 'askaway', key: 'quiet' } as const, false)
 const wizardAtom = atom({ plugin: 'askaway', key: 'wizard' } as const, flow.EMPTY_WIZARD)
 // The ts of the picks this session last wrote to draft.json or applied from it. A draft with a newer ts is applied.
 let draftTs = 0
+// The picks whose draft.json write has not landed yet, by question id (undefined: the pick was removed). Each poll retries
+// them (H2), so a failed write neither drops the pick from this window nor from the folder's picks.
+const unsavedPicks = new Map<string, Pick | undefined>()
+// Whether the poll's retry of unsavedPicks failed and the person was told; the toast shows once per failure.
+let draftFailing = false
+// Whether the last write held the picks because draft.json did not parse. The next write overwrites the file (H1, one held write).
+let unreadableHeld = false
 
 // Files are written once and never change, so a parsed file stays until its name leaves the folder.
 const questionCache = new Map<string, Question>()
@@ -237,15 +248,17 @@ async function tickClock($: EngineInterface, now: number, shownAt: Record<string
   const last = await read($, clockTick)
   const lang = await read($, langAtom)
   const current = await read($, board)
-  const open = openQuestions(current, await read($, leaving))
+  const fading = await read($, leaving)
+  const open = openQuestions(current, fading)
   const wizard = prunedWizard(await read($, wizardAtom), open)
   const group = flow.activeGroup(flow.groupsOf(open), wizard)
   // Only the question on the card draws an age label: an off-screen question turning its minute changes no drawn text.
   const onCard = group === undefined ? undefined : flow.screenOf(group, wizard)?.question
+  const hidden = await read($, cleared)
   const drawnAt = (at: number): string =>
     JSON.stringify([
       onCard === undefined ? null : ageLabel(lang, onCard.ts, at),
-      historyOf(lang, current, { cleared: [], shownAt, now: at, leaving: {} }),
+      historyOf(lang, current, { cleared: hidden, shownAt, now: at, leaving: fading }),
       footerText(lang, current, at) ?? null,
     ])
   if (drawnAt(last) !== drawnAt(now)) await update($, clockTick, () => now)
@@ -271,14 +284,26 @@ function anchorStep(prev: Wizard, active: Group | undefined, switched: boolean):
   return anchor >= 0 ? anchor : prev.step
 }
 
+// The last `list --open` run: the linked open ids it covered and when it ran (H11).
+let endedCheck: { key: string; at: number } | undefined
+
 // Asks the CLI which open questions belong to an ended session; only questions that name a session can. A run that fails
-// keeps what the pane knew. The atom is written only when the list changed, so a poll that learns nothing redraws nothing.
-async function refreshEnded($: EngineInterface, home: string, next: Board): Promise<void> {
-  const asked = next.questions.some(question => question.session !== null && isOpenIn(next, question.id))
+// keeps what the pane knew. The run repeats when the linked ids change, else at most every ENDED_RECHECK_MS (H11). The atom
+// is written only when the list changed, so a poll that learns nothing redraws nothing.
+async function refreshEnded($: EngineInterface, home: string, next: Board, now: number): Promise<void> {
+  const linked = next.questions.filter(question => question.session !== null && isOpenIn(next, question.id)).map(question => question.id)
   let ended: string[] | undefined = []
-  if (asked) {
+  if (linked.length === 0) {
+    endedCheck = undefined
+  } else {
+    const key = linked.sort().join(',')
+    if (endedCheck?.key === key && now - endedCheck.at < ENDED_RECHECK_MS) return
     const argv = ['python3', `${$.plugin.root}/scripts/askaway.py`, 'list', '--open']
-    ended = parseEndedIds((await $.process.run(argv, { env: { ASKAWAY_HOME: home } }).catch(() => undefined))?.stdout ?? '')
+    const run = await $.process.run(argv, { env: { ASKAWAY_HOME: home } }).catch(() => undefined)
+    // A run that fails keeps what the pane knew and is due again at the next poll, so only a run that ran is stamped.
+    if (run?.exitCode !== 0) return
+    endedCheck = { key, at: now }
+    ended = parseEndedIds(run.stdout)
   }
   if (ended !== undefined && JSON.stringify(ended) !== JSON.stringify(await read($, endedAtom))) {
     await update($, endedAtom, () => ended)
@@ -287,7 +312,7 @@ async function refreshEnded($: EngineInterface, home: string, next: Board): Prom
 
 // Dismiss on an ended card: the CLI removes the question (prune --id), then the board is read again.
 async function dismissEnded($: EngineInterface, home: string, id: string): Promise<void> {
-  const argv = ['python3', `${$.plugin.root}/scripts/askaway.py`, 'prune', '--id', id]
+  const argv = ['python3', `${$.plugin.root}/scripts/askaway.py`, 'prune', '--id', id, '--strict']
   const run = await $.process.run(argv, { env: { ASKAWAY_HOME: home } })
   if (run.exitCode !== 0) throw new Error(`askaway prune failed: ${(run.stderr || run.stdout).trim()}`)
   await pollInbox($, home)
@@ -302,7 +327,8 @@ async function pollInbox($: EngineInterface, home: string, ownSession?: string):
   await mergeBoard($, next)
   await applyCleared($, home)
   await applyDraft($, home)
-  await refreshEnded($, home, next)
+  await retryDraft($, home)
+  await refreshEnded($, home, next, now)
   if ((await read($, isAway)) !== away) await update($, isAway, () => away)
   const shownAt = await recordDeliveries($, next, now)
   await tickClock($, now, shownAt)
@@ -327,19 +353,36 @@ async function pruneWizardState($: EngineInterface): Promise<void> {
 
 const samePicks = (a: Wizard['picks'], b: Wizard['picks']): boolean => JSON.stringify(a) === JSON.stringify(b)
 
-// Applies the picks of draft.json when it is newer than this session's last write or apply (newest ts wins). Only the picks
-// move: the step, the group and the card stay with this session. A draft that moves no pick writes nothing, so the pane
-// is not redrawn on every poll. The update reads the wizard again, so a pick pressed meanwhile is not thrown away; its
-// own write carries a newer ts than this draft, so the next poll brings it back should the apply land first.
+// Whether a wizard holds anything a session start would lose: a card or a group on screen, or a pick.
+const hasWizardData = (wizard: Wizard): boolean =>
+  wizard.groupKey !== null || wizard.questionId !== null || Object.keys(wizard.picks).length > 0
+
+// Applies the picks of draft.json when it is newer than this session's last write or apply (newest ts wins) and no more
+// than DRAFT_SKEW_MS past the clock. Only the picks move: the step, the group and the card stay with this session. A draft
+// that moves no pick writes nothing, so the pane is not redrawn on every poll. The picks not yet on disk are laid over the
+// draft, so a draft another window wrote does not drop a pick made here. The update reads the wizard again, so a pick
+// pressed meanwhile is not thrown away; its own write carries a newer ts than this draft, so the next poll brings it back
+// should the apply land first.
 async function applyDraft($: EngineInterface, home: string): Promise<void> {
   const draft = parseDraft(await readJson($, `${home}/draft.json`))
-  if (draft === undefined || draft.ts <= draftTs) return
+  if (draft === undefined || draft.ts <= draftTs || draft.ts > (await $.clock.now()) + DRAFT_SKEW_MS) return
   const open = openQuestions(await read($, board), await read($, leaving))
+  const picks = overlay(draft.picks, unsavedPicks)
   const prev = await read($, wizardAtom)
-  if (!samePicks(prunedWizard({ ...prev, picks: draft.picks }, open).picks, prev.picks)) {
-    await update($, wizardAtom, current => prunedWizard({ ...current, picks: draft.picks }, open))
+  if (!samePicks(prunedWizard({ ...prev, picks }, open).picks, prev.picks)) {
+    await update($, wizardAtom, current => prunedWizard({ ...current, picks }, open))
   }
   draftTs = Math.max(draftTs, draft.ts)
+}
+
+// The picks with `changes` laid over them: an undefined change removes its pick.
+function overlay(picks: Record<string, Pick>, changes: ReadonlyMap<string, Pick | undefined>): Record<string, Pick> {
+  const merged = { ...picks }
+  for (const [id, pick] of changes) {
+    if (pick === undefined) delete merged[id]
+    else merged[id] = pick
+  }
+  return merged
 }
 
 // Hands this session's answers to its prompt: one submit for all of them. Only an idle session takes one: a busy
@@ -403,15 +446,29 @@ async function writeAnswer($: EngineInterface, home: string, id: string, key: st
   const isChoice =
     question !== undefined && (key === OTHER_KEY ? text !== undefined : question.options.some(option => option.key === key))
   if (!isChoice || !isOpenIn(current, id)) return false
+  // A press checks the ended sessions at once: the poll's throttle (H11) must not let a reply reach a session that ended (H9).
+  endedCheck = undefined
+  await refreshEnded($, home, current, await $.clock.now())
+  // A question whose session ended takes no reply: its card offers Dismiss only (H9).
+  if ((await read($, endedAtom)).includes(id)) return false
   const path = `${home}/a/${id}.json`
   const pressedAt = await $.clock.now()
   // The card dims at once, before the CLI answers: the press gives its feedback without waiting for the disk.
   if (!(await read($, quietAtom))) await startFade($, id, pressedAt)
-  const written = await answerViaCli($, home, id, key, text)
+  const lang = await read($, langAtom)
+  // A reply the CLI could not write (an error or a refused token) is logged and told; the pick stays for another press (H7).
+  const written = await answerViaCli($, home, id, key, text).catch((error: unknown) => {
+    logFailure($, error)
+    $.ui.toast(t(lang, 'toast.replyFailed'))
+    return undefined
+  })
+  if (written === undefined) return false
   // The board takes the record on disk, whoever wrote it. The CLI stamps its own ts, who and session, so a copy made here
   // would differ from the file and redraw the pane on the next poll.
   const stored = parseAnswer(await readJson($, path), id)
   if (stored !== undefined) await update($, board, prev => withAnswer(prev, stored))
+  // The CLI keeps the first reply: a refused one names the reply that holds the question, so the person knows which one stays (H8).
+  if (!written && stored !== undefined) $.ui.toast(t(lang, 'toast.replyHeld', { key: stored.key }))
   return written
 }
 
@@ -478,13 +535,19 @@ async function clearHistory($: EngineInterface): Promise<void> {
   const shared = folder === undefined ? [] : await sharedClearedIds($, folder)
   // This session's own ids are pruned to the answers its board knows; the file's ids are kept as they are, since a board
   // up to one poll behind may not know an answer another session cleared, and a cleared id must never come back.
-  const own = [...new Set([...(await read($, cleared)), ...clearableIdsOf(drawn)])].filter(id => known.has(id))
+  const drawnIds = clearableIdsOf(drawn)
+  const own = [...new Set([...(await read($, cleared)), ...drawnIds])].filter(id => known.has(id))
   const ids = [...new Set([...shared, ...own])]
+  // cleared.json goes first (H10). A failed write is logged; the clear still holds on this window and in the store.
+  if (folder !== undefined) {
+    const ts = await $.clock.now()
+    await $.fs.write(`${folder}/cleared.json`, `${JSON.stringify({ ts, ids })}\n`).catch((error: unknown) => logFailure($, error))
+  }
   await $.store.set(CLEARED_KEY, ids)
   await update($, cleared, () => ids)
-  if (folder === undefined) return
-  const ts = await $.clock.now()
-  await $.fs.write(`${folder}/cleared.json`, `${JSON.stringify({ ts, ids })}\n`)
+  // A pending reply is cleared from the pane only: its session still reads it (H25), so the person is told that.
+  const delivered = new Set((await read($, board)).delivered.map(delivery => delivery.id))
+  if (drawnIds.some(id => !delivered.has(id))) $.ui.toast(t(lang, 'toast.clearedPending', { n: drawnIds.length }))
 }
 
 // Clear all of another session: the ids cleared.json lists that this session's atom lacks are added, so the History
@@ -574,43 +637,99 @@ function clearPicks(prev: Wizard, ids: readonly string[], first: string | null):
   }
 }
 
-// Writes this session's changed picks to draft.json: the file's picks (another session may have written since this
-// session's last poll) with each id whose pick changed set or removed, under the write's ts. That ts becomes this session's
-// draftTs, so its own poll does not apply the draft back over its screen.
-async function saveDraft($: EngineInterface, home: string, before: Wizard['picks'], after: Wizard['picks']): Promise<void> {
-  const picks = { ...(parseDraft(await readJson($, `${home}/draft.json`))?.picks ?? {}) }
-  for (const id of new Set([...Object.keys(before), ...Object.keys(after)])) {
-    const pick = after[id]
-    if (JSON.stringify(before[id]) === JSON.stringify(pick)) continue
-    if (pick === undefined) delete picks[id]
-    else picks[id] = pick
+// Writes `changes` to draft.json for every session of the folder: the file's picks (another session may have written since
+// this session's last poll) with each changed id set or removed. An id this window's board knows as closed or replied is
+// dropped (H27); an id it does not know yet is kept, since another window may have seen its question first. The ts is never
+// behind the clock or the last ts this session wrote or applied (H4), and becomes draftTs, so this session's own poll does
+// not apply the draft back over its screen. A file that exists but does not parse is held once, so no write drops every
+// other session's picks (H1); the next write replaces it with this window's picks and logs it, else no write would land.
+async function saveDraft($: EngineInterface, home: string, changes: ReadonlyMap<string, Pick | undefined>): Promise<void> {
+  const path = `${home}/draft.json`
+  const draft = parseDraft(await readJson($, path))
+  const unreadable = draft === undefined && (await $.fs.exists(path))
+  if (unreadable && !unreadableHeld) {
+    unreadableHeld = true
+    throw new Error(`askaway: ${path} does not parse; the picks were not written`)
   }
-  const ts = await $.clock.now()
-  await $.fs.write(`${home}/draft.json`, `${JSON.stringify({ ts, picks })}\n`)
+  if (unreadable) logFailure($, new Error(`${path} does not parse; overwritten with this window's picks`))
+  const base = unreadable ? (await read($, wizardAtom)).picks : (draft?.picks ?? {})
+  const merged = overlay(base, changes)
+  const shown = await read($, board)
+  const open = new Set(openQuestions(shown, await read($, leaving)).map(question => question.id))
+  const known = new Set(shown.questions.map(question => question.id))
+  const picks = flow.keepOpen(merged, new Set(Object.keys(merged).filter(id => open.has(id) || !known.has(id))))
+  const ts = Math.max(await $.clock.now(), draftTs + 1)
+  await $.fs.write(path, `${JSON.stringify({ ts, picks })}\n`)
   draftTs = ts
+  unreadableHeld = false
 }
 
-// The one way a pick changes: the wizard is updated, then, when the picks moved, they go to draft.json for every session
-// of the folder. A failed write is logged; the pick stays on this session's screen.
+// Writes the picks not yet on draft.json. Returns whether the write landed; a failure is logged and the picks stay pending.
+async function writeUnsaved($: EngineInterface, home: string): Promise<boolean> {
+  if (unsavedPicks.size === 0) return true
+  const batch = new Map(unsavedPicks)
+  try {
+    await saveDraft($, home, batch)
+  } catch (error: unknown) {
+    logFailure($, error)
+    return false
+  }
+  for (const [id, pick] of batch) {
+    if (unsavedPicks.get(id) === pick) unsavedPicks.delete(id)
+  }
+  return true
+}
+
+// The poll's retry of the pending picks (H2). The person is told once while the write keeps failing; a write that lands
+// clears the mark.
+async function retryDraft($: EngineInterface, home: string): Promise<void> {
+  if (await writeUnsaved($, home)) {
+    draftFailing = false
+    return
+  }
+  if (draftFailing) return
+  draftFailing = true
+  $.ui.toast(t(await read($, langAtom), 'toast.pickNotSaved'))
+}
+
+// The one way a pick changes: the wizard is updated, then the picks that moved are queued for draft.json and written for every
+// session of the folder. A failed write leaves them queued, and the poll retries; the pick stays on this session's screen.
 async function changeWizard($: EngineInterface, change: (prev: Wizard) => Wizard): Promise<void> {
   const before = await read($, wizardAtom)
   await update($, wizardAtom, change)
   const after = await read($, wizardAtom)
   const folder = await folderOf($)
-  if (folder === undefined || samePicks(before.picks, after.picks)) return
-  await saveDraft($, folder, before.picks, after.picks).catch((error: unknown) => logFailure($, error))
+  if (folder === undefined) return
+  for (const id of new Set([...Object.keys(before.picks), ...Object.keys(after.picks)])) {
+    const pick: Pick | undefined = after.picks[id]
+    if (JSON.stringify(before.picks[id]) !== JSON.stringify(pick)) unsavedPicks.set(id, pick)
+  }
+  await writeUnsaved($, folder)
 }
 
 // Submit all: each question of the group gets its answer through the answer path, then its picks are cleared and the
 // step goes back to the first question. Nothing is written unless every question has a pick.
-async function submitGroup($: EngineInterface, group: Group, current: Wizard): Promise<void> {
-  const items = flow.submittable(group, current)
+// The ids whose pick may go once the submit has run: their reply is on the board, or their session ended (a pick of an ended
+// question is dropped, H9). A pick whose press is still in flight stays (H6).
+async function settledIds($: EngineInterface, ids: readonly string[]): Promise<string[]> {
+  const stored = new Set((await read($, board)).answers.map(answer => answer.id))
+  const ended = new Set(await read($, endedAtom))
+  return ids.filter(id => stored.has(id) || ended.has(id))
+}
+
+// Submit all: the draft other windows wrote is applied first (H5), then each question of the group gets its answer through the
+// answer path, and the picks that settled are cleared with the step back on the first question. Nothing is written unless
+// every question has a pick.
+async function submitGroup($: EngineInterface, group: Group): Promise<void> {
   const folder = await folderOf($)
-  if (items === undefined || folder === undefined || submitting.has(group.key)) return
+  if (folder === undefined || submitting.has(group.key)) return
   submitting.add(group.key)
   try {
+    await applyDraft($, folder)
+    const items = flow.submittable(group, (await snapshot($)).wizard)
+    if (items === undefined) return
     for (const { id, pick } of items) await answerEntry($, folder, id, pick.key, pick.text)
-    const ids = items.map(item => item.id)
+    const ids = await settledIds($, items.map(item => item.id))
     await changeWizard($, prev => clearPicks(prev, ids, group.questions[0]?.id ?? null))
   } finally {
     submitting.delete(group.key)
@@ -618,8 +737,8 @@ async function submitGroup($: EngineInterface, group: Group, current: Wizard): P
 }
 
 async function submitCurrent($: EngineInterface): Promise<void> {
-  const { group, wizard } = await snapshot($)
-  if (group !== undefined) await submitGroup($, group, wizard)
+  const { group } = await snapshot($)
+  if (group !== undefined) await submitGroup($, group)
 }
 
 // The per-question Submit of a tree row: that question's answer goes through the answer path alone, at once. The other
@@ -627,17 +746,19 @@ async function submitCurrent($: EngineInterface): Promise<void> {
 const submittingOne = (id: string): string => `question:${id}`
 
 async function submitOne($: EngineInterface, id: string): Promise<void> {
-  const { open, wizard, leaving: fading } = await snapshot($)
-  const group = flow.groupsOf(open).find(one => one.questions.some(question => question.id === id))
-  const pick: Pick | undefined = wizard.picks[id]
   const folder = await folderOf($)
-  if (group === undefined || pick === undefined || fading[id] !== undefined || folder === undefined) return
-  if (submitting.has(submittingOne(id))) return
+  if (folder === undefined || submitting.has(submittingOne(id))) return
   submitting.add(submittingOne(id))
   try {
+    await applyDraft($, folder)
+    const { open, wizard, leaving: fading } = await snapshot($)
+    const group = flow.groupsOf(open).find(one => one.questions.some(question => question.id === id))
+    const pick: Pick | undefined = wizard.picks[id]
+    if (group === undefined || pick === undefined || fading[id] !== undefined) return
     await answerEntry($, folder, id, pick.key, pick.text)
     const first = group.questions.find(question => question.id !== id)?.id ?? null
-    await changeWizard($, prev => clearPicks(prev, [id], first))
+    const ids = await settledIds($, [id])
+    await changeWizard($, prev => clearPicks(prev, ids, first))
   } finally {
     submitting.delete(submittingOne(id))
   }
@@ -775,7 +896,8 @@ export const register: Register = on => {
     await update($, quietAtom, () => storedQuiet)
     await update($, whoAtom, () => (typeof storedWho === 'string' ? storedWho : null))
     await update($, turn, () => ({ isBusy: false }))
-    await update($, wizardAtom, () => flow.EMPTY_WIZARD)
+    // A start keeps the wizard it holds, so a reload keeps the card and its step; only a wizard with no prior data starts empty.
+    await update($, wizardAtom, prev => (hasWizardData(prev) ? prev : flow.EMPTY_WIZARD))
     // A session starts with no draft seen: the awaited first poll below applies the picks the folder holds.
     draftTs = 0
     const folder = await folderOf($)
@@ -837,6 +959,8 @@ export const register: Register = on => {
     const groups = flow.groupsOf(open)
     const active = flow.activeGroup(groups, wizard)
     const screen = active === undefined ? undefined : flow.screenOf(active, wizard)
+    // With no state folder nothing is polled, so the footer says why away mode cannot be read (H13).
+    const folder = await folderOf($)
     const view: PaneView = {
       questions: open,
       history: historyOf(lang, current, {
@@ -847,7 +971,8 @@ export const register: Register = on => {
       }),
       now,
       leaving: fading,
-      footer: footerText(lang, current, now),
+      footer: folder === undefined ? t(lang, 'command.awayUnavailable') : footerText(lang, current, now),
+      away: await read($, isAway),
       ended: await read($, endedAtom),
       askWho: (await read($, whoAtom)) === null,
       groups,

@@ -114,7 +114,8 @@ SESSION_TITLE_MAX: Final = 80
 SESSION_PATTERN: Final = re.compile(r"[A-Za-z0-9_-]{1,128}")
 DESKTOP_SESSIONS_ROOT: Final = Path.home() / ".config" / "Claude" / "claude-code-sessions"
 DESKTOP_SESSIONS_ENV: Final = "ASKAWAY_DESKTOP_SESSIONS"
-DESKTOP_GLOB: Final = "*/*/local_*.json"  # one folder per org and user, one file per Desktop session
+DESKTOP_ID_PREFIX: Final = "local_"  # every Claude Desktop session id the entry stores starts with it
+DESKTOP_GLOB: Final = f"*/*/{DESKTOP_ID_PREFIX}*.json"  # one folder per org and user, one file per Desktop session
 DESKTOP_FILE_MAX: Final = 2 * 1024 * 1024
 DESKTOP_SCAN_MAX: Final = 2000  # files examined per lookup, so a huge Desktop folder cannot stall ask
 FAMILY_MAX_HOPS: Final = 8
@@ -142,6 +143,7 @@ MIN_WORDS: Final = 3
 PLACEHOLDER_WORDS: Final = frozenset({"tbd", "todo", "n/a", "lorem"})
 MISSING: Final = "missing"
 PLACEHOLDER: Final = "placeholder"
+FIT_RULE: Final = "must be an integer 0 to 100"
 KEY_RULE: Final = "option keys must be consecutive uppercase letters starting at A, in order (A, B, C...)"
 FOREIGN_RECHECK_S: Final = 60
 FOREIGN_STAMP: Final = "foreign_check"  # touched when unread answers of other sessions were last re-checked
@@ -300,22 +302,28 @@ def create_once(target: Path, data: Mapping[str, Any]) -> bool:
 def read_json(path: Path) -> dict[str, Any] | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):  # a deeply nested file overflows the JSON parser
         return None
     return data if isinstance(data, dict) else None
 
 
+def _question_matches(item_id: str, entry: Mapping[str, Any]) -> bool:
+    """A q/ file reads as a question only when its id is its file name and its ts is an integer."""
+    return entry.get("id") == item_id and isinstance(entry.get("ts"), int)
+
+
 def load_questions() -> tuple[list[dict[str, Any]], list[str]]:
-    """The readable questions, newest first, and the ids of the q/ files that do not read: one pass over q/."""
+    """The readable questions, newest first, and the ids of the damaged q/ files: one pass over q/.
+
+    A file is damaged when it does not read as an object, or its id is not its name, or its ts is not an integer."""
     loaded: list[dict[str, Any]] = []
     damaged: list[str] = []
     for path in (state_home() / "q").glob("*.json"):
         entry = read_json(path)
-        if entry is None:
-            if ID_PATTERN.fullmatch(path.stem):
-                damaged.append(path.stem)
-        elif entry.get("id") == path.stem and isinstance(entry.get("ts"), int):
+        if entry is not None and _question_matches(path.stem, entry):
             loaded.append(entry)
+        elif ID_PATTERN.fullmatch(path.stem):
+            damaged.append(path.stem)
     return sorted(loaded, key=lambda entry: (entry["ts"], entry["id"]), reverse=True), sorted(damaged)
 
 
@@ -349,8 +357,8 @@ def _without_format_chars(text: str) -> str:
 
 
 def _other_clean(text: str) -> str:
-    """The Other text on one line, without format characters, capped at OTHER_TEXT_MAX code points."""
-    return " ".join(_without_format_chars(text).split())[:OTHER_TEXT_MAX]
+    """The Other text on one line, without format characters or controls, capped at OTHER_TEXT_MAX code points."""
+    return _clip(" ".join(CONTROL_CHARS.sub(" ", _without_format_chars(text)).split()), OTHER_TEXT_MAX)
 
 
 def other_text(answer: Mapping[str, Any] | None) -> str | None:
@@ -401,10 +409,10 @@ def _words(text: str) -> list[str]:
 
 
 def _read_text(name: str, raw: object, limit: int) -> tuple[str | None, str | None]:
-    """The stripped text, or None with the reason it is refused: missing, too long or a placeholder."""
-    if not isinstance(raw, str) or not raw.strip():
+    """The stripped text without format characters, or None with the reason it is refused: missing, too long or a placeholder."""
+    text = _without_format_chars(raw).strip() if isinstance(raw, str) else ""
+    if not text:
         return None, MISSING
-    text = raw.strip()
     if len(text) > limit:
         return None, f"too long ({len(text)}/{limit})"
     words = _words(text)
@@ -483,9 +491,9 @@ def _risk(raw: Mapping[str, Any], gaps: Gaps) -> str | None:
 
 
 def _urgency_level(raw: Mapping[str, Any], gaps: Gaps) -> dict[str, str]:
-    """The optional urgency grade, stored lower-case; absent when not given, a refile when not a grade."""
+    """The optional urgency grade, stored lower-case; absent when not given or blank, a refile when not a grade."""
     level = raw.get("urgency_level")
-    if level is None:
+    if level is None or (isinstance(level, str) and not level.strip()):
         return {}
     if not isinstance(level, str) or level.lower() not in URGENCY_LEVELS:
         gaps.top["urgency_level"] = f"must be one of: {', '.join(sorted(URGENCY_LEVELS))}"
@@ -521,7 +529,7 @@ def _option(raw: Mapping[str, Any], key: str, gaps: Gaps) -> dict[str, Any]:
     texts = {name: _checked(fields, name, raw.get(name), limit) for name, limit in OPTION_TEXT}
     fit = _strict_fit(raw.get("fit"))
     if fit is None:
-        fields["fit"] = MISSING
+        fields["fit"] = MISSING if raw.get("fit") is None else FIT_RULE
     if fields:
         gaps.options.setdefault(key, {}).update(fields)
     return {"key": key, **texts, "fit": fit}
@@ -561,7 +569,7 @@ def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
         "v": 1, "id": new_id(now), "ts": now,
         "project": origin.project, "session": origin.session, "run_kind": run_kind,
         "session_title": session_title(origin.session, origin.project, desktop),
-        "desktop_session": _nonempty(desktop.get("sessionId")) if desktop else None,
+        "desktop_session": _local_id(_nonempty(desktop.get("sessionId"))) if desktop else None,
         **_family_fields(desktop),
         "title": title, "options": options, "recommended": recommended,
         **texts,
@@ -670,11 +678,18 @@ def _nonempty(value: object) -> str | None:
     return None
 
 
+def _local_id(value: str | None) -> str | None:
+    """A Claude Desktop session id the entry may store: the local_ prefix and the id pattern, else None."""
+    if value and value.startswith(DESKTOP_ID_PREFIX) and SESSION_PATTERN.fullmatch(value):
+        return value
+    return None
+
+
 def _desktop_title(value: object) -> str | None:
     """A title from a Desktop file with escape sequences and control characters removed; None when nothing is left."""
     if not isinstance(value, str):
         return None
-    text = CONTROL_CHARS.sub(" ", DESKTOP_ESCAPE.sub("", value)).strip()
+    text = CONTROL_CHARS.sub(" ", _without_format_chars(DESKTOP_ESCAPE.sub("", value))).strip()
     return text or None
 
 
@@ -799,9 +814,15 @@ def desktop_family(cli_session: str | None) -> tuple[str, str] | None:
     return family_of(desktop_session(cli_session))
 
 
+def _own_family(desktop: Mapping[str, Any] | None) -> tuple[str, str] | None:
+    """A session whose parent record is missing is its own family: its own sessionId and title, else None."""
+    own_id = _nonempty(desktop.get("sessionId")) if desktop else None
+    return _titled_root(own_id, desktop, {}) if own_id and desktop else None
+
+
 def _family_fields(desktop: Mapping[str, Any] | None) -> dict[str, str | None]:
-    family = family_of(desktop)
-    if family is None:
+    family = family_of(desktop) or _own_family(desktop)
+    if family is None or _local_id(family[0]) is None:
         return {"family": None, "family_title": None}
     return {"family": family[0], "family_title": _clip(family[1], SESSION_TITLE_MAX)}
 
@@ -869,16 +890,28 @@ def _refile(raw: object, error: str, gaps: Gaps) -> dict[str, Any]:
             "keys_received": gaps.keys}
 
 
+def _entry_json(json_text: str | None) -> object:
+    """The entry as JSON, from --json or stdin; a usage error says what to fix when there is none or it is not JSON."""
+    text = json_text if json_text is not None else sys.stdin.read()
+    if not text.strip():
+        raise ValueError("no entry: pass --json or pipe it on stdin")
+    try:
+        return json.loads(text)
+    except ValueError as exc:  # the parser's own words do not tell the agent what to fix
+        raise ValueError("the entry is not valid JSON: check the quotes and escapes") from exc
+
+
 def cmd_ask(json_text: str | None) -> dict[str, Any]:
     raw: object = None
     try:
-        raw = json.loads(json_text if json_text is not None else sys.stdin.read())
+        raw = _entry_json(json_text)
         if not isinstance(raw, dict):
             raise ValueError("the entry must be a JSON object")  # noqa: TRY004 - CLI validation channel
         entry = build_entry(raw, cli_origin())
         twin = open_twin(entry)
-        if twin is not None:
-            return {"id": twin["id"], "recommended": twin["recommended"], "action": "open", "duplicate": True}
+        if twin is not None:  # a paused twin still holds the session, so the agent must stop, not continue
+            action = "pause" if twin.get("pause") is True else "open"
+            return {"id": twin["id"], "recommended": twin["recommended"], "action": action, "duplicate": True}
         store_entry(entry)
     except EntryError as exc:  # the entry has gaps: the agent completes them and files again
         return _refile(raw, str(exc), exc.gaps)
@@ -972,16 +1005,32 @@ def consume_panel_token() -> bool:
     return True
 
 
+def _question_entry(item_id: str) -> dict[str, Any]:
+    """The q/ entry of an id: a usage error for an unknown id, or for a file that exists but does not read or match its id."""
+    entry = read_json(item_path("q", item_id))
+    if entry is None or not _question_matches(item_id, entry):
+        if item_path("q", item_id).exists():
+            raise ValueError("damaged inbox question: its file does not read")
+        raise ValueError("unknown inbox id")
+    return entry
+
+
+def _stored_reply(item_id: str) -> dict[str, Any]:
+    """The reply already on file, as a shell reply reports it: its key, and the channel and name that hold it."""
+    stored = read_json(item_path("a", item_id))
+    return {"id": item_id, "key": (stored or {}).get("key"), "written": False, **_answer_stamps(stored)}
+
+
 def cmd_answer(item_id: str, key: str, by: str, text: str | None) -> dict[str, Any]:
     if by not in ANSWER_SOURCES:
         raise ValueError(f"--by must be one of: {', '.join(sorted(ANSWER_SOURCES))}")
-    entry = read_json(item_path("q", item_id))
-    if entry is None:
-        raise ValueError("unknown inbox id")
+    entry = _question_entry(item_id)
     key = canonical_key(key)
     kept = answer_text(key, text)
     if key != OTHER_KEY and key not in option_keys(entry):
         raise ValueError("unknown option key")
+    if read_json(item_path("a", item_id)) is not None:  # first writer wins: a readable reply on file answers first
+        return _stored_reply(item_id)
     refusal = answer_refusal(entry, by)
     if refusal is not None:
         return {"error": refusal}
@@ -994,17 +1043,29 @@ def cmd_answer(item_id: str, key: str, by: str, text: str | None) -> dict[str, A
         record["text"] = kept
     if create_once(item_path("a", item_id), record):
         return {"id": item_id, "key": key, "written": True}
-    stored = read_json(item_path("a", item_id)) or {}
-    return {"id": item_id, "key": stored.get("key"), "written": False}
+    return _stored_reply(item_id)
 
 
 def question_status(item_id: str) -> tuple[str, str | None]:
     """The status and key of a question, as status and wait report them. An unknown id is a usage error."""
-    if read_json(item_path("q", item_id)) is None:
+    entry = read_json(item_path("q", item_id))
+    if entry is None or not _question_matches(item_id, entry):
         if not item_path("q", item_id).exists():
             raise ValueError("unknown inbox id")
         return STATUS_DAMAGED, None
     return item_status(item_id)
+
+
+def _answer_stamps(answer: Mapping[str, Any] | None) -> dict[str, str]:
+    """The channel and the name an answer is stamped with, each only when set: status and a shell reply show them."""
+    stamps: dict[str, str] = {}
+    by = (answer or {}).get("by")
+    if isinstance(by, str) and by:
+        stamps["by"] = by
+    who = answer_who(answer)
+    if who:
+        stamps["who"] = who
+    return stamps
 
 
 def _status_reply(item_id: str, status: str, key: str | None) -> dict[str, Any]:
@@ -1013,12 +1074,7 @@ def _status_reply(item_id: str, status: str, key: str | None) -> dict[str, Any]:
     text = other_text(answer)
     if text:
         result["text"] = text
-    who = answer_who(answer)
-    if who:
-        result["who"] = who
-    by = (answer or {}).get("by")
-    if isinstance(by, str) and by:
-        result["by"] = by
+    result.update(_answer_stamps(answer))
     return result
 
 
@@ -1043,9 +1099,15 @@ def _list_row(entry: Mapping[str, Any], released: ReleasedScan | None = None) ->
     return row
 
 
+def _damaged_row(item_id: str) -> dict[str, Any]:
+    """The list row of a damaged q/ file: no title or key, status damaged."""
+    return {"id": item_id, "title": None, "status": STATUS_DAMAGED, "recommended": None, "key": None}
+
+
 def cmd_list(only_open: bool) -> dict[str, Any]:
     released = ReleasedScan()
-    items = [_list_row(entry, released) for entry in load_questions()[0]]
+    entries, damaged = load_questions()
+    items = [_list_row(entry, released) for entry in entries] + [_damaged_row(item_id) for item_id in damaged]
     return {"items": [item for item in items if not only_open or item["status"] == "open"]}
 
 
@@ -1115,8 +1177,14 @@ def prune_days() -> int:
     return int(text) if PRUNE_DAYS_TEXT.fullmatch(text) else DEFAULT_PRUNE_DAYS
 
 
+def _unreadable_answers() -> list[str]:
+    """The ids whose a/ file does not read and has no delivery marker: answered, key unknown, still pausing until answered."""
+    return [path.stem for path in (state_home() / "a").glob("*.json")
+            if ID_PATTERN.fullmatch(path.stem) and item_status(path.stem)[0] == STATUS_DAMAGED_ANSWER]
+
+
 def _remove_damaged(damaged: Sequence[str]) -> int:
-    """Clear damaged q/ files with their answer and delivery files, whatever the window: the user's way out of a pause."""
+    """Clear damaged q/ or a/ files with their companion files, whatever the window: the user's way out of a pause."""
     for item_id in damaged:
         _remove_item(item_id)
     return len(damaged)
@@ -1142,17 +1210,19 @@ def cmd_prune(days: int) -> dict[str, Any]:
         raise ValueError("--days must not be negative")
     _remove_stale_temps()
     entries, damaged = load_questions()
-    return {"removed": _remove_damaged(damaged) + _remove_closed(days, entries)}
+    unreadable = sorted({*damaged, *_unreadable_answers()})
+    return {"removed": _remove_damaged(unreadable) + _remove_closed(days, entries)}
 
 
 def cmd_prune_id(item_id: str) -> dict[str, Any]:
-    """Remove one open question whose asking session has ended (the panel's Dismiss). Nothing else is removed by id."""
+    """Remove one open question whose asking session has ended, or that has no session (the panel's Dismiss)."""
     entry = read_json(item_path("q", item_id))
     if entry is None:
         raise ValueError("unknown inbox id")
     if item_status(item_id)[0] != "open":
         return {"error": "prune refused: the question is already answered"}
-    if not session_ended(entry.get("session"), entry.get("project")):
+    session = entry.get("session")
+    if session and not session_ended(session, entry.get("project")):
         return {"error": "prune refused: the session that asked has not ended"}
     _remove_item(item_id)
     return {"removed": 1}
@@ -1300,6 +1370,7 @@ def build_parser() -> argparse.ArgumentParser:
     prune = commands.add_parser("prune")
     prune.add_argument("--days", type=int, default=prune_days())
     prune.add_argument("--id", dest="item_id")
+    prune.add_argument("--strict", action="store_true")
     prune.set_defaults(run=lambda a: cmd_prune_id(a.item_id) if a.item_id else cmd_prune(a.days))
 
     wait = commands.add_parser("wait")
@@ -1747,7 +1818,7 @@ def _holding_question(session: str) -> tuple[str, str | None] | None:
     for entry in entries:
         if (entry.get("pause") is True and entry.get("session") == session
                 and item_status(entry["id"])[0] not in PAUSE_ENDED):
-            return entry["id"], entry["title"]
+            return entry["id"], entry.get("title") or entry["id"]
     for item_id in damaged:
         if damaged_question_session(item_id) == session and item_status(item_id)[0] == "open":
             return item_id, None
@@ -1794,8 +1865,9 @@ def _key_text(entry: Mapping[str, Any], key: object) -> str:
 
 
 def _one_line(text: str) -> str:
-    """The text on one line: line breaks and control characters become spaces."""
-    flat = "".join(" " if unicodedata.category(char) in ("Cc", "Zl", "Zp") else char for char in text)
+    """The text on one line: format characters are deleted, line breaks and control characters become spaces."""
+    flat = "".join(" " if unicodedata.category(char) in ("Cc", "Zl", "Zp") else char
+                   for char in _without_format_chars(text))
     return " ".join(flat.split())
 
 
@@ -1858,9 +1930,10 @@ def _deliver_one(item_id: str, session: str | None, cwd: object,
 
 
 def _stamp_due(marker: Path, interval_s: float) -> bool:
-    """Is there no stamp yet, or has its mtime aged past interval_s?"""
+    """Is there no stamp yet, or has its mtime aged past interval_s? A stamp from the future (clock stepped back) is due."""
     try:
-        return time.time() - marker.stat().st_mtime >= interval_s
+        age = time.time() - marker.stat().st_mtime
+        return age < 0 or age >= interval_s
     except FileNotFoundError:
         return True
 
@@ -1950,6 +2023,12 @@ def run_hook(mode: str) -> None:
 
 # ---- entry point -------------------------------------------------------
 
+def command_names() -> list[str]:
+    """The sub-command names the parser accepts, as the --help line lists them."""
+    subparsers = next(action for action in build_parser()._actions if isinstance(action, argparse._SubParsersAction))
+    return list(subparsers.choices)
+
+
 def dispatch(argv: Sequence[str]) -> dict[str, Any] | str:
     args = build_parser().parse_args(list(argv))
     return args.run(args)
@@ -1975,6 +2054,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args[:1] == ["hook"]:
         run_hook(args[1] if len(args) > 1 else "")
+        return 0
+    if args[:1] in (["-h"], ["--help"]):
+        print(json.dumps({"commands": command_names()}))
         return 0
     code = 0
     try:

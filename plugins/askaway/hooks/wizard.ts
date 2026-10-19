@@ -153,7 +153,7 @@ export function jumpTo(wizard: Wizard, group: Group, id: string): Wizard {
   return onStep({ ...wizard, groupKey: group.key }, group, step)
 }
 
-const keepOpen = <V>(record: Record<string, V>, open: ReadonlySet<string>): Record<string, V> =>
+export const keepOpen = <V>(record: Record<string, V>, open: ReadonlySet<string>): Record<string, V> =>
   Object.fromEntries(Object.entries(record).filter(([id]) => open.has(id)))
 
 // Drops what belongs to questions no longer open (answered elsewhere) and clamps the step. `activeTotal` is the size of

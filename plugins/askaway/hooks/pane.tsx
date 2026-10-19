@@ -53,6 +53,8 @@ export type PaneView = {
   footer?: string
   // The ids of open questions whose asking session has ended: their card shows a notice and Dismiss, no options.
   ended: readonly string[]
+  // Away mode is on (away.json): the counter line says so. Optional: the register sets it.
+  away?: boolean
   // True until the person gave a name or skipped: the pane then asks for it above the card, once.
   askWho: boolean
   // The theme family (look.ts themeFamilyOf): it picks the fill of the details block.
@@ -101,7 +103,7 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
           <Text bold>{t(lang, 'pane.heading')}</Text>
         </Box>
         <Box flexDirection="row" alignItems="center" gap={1}>
-          <Text>{counterText(lang, view.questions)}</Text>
+          <Text>{`${counterText(lang, view.questions)}${view.away ? t(lang, 'list.awayOn') : ''}`}</Text>
           {renderKeepGlide(ui, view.surface, 'keepglide-counter', KEEPGLIDE_HEADER_SIZE)}
         </Box>
       </Box>
@@ -359,14 +361,15 @@ function renderTreeSubmit(tree: TreeContext, question: Question): RenderElement 
 // A tree link, in two forms. Where the surface draws Markdown: the lead, one mark and the link, which a press answers
 // through onLinkPress; pressableLinks names only this href, so no other link is answered. The mark is the row's state
 // mark (`mark`: ● on screen, ○ waiting) where the row has one, else the dim link mark; a row never carries both. Else
-// the underlined plain Button these rows were before, with the state mark and no link mark. Both keep their press handle
+// the underlined plain Button these rows were before, with the same mark as the Markdown form: the state mark where the row
+// has one, else the link mark (a Submit row). Both keep their press handle
 // across redraws (held).
 type TreeLink = { key: string; lead: string; mark?: string; label: string; href: string; bold: boolean; onPress: () => void }
 
 function treeLink(ui: Ui, held: HeldButtons, link: TreeLink): RenderElement {
   const { Button, Text } = ui
   if (!('Markdown' in ui)) {
-    const text = `${link.lead}${link.mark === undefined ? '' : `${link.mark} `}${link.label}`
+    const text = `${link.lead}${link.mark ?? LINK_MARK} ${link.label}`
     return held.hold(link.key, [text, link.bold], link.onPress, press => (
       <Button key={link.key} label={text} plain onPress={press}>
         <Text underline bold={link.bold}>{text}</Text>
@@ -463,7 +466,7 @@ function renderQuestion(
       {details.length > 0 && renderDetailsBlock(ui, lang, card, details)}
       <Box flexDirection="column">
         <Text bold dimColor={isLeaving}>{question.question}</Text>
-        <Text dimColor>{leadOf(lang, question)}</Text>
+        {!isEnded && <Text dimColor>{leadOf(lang, question)}</Text>}
       </Box>
       {isEnded ? (
         <Text key={`ended-${question.id}`}>{t(lang, 'card.ended', { key: question.recommended })}</Text>
@@ -507,7 +510,7 @@ function renderDetailsBlock(ui: Ui, lang: Lang, card: CardContext, sections: Sec
 function renderDivider(ui: Ui, surface: RenderSurface, key: string): RenderElement {
   if (surface === 'desktop' && 'Svg' in ui) {
     const { Svg } = ui
-    return <Svg key={key} source={dividerSvg(DIVIDER_PX)} alt="divider" height={DIVIDER_HEIGHT} />
+    return <Svg key={key} source={dividerSvg(DIVIDER_PX)} alt="" height={DIVIDER_HEIGHT} />
   }
   const { Text } = ui
   return <Text key={key} dimColor>{'─'.repeat(DIVIDER_COLUMNS)}</Text>
@@ -524,6 +527,7 @@ function renderTitleRow(ui: Ui, lang: Lang, question: Question, isLeaving: boole
     return (
       <Box key={`title-${question.id}`} flexDirection="row" flexWrap="wrap" gap={2}>
         <Text bold dimColor={isLeaving}>{questionLabel(question)}</Text>
+        <Text dimColor>{sessionLabelOf(question, lang)}</Text>
         <Text dimColor>{status}</Text>
       </Box>
     )
@@ -690,10 +694,11 @@ function renderEndedNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardCont
   const isBackOff = !screen.canBack || isLeaving
   const backLabel = t(lang, 'nav.back')
   const dismissLabel = t(lang, 'card.dismiss')
+  const hotkey = letterFor(card, 'back')
   return (
     <Box key={`nav-${question.id}`} flexDirection="row" justifyContent="space-between">
-      {held.hold('nav-back', [backLabel, isBackOff, undefined], () => !isBackOff && actions.back(), press => (
-        <Button key="nav-back" label={backLabel} variant="secondary" dimColor={isBackOff} onPress={press} />
+      {held.hold('nav-back', [backLabel, isBackOff, hotkey], () => !isBackOff && actions.back(), press => (
+        <Button key="nav-back" label={backLabel} variant="secondary" dimColor={isBackOff} hotkey={hotkey} onPress={press} />
       ))}
       {held.hold('dismiss-ended', [dismissLabel, question.id], () => actions.dismissEnded(question.id), press => (
         <Button key="dismiss-ended" label={dismissLabel} variant="secondary" onPress={press} />

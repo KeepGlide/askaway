@@ -29,7 +29,7 @@ export function renderLogo(ui: Ui, surface: RenderSurface): RenderElement {
 export function renderHistoryIcon(ui: Ui, surface: RenderSurface): RenderElement {
   if (surface === 'desktop' && 'Svg' in ui) {
     const { Svg } = ui
-    return <Svg key="history-icon" source={historySvg({ size: LOGO_SIZE })} alt="History" width={LOGO_SIZE} height={LOGO_SIZE} />
+    return <Svg key="history-icon" source={historySvg({ size: LOGO_SIZE })} alt="" width={LOGO_SIZE} height={LOGO_SIZE} />
   }
   const { Text } = ui
   return (

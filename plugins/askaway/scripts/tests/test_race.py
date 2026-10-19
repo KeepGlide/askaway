@@ -103,7 +103,10 @@ def test_a_foreign_session_writer_racing_nineteen_others_is_refused_and_claims_n
     results = race(state, item, [(SESSION, "A")] * (WRITERS - 1) + [(OTHER_SESSION, "B")])
 
     foreign, same_session = results[-1], results[:-1]
-    assert "error" in foreign and "written" not in foreign
+    # Refused while the slot is free; once a reply exists it gets the stored key, unwritten.
+    refused = "error" in foreign and "written" not in foreign
+    told_stored = foreign.get("written") is False and foreign.get("key") == "A"
+    assert refused or told_stored
     assert [result["written"] for result in same_session].count(True) == 1
     assert stored_answer(state, item)["key"] == "A"
     assert [path.name for path in (state / "a").iterdir()] == [f"{item}.json"]

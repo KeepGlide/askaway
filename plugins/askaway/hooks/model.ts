@@ -19,6 +19,8 @@ export const ANSWER_TTL_MS = 7 * 24 * 60 * 60 * 1000
 // The footer counts the answers given in the last RECENT_MS, and cuts the last answer's title to FOOTER_TITLE_MAX characters.
 const RECENT_MS = 24 * 60 * 60 * 1000
 const FOOTER_TITLE_MAX = 40
+// The longest quote of an Other answer on its History row, in code points; the reply file keeps the whole text.
+const HISTORY_QUOTE_MAX = 80
 // The longest free text an Other answer keeps and quotes, in code points (askaway.py's OTHER_TEXT_MAX). wizard.ts caps the
 // typed text at it too, on write.
 export const OTHER_TEXT_MAX = 500
@@ -181,8 +183,9 @@ export function parseEndedIds(stdout: string): string[] | undefined {
 const controlToSpace = (text: string): string => text.replace(/[\p{Cc}\p{Zl}\p{Zp}]/gu, ' ')
 // Format characters (Cf: zero-width marks, bidi overrides such as U+202E or U+2066) are deleted, not spaced.
 const deleteFormat = (text: string): string => text.replace(/\p{Cf}/gu, '')
-// askaway.py's _one_line: control characters and line breaks become spaces, so a title or label cannot start a second line.
-const singleLine = (text: string): string => controlToSpace(text).split(/\s+/).filter(part => part !== '').join(' ')
+// askaway.py's _one_line: format characters are deleted, control characters and line breaks become spaces, so a title or
+// label cannot start a second line.
+const singleLine = (text: string): string => controlToSpace(deleteFormat(text)).split(/\s+/).filter(part => part !== '').join(' ')
 
 // The name an answer record carries (askaway.py's WHO_MAX and CONTROL_CHARS): at most WHO_MAX characters, the last one an
 // ellipsis, control characters become spaces and format characters are deleted. The read path (parseAnswer) applies it
@@ -317,7 +320,8 @@ export function promptsDue(board: Board, session: string, now: number): { answer
   for (const answer of board.answers) {
     const question = board.questions.find(one => one.id === answer.id)
     if (!question || question.session !== session || delivered.has(answer.id)) continue
-    if (now - answer.ts < PROMPT_DELAY_MS) continue
+    const age = now - answer.ts
+    if (age >= 0 && age < PROMPT_DELAY_MS) continue
     const text = deliveryLine(question, answer)
     if (text !== undefined) due.push({ answer, text })
   }
@@ -449,7 +453,8 @@ function timeOf(timestamp: number, now: number): string {
 function answerLabelOf(lang: Lang, answer: Answer, question: Question | undefined): string {
   if (answer.key !== OTHER_KEY) return t(lang, 'history.answer', { key: answer.key })
   const letter = question === undefined ? undefined : otherLetterOf(question.options)?.toUpperCase()
-  const text = otherTextOf(answer)
+  const full = otherTextOf(answer)
+  const text = full === undefined ? undefined : clipText(full, HISTORY_QUOTE_MAX)
   if (letter === undefined) {
     return text === undefined ? t(lang, 'history.answer', { key: OTHER_KEY }) : t(lang, 'history.answerOtherOnly', { text })
   }
@@ -467,7 +472,7 @@ function answeredByOf(lang: Lang, answer: Answer): string | undefined {
 // written without one.
 function deliveredNoteOf(lang: Lang, delivery: Delivery | undefined, now: number): string {
   const readBy = `(${t(lang, 'history.readBySession')})`
-  if (delivery?.ts === undefined) return t(lang, 'history.readBySession')
+  if (delivery?.ts === undefined) return readBy
   return `${t(lang, 'history.delivered', { time: timeOf(delivery.ts, now) })} ${readBy}`
 }
 
@@ -499,7 +504,7 @@ function historyEntryOf(
   ]
   return {
     id: answer.id,
-    title: question === undefined ? answer.id : questionLabel(question),
+    title: question === undefined ? t(lang, 'history.questionClosed') : questionLabel(question),
     session: question?.desktop_session,
     line: parts.filter((part): part is string => part !== undefined).join(' · '),
   }
@@ -544,8 +549,8 @@ export function historyOf(lang: Lang, board: Board, context: StatusContext): His
     const delivery = deliveries.get(answer.id)
     const question = questions.get(answer.id)
     const entry = historyEntryOf(lang, answer, question, delivery, context.now)
-    const isPastShowTime =
-      delivery?.expired === false && context.now - (context.shownAt[answer.id] ?? context.now) > DELIVERED_SHOWN_MS
+    const shownFor = context.now - (context.shownAt[answer.id] ?? context.now)
+    const isPastShowTime = delivery?.expired === false && (shownFor < 0 || shownFor > DELIVERED_SHOWN_MS)
     if (isPastShowTime || hidden.has(answer.id)) continue
     placeEntry(groups, lang, question, entry)
   }
@@ -576,13 +581,14 @@ export function footerText(lang: Lang, board: Board, now: number): string | unde
   const deliveries = new Map(board.delivered.map(delivery => [delivery.id, delivery] as const))
   const statuses = board.answers.map(answer => answerStatusOf(answer, deliveries.get(answer.id), now))
   const answered = board.answers.filter(answer => now - answer.ts < RECENT_MS).length
+  const unread = statuses.filter(status => status === 'answered').length
+  const expired = statuses.filter(status => status === 'expired').length
   const latest = [...board.answers].sort((a, b) => b.ts - a.ts)[0]
   const parts = [
-    t(lang, 'footer.nothing'),
     answered === 0 ? t(lang, 'footer.answered.none') : plural(lang, answered, 'footer.answered.one', 'footer.answered.many'),
     latest === undefined ? undefined : lastAnswerText(lang, latest, questions.get(latest.id), now),
-    plural(lang, statuses.filter(status => status === 'answered').length, 'footer.unread.one', 'footer.unread.many'),
-    plural(lang, statuses.filter(status => status === 'expired').length, 'footer.expired.one', 'footer.expired.many'),
+    unread === 0 ? undefined : plural(lang, unread, 'footer.unread.one', 'footer.unread.many'),
+    expired === 0 ? undefined : plural(lang, expired, 'footer.expired.one', 'footer.expired.many'),
   ]
   return parts.filter((part): part is string => part !== undefined).join(' · ')
 }
@@ -591,13 +597,14 @@ export function footerText(lang: Lang, board: Board, now: number): string | unde
 // question is gone), its key, and its age.
 function lastAnswerText(lang: Lang, answer: Answer, question: Question | undefined, now: number): string {
   const title = question?.title.trim() ?? ''
-  const name = clipTitle(title === '' ? answer.id : title)
+  const name = clipText(title === '' ? answer.id : title, FOOTER_TITLE_MAX)
   return t(lang, 'footer.last', { title: name, key: answer.key, age: ageLabel(lang, answer.ts, now) })
 }
 
-function clipTitle(text: string): string {
+// The text cut to max code points, its last one an ellipsis.
+function clipText(text: string, max: number): string {
   const chars = Array.from(text)
-  return chars.length > FOOTER_TITLE_MAX ? `${chars.slice(0, FOOTER_TITLE_MAX - 1).join('')}…` : text
+  return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : text
 }
 
 export const riskLabel = (lang: Lang, risk: string): string => {

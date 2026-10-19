@@ -215,7 +215,7 @@ def test_ask_stores_urgency_level_lower_case_when_given(level, home, capsys):
     assert stored(home, "q", out["id"])["urgency_level"] == level.lower()
 
 
-@pytest.mark.parametrize("level", ["extreme", "", " high", 3, True])
+@pytest.mark.parametrize("level", ["extreme", " high", 3, True])
 def test_ask_refiles_an_unknown_urgency_level_naming_the_field(level, home, capsys):
     out = cli(capsys, "ask", "--json", json.dumps(base_entry(urgency_level=level)))
     assert out == refile_reply("urgency_level: must be one of: high, low, medium", missing=["urgency_level"])
@@ -328,7 +328,8 @@ def test_ask_error_names_every_missing_field_and_option_gap_in_one_line(home, ca
     del entry["undo"]
     entry["options"][1]["fit"] = 101
     out = cli(capsys, "ask", "--json", json.dumps(entry))
-    assert out == refile_reply("missing fields: analogy, undo; option B: fit", missing=["analogy", "undo"],
+    assert out == refile_reply("missing fields: analogy, undo; option B: fit: must be an integer 0 to 100",
+                               missing=["analogy", "undo"],
                                by_option={"B": ["fit"]})
     assert not (home / "q").exists() or list((home / "q").glob("*.json")) == []
 
@@ -464,7 +465,7 @@ def test_answer_first_writer_wins(home, capsys):
     first = cli(capsys, "answer", item, "B", "--by", "panel")
     second = cli(capsys, "answer", item, "A")
     assert first == {"id": item, "key": "B", "written": True}
-    assert second == {"id": item, "key": "B", "written": False}
+    assert second == {"id": item, "key": "B", "written": False, "by": "panel", "who": WHO}
     assert stored(home, "a", item)["key"] == "B" and stored(home, "a", item)["by"] == "panel"
     assert [p.name for p in (home / "a").iterdir()] == [f"{item}.json"]
 
@@ -567,7 +568,7 @@ def test_answer_other_is_first_writer_wins_and_keeps_only_the_first_text(home, c
     first = cli(capsys, "answer", item, "other", "--text", "Use SQLite")
     second = cli(capsys, "answer", item, "other", "--text", "Use Postgres")
     assert first == {"id": item, "key": "other", "written": True}
-    assert second == {"id": item, "key": "other", "written": False}
+    assert second == {"id": item, "key": "other", "written": False, "by": "cli", "who": WHO}
     assert stored(home, "a", item)["text"] == "Use SQLite"
     assert [p.name for p in (home / "a").iterdir()] == [f"{item}.json"]
 
@@ -575,7 +576,8 @@ def test_answer_other_is_first_writer_wins_and_keeps_only_the_first_text(home, c
 def test_answer_text_after_a_lettered_answer_is_not_stored(home, capsys):
     item = ask_item(capsys)
     cli(capsys, "answer", item, "A")
-    assert cli(capsys, "answer", item, "other", "--text", "Use SQLite") == {"id": item, "key": "A", "written": False}
+    assert cli(capsys, "answer", item, "other", "--text", "Use SQLite") == {
+        "id": item, "key": "A", "written": False, "by": "cli", "who": WHO}
     assert "text" not in stored(home, "a", item)
 
 
@@ -596,7 +598,7 @@ def test_answer_other_needs_some_text(text_args, home, capsys):
 def test_answer_other_text_is_clipped_to_the_read_cap_before_it_is_stored(home, capsys):
     item = ask_item(capsys)
     assert cli(capsys, "answer", item, "other", "--text", "x" * 600)["written"] is True
-    assert stored(home, "a", item)["text"] == "x" * askaway.OTHER_TEXT_MAX
+    assert stored(home, "a", item)["text"] == "x" * (askaway.OTHER_TEXT_MAX - 1) + "…"
 
 
 def test_panel_answer_with_text_is_accepted_from_a_non_shell_caller(home, capsys, monkeypatch):
@@ -2204,7 +2206,8 @@ def test_answer_errors_exit_1_and_first_writer_wins_still_exits_0(home, capsys):
     assert run_code(capsys, "answer", "--strict", item, "Z")[0] == 1
     assert run_code(capsys, "answer", item, "Z")[0] == 1
     assert run_code(capsys, "answer", "--strict", item, "A") == (0, {"id": item, "key": "A", "written": True})
-    assert run_code(capsys, "answer", "--strict", item, "B") == (0, {"id": item, "key": "A", "written": False})
+    assert run_code(capsys, "answer", "--strict", item, "B") == (
+        0, {"id": item, "key": "A", "written": False, "by": "cli", "who": WHO})
 
 
 def test_strict_on_a_command_that_has_no_such_flag_is_a_usage_error_exit_1(capsys):
@@ -2754,7 +2757,8 @@ def test_refile_names_every_gap_at_once_grouped_by_field_then_option(home, capsy
     del entry["options"][1]["does"]
     del entry["options"][1]["pros"]
     out = cli(capsys, "ask", "--json", json.dumps(entry))
-    assert out == refile_reply("missing fields: analogy, undo; option B: does, pros, fit",
+    assert out == refile_reply("missing fields: analogy, undo; option B: does, pros; "
+                               "option B: fit: must be an integer 0 to 100",
                                missing=["analogy", "undo"], by_option={"B": ["does", "pros", "fit"]})
 
 
@@ -3036,3 +3040,213 @@ def test_prune_id_refuses_a_live_session_and_an_answered_question(home, capsys, 
 
 def test_prune_id_rejects_an_unknown_id(home, capsys):
     assert "unknown inbox id" in usage_error(capsys, "prune", "--id", "q-1-abcdef")["error"]
+
+
+def rewrite_question(home: Path, item_id: str, drop: tuple[str, ...] = (), **changes) -> None:
+    path = home / "q" / f"{item_id}.json"
+    entry = json.loads(path.read_text(encoding="utf-8"))
+    for name in drop:
+        del entry[name]
+    entry.update(changes)
+    path.write_text(json.dumps(entry), encoding="utf-8")
+
+
+@pytest.mark.parametrize("session", [None, ""])
+def test_prune_id_removes_an_open_question_with_no_session(session, home, capsys):
+    item = ask_item(capsys)
+    rewrite_question(home, item, session=session)
+    assert cli(capsys, "prune", "--id", item) == {"removed": 1}
+    assert not (home / "q" / f"{item}.json").exists()
+
+
+def test_prune_removes_an_answer_file_that_does_not_read(home, capsys, monkeypatch):
+    item = pending_pause(capsys, monkeypatch)
+    write_raw(home, "a", item, "{trunc")
+    assert cli(capsys, "prune", "--days", "999") == {"removed": 1}
+    assert not any((home / folder / f"{item}.json").exists() for folder in ("q", "a", "d"))
+    assert run_hook(capsys, monkeypatch, "pause-guard", edit_event()) == ""
+
+
+def test_prune_keeps_an_answer_file_that_does_not_read_when_its_delivery_marker_exists(home, capsys, monkeypatch):
+    item = pending_pause(capsys, monkeypatch)
+    cli(capsys, "answer", item, "B", "--by", "panel")
+    run_hook(capsys, monkeypatch, "deliver", deliver_event())
+    write_raw(home, "a", item, "{trunc")
+    assert cli(capsys, "prune", "--days", "999") == {"removed": 0}
+    assert all((home / folder / f"{item}.json").exists() for folder in ("q", "a", "d"))
+
+
+def test_a_question_file_nested_past_the_recursion_limit_reads_as_damaged(home, capsys):
+    item = ask_item(capsys)
+    write_raw(home, "q", item, '{"a":' * 100_000 + "1" + "}" * 100_000)  # json.loads raises RecursionError here
+    assert cli(capsys, "status", item) == {"id": item, "status": "damaged", "key": None}
+    assert cli(capsys, "prune", "--days", "999") == {"removed": 1}
+
+
+def test_a_held_question_without_a_title_is_named_by_its_id_and_still_pauses(home, capsys, monkeypatch):
+    item = pending_pause(capsys, monkeypatch)
+    rewrite_question(home, item, drop=("title",))
+    reason = hook_json(capsys, monkeypatch, "pause-guard", edit_event())["hookSpecificOutput"][
+        "permissionDecisionReason"]
+    assert item in reason
+
+
+def test_a_duplicate_of_a_paused_question_tells_the_agent_to_pause(home, capsys, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    first = cli(capsys, "ask", "--json", json.dumps(base_entry(risk="high")))
+    again = cli(capsys, "ask", "--json", json.dumps(base_entry(risk="high")))
+    assert again == {"id": first["id"], "recommended": "A", "action": "pause", "duplicate": True}
+    assert [p.name for p in (home / "q").iterdir()] == [f"{first['id']}.json"]
+
+
+def test_other_text_turns_control_characters_into_spaces(home):
+    assert askaway.other_text({"key": "other", "text": "Use\x01SQL\x7f\x85now\tplease"}) == "Use SQL now please"
+
+
+def test_other_text_clipped_at_the_cap_ends_with_an_ellipsis_inside_the_cap(home):
+    clipped = askaway.other_text({"key": "other", "text": "x" * 600})
+    assert clipped == "x" * (askaway.OTHER_TEXT_MAX - 1) + "…"
+    assert len(clipped) == askaway.OTHER_TEXT_MAX
+
+
+@pytest.mark.parametrize(("field", "value"), [("id", "q-1-000000"), ("ts", "soon")])
+def test_a_question_file_that_does_not_match_its_entry_is_listed_as_damaged_and_pruned(field, value, home, capsys):
+    item = ask_item(capsys)
+    rewrite_question(home, item, **{field: value})
+    assert askaway.load_questions() == ([], [item])
+    assert cli(capsys, "list") == {"items": [{"id": item, "title": None, "status": "damaged",
+                                              "recommended": None, "key": None}]}
+    assert cli(capsys, "prune", "--days", "999") == {"removed": 1}
+
+
+def test_answer_on_a_question_file_that_does_not_read_says_it_is_damaged(home, capsys):
+    item = ask_item(capsys)
+    write_raw(home, "q", item, "{trunc")
+    assert usage_error(capsys, "answer", item, "A") == {
+        "error": "damaged inbox question: its file does not read"}
+    assert not (home / "a" / f"{item}.json").exists()
+
+
+@pytest.mark.parametrize(("field", "value"), [("id", "q-1-000000"), ("ts", "soon")])
+def test_answer_on_a_question_file_that_does_not_match_its_entry_says_it_is_damaged(field, value, home, capsys):
+    item = ask_item(capsys)
+    rewrite_question(home, item, **{field: value})
+    assert usage_error(capsys, "answer", item, "A") == {
+        "error": "damaged inbox question: its file does not read"}
+    assert not (home / "a" / f"{item}.json").exists()
+
+
+def test_prune_strict_exits_1_when_prune_id_refuses_a_live_session(home, capsys, monkeypatch):
+    live = ask_from(capsys, monkeypatch, SESSION)
+    assert askaway.main(["prune", "--id", live, "--strict"]) == 1
+    assert "has not ended" in json.loads(capsys.readouterr().out)["error"]
+    assert askaway.main(["prune", "--id", live]) == 0
+
+
+# ---- gauntlet 3, package A2: CLI help, validation, reply and status fixes ----
+
+@pytest.mark.parametrize("flag", ["-h", "--help"])
+def test_help_flag_prints_the_command_names_as_one_json_line_and_exits_0(flag, capsys):
+    assert askaway.main([flag]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 1
+    assert {"ask", "answer", "status", "prune"} <= set(json.loads(lines[0])["commands"])
+
+
+def test_ask_names_the_quotes_when_the_entry_is_not_valid_json(capsys):
+    assert cli(capsys, "ask", "--json", "{nope") == refile_reply(
+        "the entry is not valid JSON: check the quotes and escapes", recommended=None, keys=())
+
+
+def test_ask_says_how_to_pass_an_entry_when_stdin_is_empty(capsys, monkeypatch):
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+    assert cli(capsys, "ask") == refile_reply(
+        "no entry: pass --json or pipe it on stdin", recommended=None, keys=())
+
+
+def test_a_string_fit_is_refused_with_its_reason_not_as_a_bare_field(home, capsys):
+    options = base_entry()["options"]
+    options[1]["fit"] = "40"
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(options=options)))
+    assert out == refile_reply("option B: fit: must be an integer 0 to 100", by_option={"B": ["fit"]})
+
+
+@pytest.mark.parametrize("level", ["", "   "])
+def test_a_blank_urgency_level_is_absent_like_none(level, home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(urgency_level=level)))
+    assert out["action"] == "continue"
+    assert "urgency_level" not in stored(home, "q", out["id"])
+
+
+def test_a_fork_whose_parent_record_is_missing_is_its_own_family(home, capsys, monkeypatch):
+    write_desktop(home, "local_fork", "cli-fork", "Fork title", forkedFromSessionId="local_gone")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "cli-fork")
+    entry = stored(home, "q", cli(capsys, "ask", "--json", json.dumps(base_entry()))["id"])
+    assert entry["family"] == "local_fork" and entry["family_title"] == "Fork title"
+
+
+def test_a_desktop_id_without_the_local_prefix_is_stored_as_null(home, capsys, monkeypatch):
+    record = {"sessionId": "plain-id", "cliSessionId": "cli-plain", "title": "Window title", "cwd": "/w"}
+    (desktop_folder(home) / "local_plain.json").write_text(json.dumps(record), encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "cli-plain")
+    entry = stored(home, "q", cli(capsys, "ask", "--json", json.dumps(base_entry()))["id"])
+    assert entry["desktop_session"] is None and entry["family"] is None and entry["family_title"] is None
+    assert entry["session_title"] == "Window title"
+
+
+def test_a_family_root_without_the_local_prefix_is_stored_as_null(home, capsys, monkeypatch):
+    write_desktop(home, "local_child", "cli-child", "Child", spawnedFrom=spawned("plain-root", "Root"))
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "cli-child")
+    entry = stored(home, "q", cli(capsys, "ask", "--json", json.dumps(base_entry()))["id"])
+    assert entry["desktop_session"] == "local_child" and entry["family"] is None
+
+
+def test_format_characters_are_deleted_from_titles_and_option_labels(home, capsys):
+    options = base_entry()["options"]
+    options[0]["label"] = "Re\u200bdis"
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(title="Cache\u202e backend", options=options)))
+    entry = stored(home, "q", out["id"])
+    assert entry["title"] == "Cache backend" and entry["options"][0]["label"] == "Redis"
+
+
+def test_format_characters_are_deleted_from_desktop_titles_and_the_one_line_text(home):
+    write_desktop(home, "local_one", SESSION, "Win\u202edow")
+    assert askaway.session_title(SESSION, desktop=askaway.desktop_session(SESSION)) == "Window"
+    assert askaway._one_line("a\u202eb\u200c c") == "ab c"
+
+
+def test_a_second_shell_reply_from_another_session_gets_the_stored_key(home, capsys, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    item = ask_item(capsys)
+    assert cli(capsys, "answer", item, "A")["written"] is True
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "other-session")
+    assert cli(capsys, "answer", item, "B") == {
+        "id": item, "key": "A", "written": False, "by": "agent", "who": WHO}
+    assert stored(home, "a", item)["key"] == "A"
+
+
+def test_a_refused_second_reply_names_the_channel_and_name_holding_the_slot(home, capsys, monkeypatch):
+    item = ask_item(capsys)
+    monkeypatch.setenv("ASKAWAY_WHO", "panel-user")
+    assert cli(capsys, "answer", item, "B", "--by", "panel")["written"] is True
+    monkeypatch.setenv("ASKAWAY_WHO", "shell-user")
+    assert cli(capsys, "answer", item, "A") == {
+        "id": item, "key": "B", "written": False, "by": "panel", "who": "panel-user"}
+
+
+@pytest.mark.parametrize(("field", "value"), [("id", "q-1-000000"), ("ts", "soon")])
+def test_status_reports_a_question_file_that_does_not_match_its_entry_as_damaged(field, value, home, capsys):
+    item = ask_item(capsys)
+    rewrite_question(home, item, **{field: value})
+    assert cli(capsys, "status", item) == {"id": item, "status": "damaged", "key": None}
+
+
+def test_a_stamp_dated_in_the_future_is_due_and_a_fresh_one_is_not(home):
+    marker = home / "clock-stepped-back-stamp"
+    home.mkdir(parents=True, exist_ok=True)
+    marker.touch()
+    ahead = time.time() + 3600
+    os.utime(marker, (ahead, ahead))
+    assert askaway._stamp_due(marker, 60) is True
+    marker.touch()
+    assert askaway._stamp_due(marker, 60) is False

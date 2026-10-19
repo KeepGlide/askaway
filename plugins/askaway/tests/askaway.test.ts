@@ -28,7 +28,8 @@ import {
   urgencyGradeOf,
  desktopSessionOf } from '../hooks/model'
 import { heldButtons } from '../hooks/held'
-import { placeUnder, renderTreeQuestion } from '../hooks/pane'
+import { placeUnder, renderPane, renderTreeQuestion } from '../hooks/pane'
+import { t } from '../hooks/i18n'
 import { ACCENT_COLOR, DETAILS_FILL, LINK_MARK, URGENCY_COLOR, themeFamilyOf } from '../hooks/look'
 import type { Answer, Board } from '../types'
 
@@ -114,8 +115,9 @@ const path = (dir: string, id: string): string => `${STATE}/${dir}/${id}.json`
 // The session id the host answers for `$.session.id()`; a question filed by this session carries it.
 const SELF = 'sess-self'
 
-// Gates a test can close: a write, or the listing of the answer folder, waits until the test releases it.
-type Holds = { write?: Promise<void>; listAnswers?: Promise<void> }
+// Gates a test can close: a write, or the listing of the answer folder, waits until the test releases it. `answerExit` makes
+// the CLI's reply exit with that code (a test of a failed reply).
+type Holds = { write?: Promise<void>; listAnswers?: Promise<void>; answerExit?: number; listExit?: number }
 
 // The engine's file calls, answered from an in-memory folder. A read of a missing file rejects, as the host does.
 // The listing of the answer folder is taken as the disk stands at the call, then the host waits for its hold,
@@ -210,6 +212,7 @@ function stubHost(
     calls.push({ argv: [...e.argv], env: e.init?.env })
     // `list --open` reports the ids a test put in `ended`; `prune --id` removes the question file, as the CLI does for one.
     if (e.argv[2] === 'list') {
+      if (holds.listExit !== undefined) return cliReply('', holds.listExit)
       const items = [...files.keys()].filter(file => file.startsWith(`${STATE}/q/`)).map(file => ({ id: file.slice(`${STATE}/q/`.length, -5) }))
       return cliReply(JSON.stringify({ items: items.map(item => (ended.has(item.id) ? { ...item, ended: true } : item)) }))
     }
@@ -219,6 +222,7 @@ function stubHost(
     }
     const [, , , id, key] = e.argv
     await holds.write
+    if (holds.answerExit !== undefined) return cliReply('', holds.answerExit)
     const stored = files.get(path('a', id))
     if (stored !== undefined) return cliReply(JSON.stringify({ id, key: (JSON.parse(stored) as { key: string }).key, written: false }))
     const textArg = e.argv.find(arg => arg.startsWith('--text='))
@@ -294,6 +298,8 @@ const labelOf = async (ui: Awaited<ReturnType<typeof mountPane>>, key: string): 
   (await ui.find({ type: 'Button', key }))?.props.label
 
 // Every node of a drawn tree, depth first. A found element's props leave out `hover`, so the tree is read for it.
+// The separator rule the pane draws on the desktop: an SVG with empty alt text and the rule's 21 px height.
+const isDividerProps = (props: Record<string, unknown> | undefined): boolean => props?.alt === '' && props?.height === 21
 const nodesOf = (node: unknown): Record<string, unknown>[] => {
   if (typeof node !== 'object' || node === null) return []
   const element = node as Record<string, unknown>
@@ -504,8 +510,8 @@ test('model: the risk label reads in each language, and an unknown risk keeps it
 
 test('model: the age label reads now, minutes, hours and days in both languages', () => {
   const HOUR = 3_600_000
-  expect(ageLabel('en', 0, 0)).toBe('now')
-  expect(ageLabel('pt', 0, 0)).toBe('agora')
+  expect(ageLabel('en', 0, 0)).toBe('just now')
+  expect(ageLabel('pt', 0, 0)).toBe('há instantes')
   expect(ageLabel('en', 0, 5 * 60_000)).toBe('5 min ago')
   expect(ageLabel('pt', 0, 3 * HOUR)).toBe('há 3 h')
   expect(ageLabel('en', 0, 72 * HOUR)).toBe('3 d ago')
@@ -535,7 +541,7 @@ test('model: the History tree groups answers by family, then session, newest fir
   expect(tree[0]?.sessions[0]?.entries.map(entry => entry.line)).toEqual(['Answer B · sent 14:35'])
   expect(tree[0]?.sessions[1]?.entries.map(entry => entry.title)).toEqual(['Title q-h-000001'])
   expect(tree[1]?.sessions[0]?.entries).toEqual([
-    { id: 'q-h-000009', title: 'q-h-000009', session: undefined, line: 'Answer A · sent 13:58' },
+    { id: 'q-h-000009', title: 'Question closed', session: undefined, line: 'Answer A · sent 13:58' },
   ])
 })
 
@@ -551,7 +557,7 @@ test('model: a delivered line reads its delivered time and "read by the session"
   expect(lineOf('pt', SAME_DAY_NOW)).toBe('Resposta A · enviada 14:32 · entregue 14:33 (lida pela sessão)')
   expect(lineOf('en', localMs(10, 18, 9, 0))).toBe('Answer A · sent 17/10 14:32 · delivered 17/10 14:33 (read by the session)')
   const withoutTime: Board = { ...delivered, delivered: [{ id: 'q-h-000001', expired: false }] }
-  expect(lineOf('en', SAME_DAY_NOW, withoutTime)).toBe('Answer A · sent 14:32 · read by the session')
+  expect(lineOf('en', SAME_DAY_NOW, withoutTime)).toBe('Answer A · sent 14:32 · (read by the session)')
 })
 
 test('model: the Other answer names its letter and its text; an agent or a named CLI answer names who answered, a panel answer names no one', () => {
@@ -649,28 +655,28 @@ test('model: the footer reads the counts and the last answer in English and Port
     ],
   }
   expect(footerText('en', board, now)).toBe(
-    'Nothing waiting · 3 answered in the last 24 h · last: Pick the queue → A, 12 min ago · 1 not yet read · 2 expired',
+    '3 answered in the last 24 h · last: Pick the queue → A, 12 min ago · 1 not yet read · 2 expired',
   )
   expect(footerText('pt', board, now)).toBe(
-    'Nada aguardando · 3 respondidas nas últimas 24 h · última: Pick the queue → A, há 12 min · 1 ainda não lida · 2 expiradas',
+    '3 respondidas nas últimas 24 h · última: Pick the queue → A, há 12 min · 1 ainda não lida · 2 expiradas',
   )
   const withOpen: Board = { ...board, questions: [...board.questions, parsedQuestion('q-f-000006', 6)] }
   expect(footerText('en', withOpen, now)).toBeUndefined()
 })
 
 test('model: the footer reads the zero and the singular forms in both languages', () => {
-  expect(footerText('en', EMPTY_BOARD, FOOT_DAY)).toBe('Nothing waiting · none answered in the last 24 h · 0 not yet read · 0 expired')
+  expect(footerText('en', EMPTY_BOARD, FOOT_DAY)).toBe('none answered in the last 24 h')
   expect(footerText('pt', EMPTY_BOARD, FOOT_DAY)).toBe(
-    'Nada aguardando · nenhuma respondida nas últimas 24 h · 0 ainda não lidas · 0 expiradas',
+    'nenhuma respondida nas últimas 24 h',
   )
   const one: Board = {
     questions: [parsedQuestion('q-f-000001', 1)],
     answers: [answerOf('q-f-000001', 'A', FOOT_DAY - FOOT_HOUR)],
     delivered: [{ id: 'q-f-000001', expired: false }],
   }
-  expect(footerText('en', one, FOOT_DAY)).toBe('Nothing waiting · 1 answered in the last 24 h · last: Title q-f-000001 → A, 1 h ago · 0 not yet read · 0 expired')
+  expect(footerText('en', one, FOOT_DAY)).toBe('1 answered in the last 24 h · last: Title q-f-000001 → A, 1 h ago')
   expect(footerText('pt', one, FOOT_DAY)).toBe(
-    'Nada aguardando · 1 respondida nas últimas 24 h · última: Title q-f-000001 → A, há 1 h · 0 ainda não lidas · 0 expiradas',
+    '1 respondida nas últimas 24 h · última: Title q-f-000001 → A, há 1 h',
   )
   const expiredOne: Board = { questions: [], answers: [answerOf('q-f-000002', 'B', 1)], delivered: [] }
   expect(footerText('pt', expiredOne, 8 * FOOT_DAY)).toContain('1 expirada')
@@ -768,7 +774,7 @@ test('model: parseQuestion keeps what, problem and each option does, pros and co
 test('model: the lead line names the recommended key and the local time, or says paused for a high-risk question', () => {
   const at = new Date(2026, 9, 18, 14, 2).getTime()
   expect(leadOf('en', parsedQuestion('q-m-000008', at, { recommended: 'B' }))).toBe('On B since 14:02. Pick another option to switch; no answer keeps B.')
-  expect(leadOf('pt', parsedQuestion('q-m-000008', at, { recommended: 'B' }))).toBe('Na B desde 14:02. Escolha outra opção para trocar; sem resposta, fica a B.')
+  expect(leadOf('pt', parsedQuestion('q-m-000008', at, { recommended: 'B' }))).toBe('Na opção B desde 14:02. Escolha outra opção para trocar; sem resposta, fica a opção B.')
   expect(leadOf('en', parsedQuestion('q-m-000009', at, { risk: 'high' }))).toBe('Paused since 14:02, waiting for your answer.')
   expect(leadOf('pt', parsedQuestion('q-m-000009', at, { risk: 'high' }))).toBe('Pausado desde 14:02, esperando a sua resposta.')
   const early = new Date(2026, 9, 18, 9, 5).getTime()
@@ -1273,18 +1279,18 @@ test('the nav row has a separator after the options and Other…: an SVG rule on
     const rule = '─'.repeat(40)
     const keyAt = (key: string): number => nodes.findIndex(node => keyOfNode(node) === key)
     const isRule = (node: Record<string, unknown>): boolean =>
-      (node.props as Record<string, unknown> | undefined)?.alt === 'divider' || (Array.isArray(node.children) && node.children.includes(rule))
+      isDividerProps(node.props as Record<string, unknown> | undefined) || (Array.isArray(node.children) && node.children.includes(rule))
     expect(nodes.filter(isRule)).toHaveLength(1)
     const navRuleAt = nodes.map(isRule).lastIndexOf(true)
     const otherAt = keyAt('other-row-q-l1-aaaaaa')
     expect(otherAt).toBeGreaterThan(-1)
     expect(navRuleAt).toBeGreaterThan(otherAt)
     expect(keyAt('nav-q-l1-aaaaaa')).toBeGreaterThan(navRuleAt)
-    const svgRules = (await ui.findAll({ type: 'Svg' })).filter(found => found.props.alt === 'divider')
+    const svgRules = (await ui.findAll({ type: 'Svg' })).filter(found => isDividerProps(found.props))
     if (surface === 'desktop') {
       // One rule, the one above the nav row.
       expect(svgRules).toHaveLength(1)
-      expect(svgRules[0]?.props).toMatchObject({ alt: 'divider', height: 21 })
+      expect(svgRules[0]?.props).toMatchObject({ alt: '', height: 21 })
       expect(String(svgRules[0]?.props.source)).toContain('<rect x="0" y="10" width="320" height="1"')
       expect(await ui.find({ type: 'Text', text: rule })).toBeUndefined()
     } else {
@@ -1466,7 +1472,7 @@ async function cardTextsAt1402($: Engine, on: On, env: Record<string, string>, e
 
 test('the card draws the lead line right under the question in pt-BR: the recommended key and the time', async ($, on) => {
   const texts = await cardTextsAt1402($, on, {}, {})
-  const lead = 'Na B desde 14:02. Escolha outra opção para trocar; sem resposta, fica a B.'
+  const lead = 'Na opção B desde 14:02. Escolha outra opção para trocar; sem resposta, fica a opção B.'
   // The lead is the text drawn straight after the question, and the details block comes before the question.
   expect(texts.indexOf(lead)).toBe(texts.indexOf('Which way for q-l1-aaaaaa?') + 1)
   expect(texts.indexOf('Detalhes do Askaway:')).toBeLessThan(texts.indexOf('Which way for q-l1-aaaaaa?'))
@@ -1476,7 +1482,7 @@ test('the card draws the lead line right under the question in pt-BR: the recomm
 test('the card draws the lead line right under the question in English: the recommended key and the time', async ($, on) => {
   const texts = await cardTextsAt1402($, on, { LANG: 'en_US.UTF-8' }, {})
   expect(texts.indexOf('On B since 14:02. Pick another option to switch; no answer keeps B.')).toBe(texts.indexOf('Which way for q-l1-aaaaaa?') + 1)
-  expect(texts).not.toContain('Na B desde 14:02. Escolha outra opção para trocar; sem resposta, fica a B.')
+  expect(texts).not.toContain('Na opção B desde 14:02. Escolha outra opção para trocar; sem resposta, fica a opção B.')
 })
 
 test('a high-risk card in pt-BR says the agent is paused, not on a key', async ($, on) => {
@@ -1779,7 +1785,7 @@ test('an answer unread past the 7-day TTL expires with no marker, and its line c
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
 const footerOf = async (ui: Awaited<ReturnType<typeof mountPane>>): Promise<string> =>
-  (await textsOf(ui)).find(text => text.startsWith('Nada')) ?? ''
+  (await textsOf(ui)).find(text => text.includes('nas últimas 24 h')) ?? ''
 
 test('the footer moves an unread answer to expired once the 7-day TTL passes, without a new poll write', async ($, on) => {
   // Stamped just inside the TTL at the clock's start, so the TTL passes within one short advance.
@@ -1790,10 +1796,10 @@ test('the footer moves an unread answer to expired once the 7-day TTL passes, wi
   const { clock } = stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await footerOf(ui)).toContain('1 ainda não lida · 0 expiradas')
+  expect(await footerOf(ui)).toContain('· 1 ainda não lida')
   await clock.advance(60_000)
   await clock.settle()
-  expect(await footerOf(ui)).toContain('0 ainda não lidas · 1 expirada')
+  expect(await footerOf(ui)).toContain('· 1 expirada')
   await ui.unmount()
 })
 
@@ -3437,8 +3443,8 @@ test('History: the family label and a derived session row link to their Desktop 
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($, 'desktop')
-  const icon = nodesOf(await ui.drawn()).find(node => node.type === 'Svg' && (node.props as Record<string, unknown>).alt === 'History')
-  expect(icon?.props).toMatchObject({ alt: 'History', width: 16, height: 16 })
+  const icon = nodesOf(await ui.drawn()).find(node => node.type === 'Svg' && (node.props as Record<string, unknown>).alt === '' && (node.props as Record<string, unknown>).width === 16)
+  expect(icon?.props).toMatchObject({ alt: '', width: 16, height: 16 })
   expect(await ui.find({ type: 'Markdown', text: '**[Release Checklist Review](#local_root)**' })).toBeDefined()
   expect(await ui.find({ type: 'Markdown', text: '└ [Child Session](#local_child)' })).toBeDefined()
   // The root's row sits under the family label with no lead; the child's row under its session row.
@@ -3964,7 +3970,7 @@ test('an open question whose session has ended draws the notice and Dismiss inst
   ended.add('q-l1-aaaaaa')
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await textsOf(ui)).toContain('A sessão que perguntou terminou; o agente ficou na A.')
+  expect(await textsOf(ui)).toContain('A sessão que perguntou terminou; o agente ficou na opção A.')
   expect(await ui.find({ type: 'Button', key: 'dismiss-ended' })).toBeDefined()
   expect(await labelOf(ui, 'nav-next')).toBe('Próxima →')
   expect(await ui.find({ type: 'Button', key: 'opt-q-l1-aaaaaa-A' })).toBeUndefined()
@@ -4244,4 +4250,501 @@ test('model: "multimedia" does not grade medium urgency; an Other answer whose q
   expect(grade({ urgency: 'media team' })).toBe('medium')
   const orphan: Board = { questions: [], answers: [answerOf('q-m-000001', 'other', 1, 'lavanda')], delivered: [] }
   expect(historyOf('en', orphan, NO_STATUS)[0]?.sessions[0]?.entries[0]?.line).toContain('Answer (Other: "lavanda")')
+})
+
+// Gauntlet 3 package C
+test('the ended card draws no lead line in either language: no option can be sent, so "Pick another option" would mislead', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone' })]])
+  const { ended } = stubHost(on, files)
+  ended.add('q-l1-aaaaaa')
+  await $.session.start(SESSION)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    const texts = await textsOf(ui)
+    expect(texts).toContain('A sessão que perguntou terminou; o agente ficou na opção A.')
+    expect(texts.some(text => text.includes('Escolha outra opção') || text.includes('Pick another option'))).toBe(false)
+    await ui.unmount()
+  }
+})
+
+test('Back on an ended card carries its hotkey, z on the terminal and p on the desktop, as Back on a live card does', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone' })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { session: 'sess-gone' })],
+  ])
+  const { ended } = stubHost(on, files)
+  ended.add('q-l1-aaaaaa')
+  await $.session.start(SESSION)
+  for (const [surface, letter] of [['terminal', 'z'], ['desktop', 'p']] as const) {
+    const ui = await mountPane($, surface)
+    expect((await ui.find({ type: 'Button', key: 'nav-back' }))?.props.hotkey).toBe(letter)
+    await ui.unmount()
+  }
+})
+
+test('the terminal submit link draws the ▪ link mark before "Enviar resposta", as the Desktop Markdown link does', async ($, on) => {
+  stubHost(on, treeFiles())
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
+  expect(await textsOf(ui)).toContain('▪ Enviar resposta')
+  await ui.unmount()
+})
+
+test('a long Other text is quoted on its History row up to 80 code points with an ellipsis, while the delivery line keeps the full text', () => {
+  const long = 'x'.repeat(200)
+  const board: Board = { questions: [parsedQuestion('q-m-000001', 10)], answers: [answerOf('q-m-000001', 'other', 1, long)], delivered: [] }
+  const [entry] = historyOf('en', board, NO_STATUS).flatMap(group => group.sessions.flatMap(session => session.entries))
+  expect(entry?.line).toContain(`(Other: "${'x'.repeat(79)}…")`)
+  expect(entry?.line).not.toContain('x'.repeat(80))
+  expect(deliveryLine(parsedQuestion('q-m-000001', 10), answerOf('q-m-000001', 'other', 1, long))).toContain(long)
+})
+
+test('the terminal card title names the asking session, dimmed beside the title', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session_title: 'billing-api' })]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($, 'terminal')
+  expect(await ui.find({ type: 'Text', text: sessionLabelOf({ session_title: 'billing-api' }, 'pt') })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the pt-BR ended notice and lead name the option as "opção", not a bare letter', () => {
+  expect(t('pt', 'card.ended', { key: 'B' })).toBe('A sessão que perguntou terminou; o agente ficou na opção B.')
+  expect(t('pt', 'card.lead.agent', { key: 'B', time: '14:02' })).toBe(
+    'Na opção B desde 14:02. Escolha outra opção para trocar; sem resposta, fica a opção B.',
+  )
+})
+
+test('an answer given this minute reads "just now" in English and "há instantes" in pt-BR', () => {
+  expect(ageLabel('en', 0, 0)).toBe('just now')
+  expect(ageLabel('pt', 0, 0)).toBe('há instantes')
+})
+
+test('the footer with nothing open leaves out the zero counts and the "nothing waiting" text, and keeps the none form of the replied count', () => {
+  expect(footerText('en', EMPTY_BOARD, FOOT_DAY)).toBe('none answered in the last 24 h')
+  expect(footerText('pt', EMPTY_BOARD, FOOT_DAY)).toBe('nenhuma respondida nas últimas 24 h')
+})
+
+test('a History row whose question has left the board is titled "Question closed" (pt-BR "Pergunta encerrada"), never its raw id', () => {
+  const orphan: Board = { questions: [], answers: [answerOf('q-m-000001', 'A', 1)], delivered: [] }
+  const titleIn = (lang: 'en' | 'pt'): string | undefined =>
+    historyOf(lang, orphan, NO_STATUS).flatMap(group => group.sessions.flatMap(session => session.entries))[0]?.title
+  expect(titleIn('en')).toBe('Question closed')
+  expect(titleIn('pt')).toBe('Pergunta encerrada')
+})
+
+test('decorative images carry empty alt text on the desktop: the History icon and the divider rule, not English words', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+    [path('a', 'q-l2-bbbbbb'), answer('q-l2-bbbbbb', 'A')],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($, 'desktop')
+  const alts = (await ui.findAll({ type: 'Svg' })).map(svg => svg.props.alt)
+  expect(alts).not.toContain('History')
+  expect(alts).not.toContain('divider')
+  expect(alts).toContain('')
+  await ui.unmount()
+})
+
+test('away mode shows on the pane counter line: the counter text with the list away mark appended, and nothing when away is off', () => {
+  const ui = { Box: fakeElement('Box'), Text: fakeElement('Text'), Button: fakeElement('Button') }
+  const view = {
+    questions: [], history: [], now: 0, leaving: {}, groups: [], active: undefined, wizard: { picks: {} },
+    screen: undefined, surface: 'terminal', footer: undefined, ended: [], askWho: false, theme: 'unknown',
+  }
+  const drawnWith = (away: boolean): string =>
+    JSON.stringify(renderPane(ui as never, { ...view, away } as never, {} as never, 'en', heldButtons()))
+  expect(drawnWith(true)).toContain('Nothing pending, away mode on')
+  expect(drawnWith(false)).not.toContain('away mode on')
+})
+
+test('a question title with a format character (a bidi override) reads without it in the delivery line', () => {
+  const line = deliveryLine(parsedQuestion('q-m-000001', 1, { title: 'Pay‮out' }), answerOf('q-m-000001', 'A', 1))
+  expect(line).toContain('(Payout)')
+  expect(line).not.toContain('‮')
+})
+
+test('a delivered line whose marker has no time reads "(read by the session)" in parentheses, as the timed line does', () => {
+  const board: Board = {
+    questions: [parsedQuestion('q-h-000001', 10)],
+    answers: [answerOf('q-h-000001', 'A', 1)],
+    delivered: [{ id: 'q-h-000001', expired: false }],
+  }
+  const [entry] = historyOf('en', board, NO_STATUS).flatMap(group => group.sessions.flatMap(session => session.entries))
+  expect(entry?.line.endsWith('· (read by the session)')).toBe(true)
+})
+
+// Gauntlet 3 package B1
+test('Gauntlet B1 H1: a draft.json that exists but does not parse is not written over, and the pick stays on screen', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [`${STATE}/draft.json`, '{"ts": 100, "picks": {'],
+  ])
+  const { drafts } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
+  expect(drafts).toEqual([])
+  expect(files.get(`${STATE}/draft.json`)).toBe('{"ts": 100, "picks": {')
+  expect((await ui.find({ type: 'Button', key: 'opt-q-l1-aaaaaa-B' }))?.props.variant).toBe('primary')
+  await ui.unmount()
+})
+
+test('Gauntlet B1 H2: a pick whose draft write failed is retried at the next poll, and the person is told once', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  let isFailing = true
+  on('fs.write', { path: `${STATE}/draft.json` }, (_$, e, next) => {
+    if (isFailing) throw new Error('disk full')
+    return next(e)
+  })
+  const { drafts, toasts, clock } = stubHost(on, files, true, {}, {}, { LANG: '' })
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
+  await clock.advance(5000)
+  await clock.advance(5000)
+  expect(drafts).toEqual([])
+  expect(toasts.filter(text => text === 'Could not save your pick; retrying.')).toHaveLength(1)
+  expect((await ui.find({ type: 'Button', key: 'opt-q-l1-aaaaaa-B' }))?.props.variant).toBe('primary')
+  isFailing = false
+  await clock.advance(5000)
+  expect(drafts).toHaveLength(1)
+  expect(JSON.parse(drafts[0] ?? '{}')).toEqual({ ts: expect.any(Number), picks: { 'q-l1-aaaaaa': { key: 'B' } } })
+  await ui.unmount()
+})
+
+test('Gauntlet B1 H3: a draft.json stamped more than 60 s past the clock is not applied; one 30 s ahead is', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  files.set(`${STATE}/draft.json`, JSON.stringify({ ts: 1e13, picks: { 'q-l1-aaaaaa': { key: 'B' } } }))
+  await clock.advance(5000)
+  expect((await ui.find({ type: 'Button', key: 'submit-all' }))?.props.dimColor).toBe(true)
+  files.set(`${STATE}/draft.json`, JSON.stringify({ ts: 100, picks: { 'q-l1-aaaaaa': { key: 'B' } } }))
+  await clock.advance(5000)
+  expect((await ui.find({ type: 'Button', key: 'submit-all' }))?.props.dimColor).toBe(false)
+  await ui.unmount()
+})
+
+test('Gauntlet B1 H4: a draft this window writes is stamped after the newest draft it has seen, even when the clock is behind it', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { drafts, clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
+  // Another window's draft stamped 30 s ahead of this first write; the poll applies it and sets this session's last ts.
+  const first = (JSON.parse(drafts[0] ?? '{}') as { ts: number }).ts
+  files.set(`${STATE}/draft.json`, JSON.stringify({ ts: first + 30_000, picks: {} }))
+  await clock.advance(5000)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-A' })
+  expect((JSON.parse(drafts[drafts.length - 1] ?? '{}') as { ts: number }).ts).toBeGreaterThan(first + 30_000)
+  await ui.unmount()
+})
+
+test('Gauntlet B1 H5: Submit all applies the draft another window wrote before it sends the picks', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { writes } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  // The other window's pick lands after this session's last poll, so this session has not applied it yet.
+  files.set(`${STATE}/draft.json`, JSON.stringify({ ts: 100, picks: { 'q-l1-aaaaaa': { key: 'B' } } }))
+  await ui.press({ key: 'submit-all' })
+  expect(writes).toEqual([path('a', 'q-l1-aaaaaa')])
+  expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ key: 'B' })
+  await ui.unmount()
+})
+
+test('Gauntlet B1 H6: a row Submit on a question whose reply is still being written keeps that question its pick', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  const write = gate()
+  const holds: Holds = {}
+  const { clock, drafts, writes } = stubHost(on, files, true, { quiet: true }, holds)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-A' })
+  await ui.press({ key: 'opt-q-l2-bbbbbb-B' })
+  // The first question's reply is held in its CLI call; the row Submit of the same question comes while it is in flight.
+  holds.write = write.promise
+  const first = ui.press({ key: 'submit-all' })
+  await clock.settle()
+  const drafted = drafts.length
+  await pressTreeLink(ui, 'submit', 'q-l1-aaaaaa')
+  await clock.settle()
+  expect(drafts).toHaveLength(drafted)
+  write.open()
+  await first
+  await clock.settle()
+  expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb')])
+  await ui.unmount()
+})
+
+test('Gauntlet B1 H9: an ended question takes no Submit all: its pick is dropped and no reply is written', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone' })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  const { clock, drafts, writes, ended } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
+  ended.add('q-l1-aaaaaa')
+  await clock.advance(5000)
+  // The card moved on to the next question, so the ended one is a tree row: its Submit takes no reply.
+  await pressTreeLink(ui, 'submit', 'q-l1-aaaaaa')
+  await clock.settle()
+  expect(writes).toEqual([])
+  expect(files.has(path('a', 'q-l1-aaaaaa'))).toBe(false)
+  expect(JSON.parse(drafts[drafts.length - 1] ?? '{}')).toEqual({ ts: expect.any(Number), picks: {} })
+  await ui.unmount()
+})
+
+test('Gauntlet B1 H10: a failed cleared.json write is logged, and the clear holds in this window and after a restart', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B')],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  on('fs.write', { path: `${STATE}/cleared.json` }, (_$, _e, next) => {
+    throw new Error('read-only folder')
+    return next(e)
+  })
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'history-clear' })
+  expect(files.has(`${STATE}/cleared.json`)).toBe(false)
+  expect(await ui.find({ type: 'Button', key: 'history-clear' })).toBeUndefined()
+  await ui.unmount()
+  await $.session.start(SESSION)
+  const restarted = await mountPane($)
+  expect(await restarted.find({ type: 'Button', key: 'history-clear' })).toBeUndefined()
+  await restarted.unmount()
+})
+
+test('Gauntlet B1 H12: a hidden History row that crosses 30 s leaves the drawn pane unchanged', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  files.set(path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B'))
+  files.set(path('d', 'q-l1-aaaaaa'), delivery('q-l1-aaaaaa', { expired: false }))
+  await clock.advance(5000)
+  await ui.press({ key: 'history-clear' })
+  await clock.settle()
+  // The footer names the cleared question as its last answer and its age moves to the minute, so it is left out.
+  const withoutFooter = async (): Promise<string[]> => (await textsOf(ui)).filter(text => !text.includes('Title q-l1-aaaaaa'))
+  const drawn = await withoutFooter()
+  await clock.advance(31_000)
+  expect(await withoutFooter()).toEqual(drawn)
+  await ui.unmount()
+})
+
+test('Gauntlet B1 H19: a second session start keeps the card on screen and its step', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-A' })
+  expect(await textsOf(ui)).toContain('Which way for q-l2-bbbbbb?')
+  await ui.unmount()
+  await $.session.start(SESSION)
+  for (const surface of SURFACES) {
+    const again = await mountPane($, surface)
+    expect(await textsOf(again)).toContain('Which way for q-l2-bbbbbb?')
+    await again.unmount()
+  }
+})
+
+test('Gauntlet B1 F11: Dismiss runs prune with --strict, so a refused prune exits non-zero and is reported', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone' })]])
+  const { calls, ended } = stubHost(on, files)
+  ended.add('q-l1-aaaaaa')
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'dismiss-ended' })
+  expect(calls.map(call => call.argv.slice(2).join(' '))).toContain('prune --id q-l1-aaaaaa --strict')
+  await ui.unmount()
+})
+
+// Gauntlet 3 package B2
+test('Gauntlet B2 H7: a reply the CLI cannot write is logged and told by a toast, and the pick stays for another press', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { toasts, clock } = stubHost(on, files, true, {}, { answerExit: 1 }, { LANG: '' })
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
+  await ui.press({ key: 'submit-all' })
+  await clock.settle()
+  expect(toasts).toEqual(['Could not send your reply; the question is still open.'])
+  expect((await ui.find({ type: 'Button', key: 'opt-q-l1-aaaaaa-B' }))?.props.variant).toBe('primary')
+  await ui.unmount()
+})
+
+test('Gauntlet B2 H8: a reply another window wrote first is kept, and the toast names the key that holds it', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const hold = gate()
+  const { toasts, clock } = stubHost(on, files, true, {}, { write: hold.promise }, { LANG: '' })
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
+  await ui.press({ key: 'submit-all' })
+  // Another window writes its reply while this window's CLI call waits: the CLI refuses this one.
+  files.set(path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'A', 500))
+  hold.open()
+  await clock.settle()
+  expect(toasts).toEqual(['Another window already replied A; that reply stays.'])
+  expect(files.get(path('a', 'q-l1-aaaaaa'))).toBe(answer('q-l1-aaaaaa', 'A', 500))
+  await ui.unmount()
+})
+
+test('Gauntlet B2 H11: the ended check runs when the linked open questions change, and otherwise at most every 30 s', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-a' })]])
+  const { calls, clock } = stubHost(on, files)
+  const listings = (): number => calls.filter(call => call.argv[2] === 'list').length
+  await $.session.start(SESSION)
+  expect(listings()).toBe(1)
+  await clock.advance(5000)
+  await clock.advance(5000)
+  await clock.advance(5000)
+  expect(listings()).toBe(1)
+  files.set(path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { session: 'sess-b' }))
+  await clock.advance(5000)
+  expect(listings()).toBe(2)
+  await clock.advance(25000)
+  expect(listings()).toBe(2)
+  await clock.advance(5000)
+  expect(listings()).toBe(3)
+})
+
+test('Gauntlet B2 H13: with no state folder the pane footer says away mode is unavailable, on both surfaces', async ($, on) => {
+  stubHost(on, new Map(), true, {}, {}, { LANG: '', HOME: '' })
+  await $.session.start(SESSION)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    expect(await textsOf(ui)).toContain('Askaway away mode is unavailable: no state folder (HOME is unset).')
+    await ui.unmount()
+  }
+})
+
+test('Gauntlet B2 H25: Clear all over a pending reply says the reply still reaches its session', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'A', 500)],
+  ])
+  const { toasts, clearings } = stubHost(on, files, true, {}, {}, { LANG: '' })
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'history-clear' })
+  expect(toasts).toEqual(['Cleared 1; waiting replies still reach their sessions'])
+  expect(clearings).toHaveLength(1)
+  await ui.unmount()
+})
+
+test('Gauntlet B2 P12: the pane counter says away mode is on while away.json is on, on both surfaces', async ($, on) => {
+  const files = new Map([[`${STATE}/away.json`, '{"on":true,"ts":1}']])
+  stubHost(on, files, true, {}, {}, { LANG: '' })
+  await $.session.start(SESSION)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    expect(await textsOf(ui)).toContain('Nothing pending, away mode on')
+    await ui.unmount()
+  }
+})
+
+test('Gauntlet B2 leftover: the pick-not-saved toast comes from the i18n table, so pt-BR reads in pt-BR', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  on('fs.write', { path: `${STATE}/draft.json` }, () => {
+    throw new Error('disk full')
+  })
+  const { toasts, clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
+  await clock.advance(5000)
+  expect(toasts).toEqual(['Não foi possível salvar a escolha; tentando de novo.'])
+  await ui.unmount()
+})
+
+// Gauntlet 3 H21 H22
+test('Gauntlet H21: a reply stamped after a clock step back is due at once; one stamped just before now is still held', () => {
+  const now = 100_000
+  const board = (ts: number): Board => ({
+    questions: [parsedQuestion('q-h21-000001', 10, { session: 's1' })],
+    answers: [answerOf('q-h21-000001', 'A', ts)],
+    delivered: [],
+  })
+  expect(groupBySession(board(now + 60_000), now)[0]?.items.map(item => item.answer.id)).toEqual(['q-h21-000001'])
+  expect(groupBySession(board(now - 1), now)).toEqual([])
+})
+
+test('Gauntlet H22: a delivered line whose shown time is ahead of the clock is not drawn; one shown at now is', () => {
+  const now = 100_000
+  const board: Board = {
+    questions: [parsedQuestion('q-h22-000001', 10)],
+    answers: [answerOf('q-h22-000001', 'A', now - 5_000)],
+    delivered: [{ id: 'q-h22-000001', expired: false, ts: now - 5_000 }],
+  }
+  const drawnWith = (shownAt: number) =>
+    clearableIdsOf(historyOf('en', board, { ...NO_STATUS, now, shownAt: { 'q-h22-000001': shownAt } }))
+  expect(drawnWith(now + 60_000)).toEqual([])
+  expect(drawnWith(now)).toEqual(['q-h22-000001'])
+})
+
+// Gauntlet 3 review fixes
+test('Gauntlet 3 review 1: an unreadable draft.json holds the first pick; the next poll overwrites it so the picks land', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [`${STATE}/draft.json`, '{"ts": 100, "picks": {'],
+  ])
+  const { drafts, clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
+  expect(drafts).toEqual([])
+  await clock.advance(5000)
+  expect(drafts).toHaveLength(1)
+  expect(JSON.parse(files.get(`${STATE}/draft.json`) ?? '{}')).toEqual({ ts: expect.any(Number), picks: { 'q-l1-aaaaaa': { key: 'B' } } })
+  await ui.unmount()
+})
+
+test('Gauntlet 3 review 2: a pick the file holds for an id this window does not know yet survives this window\'s next save', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [`${STATE}/draft.json`, JSON.stringify({ ts: 100, picks: { 'q-l9-zzzzzz': { key: 'A' } } })],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'opt-q-l1-aaaaaa-B' })
+  expect(JSON.parse(files.get(`${STATE}/draft.json`) ?? '{}').picks).toEqual({ 'q-l1-aaaaaa': { key: 'B' }, 'q-l9-zzzzzz': { key: 'A' } })
+  await ui.unmount()
+})
+
+test('Gauntlet 3 review 3: a list --open run that fails is run again at the next poll; a run that ran is not repeated within 30 s', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone' })]])
+  const holds: Holds = { listExit: 1 }
+  const { calls, clock } = stubHost(on, files, true, {}, holds)
+  const listRuns = () => calls.filter(call => call.argv[2] === 'list').length
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  const before = listRuns()
+  await clock.advance(5000)
+  await clock.advance(5000)
+  expect(listRuns() - before).toBe(2)
+  holds.listExit = undefined
+  await clock.advance(5000)
+  await clock.advance(5000)
+  expect(listRuns() - before).toBe(3)
+  await ui.unmount()
 })
