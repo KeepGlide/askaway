@@ -117,6 +117,7 @@ One JSON file per item; never one shared file (no append races, no 4 MiB limit).
   from the answer's `ts`); it expires for every session, the asking one included.
 - `away.json` — `{"on":true,"ts":<ms>}` (missing = off).
 - `draft.json` — `{"ts":<ms>,"picks":{"<question id>":{"key":"…","text"?:"…"}}}` (missing = no picks): the wizard's picks, shared by every session of the folder. The pane writes it on each change of the picks, and each session's poll reads it (see "Shared picks" below). The CLI never reads it.
+- `cleared.json` — `{"ts":<ms>,"ids":["<question id>", …]}` (missing = nothing cleared): the History lines a Clear all hid, shared by every session of the folder. A Clear all writes it; each session's poll adds the listed ids it lacks (see "Clear all" below). Malformed = nothing cleared. The CLI never reads it.
 - `foreign_check` — an empty stamp file; its mtime is the last re-check of unread answers that other sessions
   receive. The deliver hook re-checks them at most once every 60 s, so its usual cost stays near the empty folder's.
 
@@ -464,8 +465,13 @@ status list). `hooks/pane.tsx`, `renderPane`.
   expired line stays until it is cleared.
 - **Clear all** (the last row of the pane, after a divider, right-aligned; `renderHistoryClear`): a secondary Button, as the card's Back is, labelled "Clear all (N)"
   ("Limpar tudo (N)"), where N counts every row drawn now, pending ones included; hidden when N is 0. Its press
-  (`clearHistory`, `hooks/register.tsx`) records those answers' ids in `$.store` key `cleared` (non-destructive: no q/, a/ or d/
-  file changes, so a cleared pending answer is still read by its session). It replaces the per-line ✕ of earlier versions.
+  (`clearHistory`, `hooks/register.tsx`) writes those answers' ids to `cleared.json`, shared by every session of the folder: the
+  press writes the ids it drew and its own earlier ones, pruned to the answers its board knows, plus every id the file already lists, kept unpruned (a board up to one poll behind may not know an answer another session cleared; the list only grows), with the write's `ts` (recorded for diagnosis; no reader uses it). Two Clear all presses within the same instant in two sessions keep the later write, as `$.fs` has no atomic rename. Each
+  session's poll adds the listed ids its `cleared` atom lacks (`applyCleared`), so a row another session cleared leaves at its
+  next poll (5 s), and a session opened later hides it at its first poll. The press also keeps the ids in `$.store` key
+  `cleared`, the start seed of a session. A malformed file reads as nothing cleared (`parseCleared`, `hooks/model.ts`).
+  Non-destructive: no q/, a/ or d/ file changes, so a cleared pending answer is still read by its session. It replaces the
+  per-line ✕ of earlier versions.
 - **Footer** (`footerText`, `hooks/model.ts`; pt "Nada aguardando" first): drawn under the History block, above the Clear all button, only while no
   question is open. It counts the answers given in the last 24 h, names the last answer (its question's title cut to 40
   characters, its key and its age), and counts the answers not yet read and the expired ones. Absent while a question is open. Its counts are read on the pane's clock (the tick, `tickClock`), which the poll rewrites

@@ -231,6 +231,17 @@ export function parseDraft(raw: unknown): Draft | undefined {
   return { ts, picks }
 }
 
+// The History lines Clear all hid (cleared.json): the ts of the press that wrote it and the question ids it hid. Any other
+// shape reads as nothing cleared, so a malformed file changes nothing.
+type Cleared = { ts: number; ids: string[] }
+
+export function parseCleared(raw: unknown): Cleared | undefined {
+  const ts = isRecord(raw) ? raw.ts : undefined
+  const ids = isRecord(raw) ? raw.ids : undefined
+  if (typeof ts !== 'number' || !Array.isArray(ids) || !ids.every((id): id is string => typeof id === 'string')) return undefined
+  return { ts, ids }
+}
+
 export const isOpenIn = (board: Board, id: string): boolean =>
   board.questions.some(question => question.id === id) && !board.answers.some(answer => answer.id === id)
 

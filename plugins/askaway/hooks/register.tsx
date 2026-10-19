@@ -27,6 +27,7 @@ import {
   whoText,
   parseAway,
   parseDelivery,
+  parseCleared,
   parseDraft,
   parseQuestion,
   sameBoard,
@@ -299,6 +300,7 @@ async function pollInbox($: EngineInterface, home: string, ownSession?: string):
   const away = parseAway(await readJson($, `${home}/away.json`))
   const now = await $.clock.now()
   await mergeBoard($, next)
+  await applyCleared($, home)
   await applyDraft($, home)
   await refreshEnded($, home, next)
   if ((await read($, isAway)) !== away) await update($, isAway, () => away)
@@ -455,7 +457,13 @@ async function endFade($: EngineInterface, id: string): Promise<void> {
   await update($, leaving, prev => Object.fromEntries(Object.entries(prev).filter(([key]) => key !== id)))
 }
 
-// Clear all: every History row drawn now, pending ones included, goes into the plugin's store by id; no state file is
+// The ids Clear all wrote to cleared.json; none when the file is absent or malformed.
+async function sharedClearedIds($: EngineInterface, home: string): Promise<string[]> {
+  return parseCleared(await readJson($, `${home}/cleared.json`))?.ids ?? []
+}
+
+// Clear all: every History row drawn now, pending ones included, goes into cleared.json for every session of the folder
+// (with the ids it already lists) and into the store as this session's start seed. No answer or delivery file is
 // touched, so a cleared pending reply is still read by its session.
 async function clearHistory($: EngineInterface): Promise<void> {
   const lang = await read($, langAtom)
@@ -466,9 +474,26 @@ async function clearHistory($: EngineInterface): Promise<void> {
     leaving: await read($, leaving),
   })
   const known = new Set((await read($, board)).answers.map(answer => answer.id))
-  const ids = [...new Set([...(await read($, cleared)), ...clearableIdsOf(drawn)])].filter(id => known.has(id))
+  const folder = await folderOf($)
+  const shared = folder === undefined ? [] : await sharedClearedIds($, folder)
+  // This session's own ids are pruned to the answers its board knows; the file's ids are kept as they are, since a board
+  // up to one poll behind may not know an answer another session cleared, and a cleared id must never come back.
+  const own = [...new Set([...(await read($, cleared)), ...clearableIdsOf(drawn)])].filter(id => known.has(id))
+  const ids = [...new Set([...shared, ...own])]
   await $.store.set(CLEARED_KEY, ids)
   await update($, cleared, () => ids)
+  if (folder === undefined) return
+  const ts = await $.clock.now()
+  await $.fs.write(`${folder}/cleared.json`, `${JSON.stringify({ ts, ids })}\n`)
+}
+
+// Clear all of another session: the ids cleared.json lists that this session's atom lacks are added, so the History
+// drops those rows at this poll. Written only when it adds something, so a poll that learns nothing redraws nothing.
+async function applyCleared($: EngineInterface, home: string): Promise<void> {
+  const current = await read($, cleared)
+  const missing = (await sharedClearedIds($, home)).filter(id => !current.includes(id))
+  if (missing.length === 0) return
+  await update($, cleared, prev => [...new Set([...prev, ...missing])])
 }
 
 // Stores the name answers are signed with (a skip stores ''). The CLI caps and cleans it again (ASKAWAY_WHO).

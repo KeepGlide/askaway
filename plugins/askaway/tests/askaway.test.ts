@@ -134,6 +134,8 @@ function stubHost(
   const writes: string[] = []
   // The shared picks (draft.json) of each change, kept apart from `writes`, which lists the answers and the state files.
   const drafts: string[] = []
+  // The shared Clear all (cleared.json) of each press, kept apart from `writes` for the same reason.
+  const clearings: string[] = []
   const submits: string[] = []
   const calls: { argv: string[]; env?: Record<string, string> }[] = []
   const ended = new Set<string>()
@@ -186,6 +188,11 @@ function stubHost(
       files.set(e.path, e.text)
       return { value: undefined }
     }
+    if (e.path === `${STATE}/cleared.json`) {
+      clearings.push(e.text)
+      files.set(e.path, e.text)
+      return { value: undefined }
+    }
     await holds.write
     writes.push(e.path)
     files.set(e.path, e.text)
@@ -221,7 +228,7 @@ function stubHost(
     writes.push(path('a', id))
     return cliReply(JSON.stringify({ id, key, written: true }))
   })
-  return { toasts, writes, drafts, submits, clock, calls, ended, tokenCalls }
+  return { toasts, writes, drafts, clearings, submits, clock, calls, ended, tokenCalls }
 }
 
 // The hook's reply with the result `$.process.run` gives for a child that exited (the fields the pane reads).
@@ -4105,6 +4112,103 @@ test('History: Clear all counts every row, the pending one included, removes the
   const drawn = JSON.stringify(await ui.drawn())
   expect(drawn).not.toMatch(/expirou sem ser lida/)
   expect(drawn).not.toMatch(/Resposta A · /)
+  await ui.unmount()
+})
+
+test('History: Clear all writes cleared.json with the drawn ids and a ts, and no answer is written', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B')],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+    [path('a', 'q-l2-bbbbbb'), answer('q-l2-bbbbbb', 'A')],
+  ])
+  const { clearings, writes } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  await ui.press({ key: 'history-clear' })
+  expect(clearings).toHaveLength(1)
+  const written = JSON.parse(clearings[0] ?? '{}') as { ts: number; ids: string[] }
+  expect(written.ts).toEqual(expect.any(Number))
+  expect([...written.ids].sort()).toEqual(['q-l1-aaaaaa', 'q-l2-bbbbbb'])
+  expect(writes).toEqual([])
+  await ui.unmount()
+})
+
+test('History: a Clear all of another session hides its rows at the next poll', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B')],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+    [path('a', 'q-l2-bbbbbb'), answer('q-l2-bbbbbb', 'A')],
+  ])
+  const { clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(String((await ui.find({ type: 'Button', key: 'history-clear' }))?.props.label)).toBe('Limpar tudo (2)')
+  files.set(`${STATE}/cleared.json`, JSON.stringify({ ts: 100, ids: ['q-l1-aaaaaa'] }))
+  await clock.advance(5000)
+  expect(String((await ui.find({ type: 'Button', key: 'history-clear' }))?.props.label)).toBe('Limpar tudo (1)')
+  const texts = await textsOf(ui)
+  expect(texts.some(text => text.includes('○ Title q-l1-aaaaaa'))).toBe(false)
+  expect(texts.some(text => text.startsWith('○ Title q-l2-bbbbbb ✓ - '))).toBe(true)
+  await ui.unmount()
+})
+
+test('History: a malformed cleared.json changes nothing', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B')],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+    [path('a', 'q-l2-bbbbbb'), answer('q-l2-bbbbbb', 'A')],
+  ])
+  const { clock, clearings } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  files.set(`${STATE}/cleared.json`, JSON.stringify({ ts: 100, ids: [7] }))
+  await clock.advance(5000)
+  expect(String((await ui.find({ type: 'Button', key: 'history-clear' }))?.props.label)).toBe('Limpar tudo (2)')
+  files.set(`${STATE}/cleared.json`, JSON.stringify({ ts: '100', ids: ['q-l1-aaaaaa'] }))
+  await clock.advance(5000)
+  expect(String((await ui.find({ type: 'Button', key: 'history-clear' }))?.props.label)).toBe('Limpar tudo (2)')
+  expect(clearings).toEqual([])
+  await ui.unmount()
+})
+
+test('History: Clear all keeps the ids cleared.json already lists, even a row this session no longer draws', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B')],
+    [path('d', 'q-l1-aaaaaa'), delivery('q-l1-aaaaaa', { expired: false })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+    [path('a', 'q-l2-bbbbbb'), answer('q-l2-bbbbbb', 'A')],
+  ])
+  const { clock, clearings } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  // A read line leaves once a poll finds it more than 30 s old; the 36 s advance runs polls past that, so q-l1 is no longer
+  // drawn, and the file then names it, after the last poll.
+  await clock.advance(36000)
+  expect(String((await ui.find({ type: 'Button', key: 'history-clear' }))?.props.label)).toBe('Limpar tudo (1)')
+  files.set(`${STATE}/cleared.json`, JSON.stringify({ ts: 100, ids: ['q-l1-aaaaaa'] }))
+  await ui.press({ key: 'history-clear' })
+  const written = JSON.parse(clearings[0] ?? '{}') as { ids: string[] }
+  expect([...written.ids].sort()).toEqual(['q-l1-aaaaaa', 'q-l2-bbbbbb'])
+  await ui.unmount()
+})
+
+test('History: Clear all keeps an id cleared.json lists for an answer this session\'s board does not know yet', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B')],
+  ])
+  const { clearings } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  // Another session cleared q-l9 after writing its answer; neither file has reached this session's board yet.
+  files.set(`${STATE}/cleared.json`, JSON.stringify({ ts: 100, ids: ['q-l9-zzzzzz'] }))
+  await ui.press({ key: 'history-clear' })
+  const written = JSON.parse(clearings[0] ?? '{}') as { ids: string[] }
+  expect([...written.ids].sort()).toEqual(['q-l1-aaaaaa', 'q-l9-zzzzzz'])
   await ui.unmount()
 })
 
