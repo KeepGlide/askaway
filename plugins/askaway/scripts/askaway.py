@@ -144,6 +144,8 @@ PRUNE_DAYS_ENV: Final = "ASKAWAY_PRUNE_DAYS"
 PRUNE_DAYS_TEXT: Final = re.compile(r"[0-9]{1,6}")
 UNDELIVERED_TTL_MS: Final = 7 * DAY_MS
 PRUNE_INTERVAL_S: Final = 86_400
+PRUNE_STAMP: Final = "last_prune"  # the daily cleanup's stamp file, in the state folder
+CLOCK_JUMP_S: Final = 7 * 86_400  # a daily stamp older than this means the wall clock moved, not a missed day
 RELEASED_SUFFIX: Final = ".desktop-released.json"
 TEMP_STALE_S: Final = 86_400
 CLOSED_STATUSES: Final = frozenset({"delivered", "expired"})
@@ -157,7 +159,7 @@ PLACEHOLDER_WORDS: Final = frozenset({"tbd", "todo", "n/a", "lorem"})
 MISSING: Final = "missing"
 PLACEHOLDER: Final = "placeholder"
 NOT_UTF8: Final = "not valid UTF-8"
-FIT_RULE: Final = "must be an integer 0 to 100"
+FIT_RULE: Final = "must be an integer 0 to 100, or null"
 KEY_RULE: Final = "option keys must be consecutive uppercase letters starting at A, in order (A, B, C...)"
 FOREIGN_RECHECK_S: Final = 60
 FOREIGN_STAMP: Final = "foreign_check"  # touched when unread answers of other sessions were last re-checked
@@ -165,7 +167,7 @@ WAIT_ANSWERED: Final = frozenset({"answered", "delivered"})
 DURATION: Final = re.compile(r"([0-9]+)([mhd])")
 DURATION_MS: Final = {"m": 60_000, "h": 3_600_000, "d": DAY_MS}
 # Read-only MCP tools (mcp__<server>__<tool>): the tool name starts with one of these prefixes, no write word.
-READ_ONLY_PREFIXES: Final = ("get_", "list_", "read_", "search_", "find_", "describe_", "show_")
+READ_ONLY_PREFIXES: Final = ("get_", "list_", "read_", "search_", "find_", "describe_", "show_", "query_")
 WRITE_WORDS: Final = frozenset({
     "add", "apply", "create", "delete", "edit", "exec", "execute", "insert", "keep", "kill", "move",
     "patch", "post", "purge", "push", "put", "register", "remove", "reset", "run", "save", "send",
@@ -182,7 +184,9 @@ _INBOX_HEAD: Final = (
     rf"(?:(?:{_FIXED_SCRIPTS})|\"(?:{_FIXED_SCRIPTS}|{_PLUGIN_ROOT_SCRIPT})\")"
     r"\s+(?:ask|status|list|wait|export)\b"
 )
-INBOX_CALL: Final = re.compile(rf"{_INBOX_HEAD}[^;&|`$<>\n]*$")
+INBOX_HEAD: Final = re.compile(_INBOX_HEAD)
+INBOX_UNSAFE: Final = re.compile(r"[$`;&|<>]")  # outside single quotes these expand, run or redirect
+SINGLE_QUOTED_SPAN: Final = re.compile(r"\"(?:\\.|[^\"\\])*\"|\\.|'[^']*'")  # double-quoted, escaped or single-quoted
 # The same call with a heredoc: its body is the JSON on stdin and never runs (see _heredoc_code).
 INBOX_HEREDOC: Final = re.compile(rf"{_INBOX_HEAD}[^;&|`$<>\n]*?<<-?\s*(['\"]?)(\w+)\1\s*$")
 # The Bash guard (a deterrent, SPEC.md): each command is read word by word as the shell reads it, and the words
@@ -194,6 +198,10 @@ ANSWER_DENIED: Final = ("Denied: an Askaway question is answered only by the use
                         "from a shell command. Keep working on the recommended option or end the turn.")
 STATE_DENIED: Final = ("Denied: the Askaway state folder is written only by askaway.py itself. The user answers "
                        "in the Askaway panel, so a shell command or a file edit must not write into that folder.")
+FORCE_PRUNE_DENIED: Final = ("Denied: prune --force is for the user's own terminal only. It removes an open question "
+                             "whose session has not ended, which frees that session's pause. Do read-only work or "
+                             "end the turn.")
+FORCE_FLAG: Final = "--force"  # argparse takes any unambiguous prefix of a long option, so a prefix counts too
 FILE_TOOLS: Final = frozenset({"Edit", "Write", "NotebookEdit"})
 SHELL_OPERATORS: Final = frozenset({";", "&&", "||", "|", "&", "(", ")", "\n"})
 WRITE_REDIRECTS: Final = frozenset({">", ">>", ">&", ">|", "&>", "<>"})
@@ -380,9 +388,12 @@ def load_questions() -> tuple[list[dict[str, Any]], list[str]]:
 
 
 def answer_lapsed(answer: Mapping[str, Any]) -> bool:
-    """Is the answer older than the TTL, so it expires unread instead of waiting for a session?"""
+    """Is the answer older than the TTL, so it expires unread instead of waiting for a session?
+
+    Never while the daily stamp is older than CLOCK_JUMP_S: that is a clock jump, and the expiry waits one cycle."""
     ts = answer.get("ts")
-    return isinstance(ts, int) and ts < now_ms() - UNDELIVERED_TTL_MS
+    return (isinstance(ts, int) and ts < now_ms() - UNDELIVERED_TTL_MS
+            and not _clock_jumped(state_home() / PRUNE_STAMP))
 
 
 def item_status(item_id: str) -> tuple[str, str | None]:
@@ -590,8 +601,10 @@ def _option(raw: Mapping[str, Any], key: str, gaps: Gaps) -> dict[str, Any]:
     fields: dict[str, str] = {}
     texts = {name: _checked(fields, name, raw.get(name), limit) for name, limit in OPTION_TEXT}
     fit = _strict_fit(raw.get("fit"))
-    if fit is None:
-        fields["fit"] = MISSING if raw.get("fit") is None else FIT_RULE
+    if "fit" not in raw:
+        fields["fit"] = MISSING
+    elif raw["fit"] is not None and fit is None:  # null is no estimate; any other value is an integer 0 to 100
+        fields["fit"] = FIT_RULE
     if fields:
         gaps.options.setdefault(key, {}).update(fields)
     return {"key": key, **texts, "fit": fit}
@@ -653,6 +666,32 @@ def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
 
 def store_entry(entry: Mapping[str, Any]) -> None:
     write_atomic(item_path("q", entry["id"]), entry)
+
+
+HIGH_RISK_ATTEMPTS: Final = 4  # a high-risk question that will not write is tried this often, then the agent pauses
+RETRY_BACK_OFF_S: Final = 0.05
+
+
+def store_high_risk(entry: Mapping[str, Any]) -> OSError | None:
+    """Write a high-risk question, retried with a short back-off: its last OS error when every attempt fails."""
+    failure: OSError | None = None
+    for attempt in range(HIGH_RISK_ATTEMPTS):
+        if attempt:
+            time.sleep(RETRY_BACK_OFF_S)
+        try:
+            store_entry(entry)
+            return None
+        except OSError as exc:
+            failure = exc
+    return failure
+
+
+def file_question(entry: Mapping[str, Any]) -> OSError | None:
+    """File a new question: a high-risk one through store_high_risk; any other is written once and its error propagates."""
+    if entry["pause"] is not True:
+        store_entry(entry)
+        return None
+    return store_high_risk(entry)
 
 
 def option_label(entry: Mapping[str, Any], key: object) -> str | None:
@@ -984,6 +1023,13 @@ def _ask_lock() -> Generator[None]:
         os.close(fd)  # closing the descriptor releases the lock
 
 
+def _duplicate_reply(twin: Mapping[str, Any]) -> dict[str, Any]:
+    """The reply to a repeated ask: the open twin's id. A paused twin still holds the session, so the agent must stop."""
+    action = "pause" if twin.get("pause") is True else "open"
+    return {"id": twin["id"], "recommended": twin["recommended"], "title": twin.get("title"),
+            "action": action, "duplicate": True}
+
+
 def cmd_ask(json_text: str | None) -> dict[str, Any]:
     raw: object = None
     twin: dict[str, Any] | None = None
@@ -994,11 +1040,11 @@ def cmd_ask(json_text: str | None) -> dict[str, Any]:
         entry = build_entry(raw, cli_origin())
         with _ask_lock():
             twin = open_twin(entry)
-            if twin is None:
-                store_entry(entry)
-        if twin is not None:  # a paused twin still holds the session, so the agent must stop, not continue
-            action = "pause" if twin.get("pause") is True else "open"
-            return {"id": twin["id"], "recommended": twin["recommended"], "action": action, "duplicate": True}
+            failure = file_question(entry) if twin is None else None
+        if failure is not None:  # a high-risk question that would not write: nothing filed, the agent stops
+            return {"action": "pause", "error": _os_error_text(failure)}
+        if twin is not None:
+            return _duplicate_reply(twin)
     except EntryError as exc:  # the entry has gaps: the agent completes them and files again
         return _refile(raw, str(exc), exc.gaps)
     except ValueError as exc:  # the entry is unreadable or invalid: the agent files it again
@@ -1007,7 +1053,7 @@ def cmd_ask(json_text: str | None) -> dict[str, Any]:
         high = _given_text(raw, "risk") == "high"
         return {"action": "pause" if high else "continue",
                 "recommended": _given_text(raw, "recommended"), "error": "internal error"}
-    return {"id": entry["id"], "recommended": entry["recommended"],
+    return {"id": entry["id"], "recommended": entry["recommended"], "title": entry["title"],
             "action": "pause" if entry["pause"] else "continue"}
 
 
@@ -1324,19 +1370,22 @@ def _prune_damaged_id(item_id: str) -> dict[str, Any]:
     return {"removed": 1, "damaged": "damaged inbox file"}
 
 
-def cmd_prune_id(item_id: str) -> dict[str, Any]:
-    """Remove one open question whose asking session has ended, or that has no session (the panel's Dismiss)."""
+def cmd_prune_id(item_id: str, force: bool) -> dict[str, Any]:
+    """Remove one open question whose asking session has ended, or that has no session (the panel's Dismiss).
+
+    force also removes one whose session has not ended: a terminal session never writes an end marker.
+    """
     entry = read_json(item_path("q", item_id))
     if entry is None or not _question_matches(item_id, entry):
         return _prune_damaged_id(item_id)
     if item_status(item_id)[0] != "open":
         return {"error": "prune refused: the question is already answered"}
     session = entry.get("session")
-    if session and not session_ended(session, entry.get("project")):
+    if not force and session and not session_ended(session, entry.get("project")):
         return {"error": "prune refused: the session that asked has not ended"}
     if not _remove_item(item_id):
         return {"error": "prune refused: a file of the question does not read"}
-    return {"removed": 1}
+    return {"removed": 1, "id": item_id} if force else {"removed": 1}
 
 
 
@@ -1449,12 +1498,64 @@ def render_export(rows: list[dict[str, Any]], fmt: str) -> str:
     return json.dumps(rows) + "\n"
 
 
-def _list_command(args: argparse.Namespace) -> dict[str, Any]:
+TABLE_HEADERS: Final = ("id", "status", "title", "risk", "age")
+TABLE_TITLE_MAX: Final = 40  # code points, the title column of list --table and status --table
+TABLE_BLANK: Final = "-"
+
+
+def _age_text(timestamp: object) -> str:
+    """How long ago a question was asked, in days, hours or minutes; `-` when its time is unknown."""
+    if not isinstance(timestamp, int):
+        return TABLE_BLANK
+    elapsed = max(0, now_ms() - timestamp)
+    for unit in ("d", "h", "m"):
+        if elapsed >= DURATION_MS[unit]:
+            return f"{elapsed // DURATION_MS[unit]}{unit}"
+    return "0m"
+
+
+def _table_text(items: Sequence[Mapping[str, Any]]) -> str:
+    """The items as an aligned text table (id, status, title, risk, age): a header line, then one line per item."""
+    entries = {entry["id"]: entry for entry in load_questions()[0]}
+    rows = []
+    for item in items:
+        entry = entries.get(item["id"], {})
+        title = _clip(str(entry.get("title") or ""), TABLE_TITLE_MAX)
+        rows.append([item["id"], item["status"], title or TABLE_BLANK, str(entry.get("risk") or TABLE_BLANK),
+                     _age_text(entry.get("ts"))])
+    lines = [list(TABLE_HEADERS), *rows]
+    widths = [max(len(cell) for cell in column) for column in zip(*lines, strict=True)]
+    return "".join("  ".join(cell.ljust(width) for cell, width in zip(line, widths, strict=True)).rstrip() + "\n"
+                   for line in lines)
+
+
+def _list_command(args: argparse.Namespace) -> dict[str, Any] | str:
     if args.answered:
-        return cmd_answered(args.since)
-    if args.since is not None:
+        result = cmd_answered(args.since)
+    elif args.since is not None:
         raise ValueError("--since needs --answered")
-    return cmd_list(args.only_open)
+    else:
+        result = cmd_list(args.only_open)
+    return _table_text(result["items"]) if args.table else result
+
+
+def _status_command(args: argparse.Namespace) -> dict[str, Any] | str:
+    result = cmd_status(args.id)
+    if not args.table:
+        return result
+    text = _table_text([result])
+    if result["key"] is None:
+        return text
+    other = f" {result['text']}" if "text" in result else ""
+    return f"{text}reply: {result['key']}{other}\n"
+
+
+def _prune_command(args: argparse.Namespace) -> dict[str, Any]:
+    if args.item_id:
+        return cmd_prune_id(args.item_id, args.force)
+    if args.force:
+        raise ValueError("--force needs --id")
+    return cmd_prune(args.days)
 
 
 class _Parser(argparse.ArgumentParser):
@@ -1485,13 +1586,15 @@ def build_parser() -> argparse.ArgumentParser:
     status = commands.add_parser("status")
     status.add_argument("id")
     status.add_argument("--strict", action="store_true")
-    status.set_defaults(run=lambda a: cmd_status(a.id))
+    status.add_argument("--table", action="store_true")
+    status.set_defaults(run=_status_command)
 
     listing = commands.add_parser("list")
     states = listing.add_mutually_exclusive_group()
     states.add_argument("--open", dest="only_open", action="store_true")
     states.add_argument("--answered", action="store_true")
     listing.add_argument("--since")
+    listing.add_argument("--table", action="store_true")
     listing.set_defaults(run=_list_command)
 
     away = commands.add_parser("away")
@@ -1501,8 +1604,9 @@ def build_parser() -> argparse.ArgumentParser:
     prune = commands.add_parser("prune")
     prune.add_argument("--days", type=int, default=prune_days())
     prune.add_argument("--id", dest="item_id")
+    prune.add_argument("--force", action="store_true")
     prune.add_argument("--strict", action="store_true")
-    prune.set_defaults(run=lambda a: cmd_prune_id(a.item_id) if a.item_id else cmd_prune(a.days))
+    prune.set_defaults(run=_prune_command)
 
     wait = commands.add_parser("wait")
     wait.add_argument("id")
@@ -1588,9 +1692,31 @@ def is_read_only_mcp(tool_name: object) -> bool:
     return tool.startswith(READ_ONLY_PREFIXES) and not (set(tool.split("_")) & WRITE_WORDS)
 
 
+def _without_single_quoted(text: str) -> str:
+    """The text without its single-quoted spans: what the shell still expands, runs or redirects."""
+    return SINGLE_QUOTED_SPAN.sub(lambda match: "" if match[0].startswith("'") else match[0], text)
+
+
+def inbox_call(command: str) -> bool:
+    """Is the command one simple `askaway.py ask|status|list|wait|export` call of a fixed script path?
+
+    Inside single quotes the text is data, so an operator, a backtick or `$` there is let through. Outside them,
+    any operator, `$` or backtick is not. The script path (the head) may name $HOME, as the installed mirror does.
+    """
+    text = command.strip()
+    head = INBOX_HEAD.match(text)
+    if head is None:
+        return False
+    tail = text[head.end():]
+    tokens = _shell_tokens(tail)
+    if tokens is None or any(kind == "op" for kind, _ in tokens):
+        return False
+    return INBOX_UNSAFE.search(_without_single_quoted(tail)) is None
+
+
 def _exempt_call(tool: object, command: str) -> bool:
     """A call the pause lets through: one simple inbox ask, status, list, wait or export, or a read-only MCP tool."""
-    return (tool == "Bash" and INBOX_CALL.match(command) is not None) or is_read_only_mcp(tool)
+    return (tool == "Bash" and inbox_call(command)) or is_read_only_mcp(tool)
 
 
 def _unquote(raw: str) -> str:
@@ -1754,6 +1880,13 @@ def _answer_reason(argv: Sequence[str], sandboxed: bool) -> str | None:
     return None
 
 
+def _forced_prune_reason(argv: Sequence[str]) -> str | None:
+    """A prune with --force, which removes a question whose session has not ended: the user's own terminal only."""
+    words = [_unquote(word) for word in _askaway_args(argv) or []]
+    forced = any(len(word) >= 3 and FORCE_FLAG.startswith(word) for word in words)
+    return FORCE_PRUNE_DENIED if "prune" in words and forced else None
+
+
 def _inline_code(argv: Sequence[str]) -> str | None:
     """The code string of python -c (or a runner's -e), when argv runs one."""
     name = _command_name(argv)
@@ -1885,8 +2018,8 @@ class _ShellScan:
     def _checks(self, simple: _Simple, argv: Sequence[str], env: Mapping[str, str], home: str) -> str | None:
         sandboxed = bool(home) and _sandbox_value(home, self.cwd)
         askaway_home = home if sandboxed else str(DEFAULT_HOME)
-        checks = [_answer_reason(argv, sandboxed), self._write_reason(simple, argv, askaway_home),
-                  self._nested(simple, env, argv)]
+        checks = [_answer_reason(argv, sandboxed), _forced_prune_reason(argv),
+                  self._write_reason(simple, argv, askaway_home), self._nested(simple, env, argv)]
         code = _inline_code(argv)
         if code is not None:
             checks.append(_code_reason(code, sandboxed=sandboxed))
@@ -1919,7 +2052,7 @@ class _ShellScan:
 
 
 def bash_tamper_reason(command: str) -> str | None:
-    """Why a Bash command may not answer a question or write the state folder, or None.
+    """Why a Bash command may not answer a question, force a prune or write the state folder, or None.
 
     A deterrent against the agent's own shell, not a guarantee (SPEC.md, the Bash guard)."""
     return _ShellScan(os.getcwd(), {}, _state_roots()).text(command)
@@ -2107,16 +2240,29 @@ def _stamp_due(marker: Path, interval_s: float) -> bool:
         return True
 
 
+def _clock_jumped(marker: Path) -> bool:
+    """Is the stamp older than CLOCK_JUMP_S? Then the wall clock moved, and no day passed since the last cleanup."""
+    try:
+        return time.time() - marker.stat().st_mtime > CLOCK_JUMP_S
+    except OSError:  # no stamp yet, or one that cannot be read: no jump to hold for
+        return False
+
+
 def _maybe_prune() -> None:
-    """Opportunistic prune from the deliver slow path, at most once a day. Best effort."""
-    marker = state_home() / "last_prune"
+    """Opportunistic prune from the deliver slow path, at most once a day. Best effort.
+
+    After a clock jump the cleanup waits one cycle, and answer_lapsed holds the unread-answer expiry for that
+    cycle too: hook_deliver calls this after the deliveries, so they read the stamp before it moves.
+    """
+    marker = state_home() / PRUNE_STAMP
     if not _stamp_due(marker, PRUNE_INTERVAL_S):
         return
+    if not _clock_jumped(marker):
+        with contextlib.suppress(OSError):
+            _remove_stale_temps()
+            _remove_closed(prune_days(), load_questions()[0])  # never a damaged file: the user clears those
     with contextlib.suppress(OSError):
-        _remove_stale_temps()
-        _remove_closed(prune_days(), load_questions()[0])  # never a damaged file: the user clears those
-    with contextlib.suppress(OSError):
-        marker.touch()  # the stamp moves even when some items were skipped
+        marker.touch()  # the stamp moves even when some items were skipped, so the next cycle runs
 
 
 def _foreign_recheck_due() -> bool:
@@ -2161,8 +2307,8 @@ def hook_deliver(event: Mapping[str, Any]) -> HookOutput:
     event_name = event.get("hook_event_name")
     if not item_ids or not isinstance(event_name, str):
         return None
-    _maybe_prune()
     lines = _deliver_lines(item_ids, event.get("session_id") or None, event.get("cwd"), _foreign_recheck_due())
+    _maybe_prune()  # after the deliveries: their clock-jump hold is read before this call moves the stamp
     if not lines:
         return None
     return {"hookSpecificOutput": {"hookEventName": event_name,
@@ -2193,10 +2339,34 @@ def run_hook(mode: str) -> None:
 
 # ---- entry point -------------------------------------------------------
 
+HELP_FLAGS: Final = ("-h", "--help")
+
+
+def _subcommands() -> dict[str, argparse.ArgumentParser]:
+    """The sub-command parsers by name."""
+    subparsers = next(action for action in build_parser()._actions if isinstance(action, argparse._SubParsersAction))
+    return subparsers.choices
+
+
 def command_names() -> list[str]:
     """The sub-command names the parser accepts, as the --help line lists them."""
-    subparsers = next(action for action in build_parser()._actions if isinstance(action, argparse._SubParsersAction))
-    return list(subparsers.choices)
+    return list(_subcommands())
+
+
+def command_help(command: str) -> dict[str, Any]:
+    """One sub-command's usage and option flags: the line that `<command> --help` prints."""
+    parser = _subcommands()[command]
+    flags = [flag for action in parser._actions for flag in action.option_strings]
+    return {"usage": parser.format_usage().removeprefix("usage: ").strip(), "options": [*HELP_FLAGS, *flags]}
+
+
+def help_reply(args: Sequence[str]) -> dict[str, Any] | None:
+    """The one-line help for `<command> -h|--help`, hook included, or None when the call asks for no help."""
+    if not any(word in HELP_FLAGS for word in args[1:]):
+        return None
+    if args[0] == "hook":
+        return {"usage": "askaway.py hook {" + "|".join(HOOK_MODES) + "}", "options": list(HELP_FLAGS)}
+    return command_help(args[0]) if args[0] in _subcommands() else None
 
 
 def dispatch(argv: Sequence[str]) -> dict[str, Any] | str:
@@ -2234,6 +2404,10 @@ def _os_error_text(exc: OSError) -> str:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    help_line = help_reply(args)
+    if help_line is not None:
+        print(json.dumps(help_line))
+        return 0
     if args[:1] == ["hook"]:
         run_hook(args[1] if len(args) > 1 else "")
         return 0

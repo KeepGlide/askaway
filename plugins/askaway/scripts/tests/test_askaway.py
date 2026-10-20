@@ -258,8 +258,8 @@ def test_ask_ignores_session_and_project_sent_in_payload(home, capsys, monkeypat
     (lambda entry: entry["options"][1].update(key="A"), "option keys must be consecutive uppercase letters starting at A, in order (A, B, C...); keys received: A, A"),
     (lambda entry: entry.update(recommended="Z"), "recommended must be one of the option keys"),
     (lambda entry: entry.update(risk="extreme"), "risk: must be one of: high, low, medium"),
-    (lambda entry: entry["options"][0].update(fit=101), "option A: fit: must be an integer 0 to 100"),
-    (lambda entry: entry["options"][0].update(fit=True), "option A: fit: must be an integer 0 to 100"),
+    (lambda entry: entry["options"][0].update(fit=101), "option A: fit: must be an integer 0 to 100, or null"),
+    (lambda entry: entry["options"][0].update(fit=True), "option A: fit: must be an integer 0 to 100, or null"),
     (lambda entry: entry.pop("question"), "missing fields: question"),
     (lambda entry: entry.update(pause="yes"), "pause: must be true or false"),
     (lambda entry: entry.update(run_kind="robot"), "run_kind: must be one of: bash, codex, goal, loop, main, subagent"),
@@ -331,7 +331,7 @@ def test_ask_error_names_every_missing_field_and_option_gap_in_one_line(home, ca
     del entry["undo"]
     entry["options"][1]["fit"] = 101
     out = cli(capsys, "ask", "--json", json.dumps(entry))
-    assert out == refile_reply("missing fields: analogy, undo; option B: fit: must be an integer 0 to 100",
+    assert out == refile_reply("missing fields: analogy, undo; option B: fit: must be an integer 0 to 100, or null",
                                missing=["analogy", "undo"],
                                by_option={"B": ["fit"]})
     assert not (home / "q").exists() or list((home / "q").glob("*.json")) == []
@@ -442,10 +442,10 @@ def test_ask_internal_error_continues_with_a_generic_error(capsys, monkeypatch):
 
 def test_ask_internal_error_on_a_high_risk_question_pauses(capsys, monkeypatch):
     def broken_store(entry):
-        raise OSError("state folder unreadable")
+        raise OSError(errno.EIO, "Input/output error")
     monkeypatch.setattr(askaway, "store_entry", broken_store)
     out = cli(capsys, "ask", "--json", json.dumps(base_entry(risk="high")))
-    assert out == {"action": "pause", "recommended": "A", "error": "internal error"}
+    assert out == {"action": "pause", "error": "Input/output error"}
 
 
 def test_ask_reads_entry_from_stdin(capsys, monkeypatch):
@@ -962,6 +962,7 @@ def test_pause_guard_denies_bash_that_is_not_inbox(capsys, monkeypatch):
     "python3 {script} list --open",
     "python3 {script} wait {item} --timeout 0",
     "python3 {script} export --format csv",
+    "python3 {script} list --open --since '1h;`x`'",
     "python3 ~/.claude/mods/plugins/askaway/scripts/askaway.py status {item}",
 ])
 def test_pause_guard_lets_a_bash_command_run_inbox(command, capsys, monkeypatch):
@@ -1050,7 +1051,6 @@ def test_a_failing_pause_lookup_still_denies_the_call(capsys, monkeypatch):
     "mcp__x__create_issue",
     "mcp__x__search_and_delete",
     "mcp__postgres__query",
-    "mcp__graphify__query_graph",
     "mcp__notes__notes_search",
 ])
 def test_pause_guard_denies_agent_and_mcp_write_tools(tool, capsys, monkeypatch):
@@ -1062,6 +1062,7 @@ def test_pause_guard_denies_agent_and_mcp_write_tools(tool, capsys, monkeypatch)
 @pytest.mark.parametrize("tool", [
     "mcp__graphify__get_node",
     "mcp__graphify__list_prs",
+    "mcp__graphify__query_graph",
     "mcp__x__search_docs",
     "mcp__x__find_rows",
     "mcp__x__describe_table",
@@ -2077,7 +2078,7 @@ def test_normal_delivery_carries_no_reason(home, capsys, monkeypatch):
     ],
 )
 def test_pause_guard_lets_through_only_the_installed_mirror_or_plugin_root_script(command, is_allowed):
-    assert bool(askaway.INBOX_CALL.match(command)) is is_allowed
+    assert askaway.inbox_call(command) is is_allowed
 
 
 # ---- interpreter guard and deliver cost ---------------------------------
@@ -2535,6 +2536,40 @@ def test_bash_text_that_only_mentions_an_answer_or_a_copy_is_allowed(command, ca
 
 
 @pytest.mark.parametrize("command", [
+    f"python3 {SCRIPT} prune --id q-1-abcdef --force",
+    f"python3 {SCRIPT} prune --force --id q-1-abcdef",
+    f"python3 {SCRIPT} --strict prune --id q-1-abcdef --force",
+    f'python3 "{SCRIPT}" prune --id q-1-abcdef --force',
+    f"python3 {SCRIPT} prune --id q-1-abcdef '--force'",
+    f"python3 {SCRIPT} prune --id q-1-abcdef --fo",
+    "python3 ~/.claude/mods/plugins/askaway/scripts/askaway.py prune --id q-1-abcdef --force",
+    "python3 $HOME/.claude/mods/plugins/askaway/scripts/askaway.py prune --id q-1-abcdef --force",
+    f"cd /tmp && python3 {SCRIPT} prune --id q-1-abcdef --force",
+    f"sh -c 'python3 {SCRIPT} prune --id q-1-abcdef --force'",
+])
+def test_bash_cannot_force_a_prune_that_frees_a_pause(command, capsys, monkeypatch):
+    assert "user's own terminal" in bash_denial(capsys, monkeypatch, command)
+
+
+@pytest.mark.parametrize("command", [
+    f"python3 {SCRIPT} prune --id q-1-abcdef",
+    f"python3 {SCRIPT} status q-1-abcdef --force",
+    'rg "prune --force" SPEC.md',
+    'git commit -m "guard prune --force"',
+])
+def test_bash_may_prune_without_force_and_mention_force_in_text(command, capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+def test_pause_guard_denies_a_forced_prune_while_a_pause_holds(capsys, monkeypatch):
+    item = pending_pause(capsys, monkeypatch)
+    event = edit_event(tool="Bash", command=f"python3 {askaway.SCRIPT_PATH} prune --id {item} --force")
+    out = hook_json(capsys, monkeypatch, "pause-guard", event)
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "user's own terminal" in out["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize("command", [
     f"dd if=/tmp/x of={STATE_FOLDER}/a/q-1-abcdef.json",
     f"unlink {STATE_FOLDER}/a/q-1-abcdef.json",
     f"rm -rf {STATE_FOLDER}",
@@ -2684,12 +2719,217 @@ def test_load_questions_returns_the_damaged_ids_from_the_same_pass(home, capsys)
 @pytest.mark.parametrize("tool", [
     "mcp__postgres__query",
     "mcp__notes__notes_search",
-    "mcp__graphify__query_graph",
 ])
 def test_mcp_tools_outside_the_exact_read_prefixes_are_denied_in_a_pause(tool, capsys, monkeypatch):
     pending_pause(capsys, monkeypatch)
     assert hook_json(capsys, monkeypatch, "pause-guard", edit_event(tool=tool))[
         "hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+# ---- gauntlet 4, package P1: per-command help, pause-guard inbox calls, ask reply and fit, tables,
+# ---- prune --force, retried high-risk writes and the clock-jump guard of the daily prune
+
+HELP_COMMANDS = ("ask", "answer", "status", "list", "away", "prune", "wait", "export", "hook")
+
+
+@pytest.mark.parametrize("flag", ["--help", "-h"])
+@pytest.mark.parametrize("command", HELP_COMMANDS)
+def test_each_command_prints_its_usage_as_one_json_line(command, flag, capsys):
+    assert askaway.main([command, flag]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 1
+    usage = json.loads(lines[0])
+    assert usage["usage"].startswith(f"askaway.py {command}")
+    assert "--help" in usage["options"] and "-h" in usage["options"]
+
+
+def test_top_level_help_still_lists_the_commands(capsys):
+    assert askaway.main(["--help"]) == 0
+    assert {"ask", "answer"} <= set(json.loads(capsys.readouterr().out)["commands"])
+
+
+@pytest.mark.parametrize("tail", [
+    "ask --json '{\"what\": \"Run `ls`; then $HOME | cat\"}'",
+    "status 'a;b'",
+    "list --open 'x&y<z>'",
+])
+def test_inbox_call_lets_operators_and_backticks_inside_single_quotes_through(tail):
+    assert askaway.inbox_call(f"python3 {askaway.SCRIPT_PATH} {tail}")
+
+
+@pytest.mark.parametrize("tail", [
+    'status "a;b"',
+    'status "$(touch x)"',
+    "status q-1 | cat",
+    "status q-1 > out",
+    "status q-1 $HOME",
+    "status `touch x`",
+    "status 'x'`touch y`",
+    "status 'unclosed",
+    "status q-1 '$(touch x)' && rm y",
+])
+def test_inbox_call_denies_operators_and_expansions_outside_single_quotes(tail):
+    assert askaway.inbox_call(f"python3 {askaway.SCRIPT_PATH} {tail}") is False
+
+
+def test_ask_reply_carries_the_validated_title(home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(title="Cache pick")))
+    assert out["title"] == "Cache pick" and out["action"] == "continue"
+
+
+def test_ask_reply_carries_the_title_of_a_duplicate(home, capsys, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    cli(capsys, "ask", "--json", json.dumps(base_entry(title="Cache pick")))
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(title="Cache pick")))
+    assert out["duplicate"] is True and out["title"] == "Cache pick"
+
+
+def test_ask_reply_titles_a_question_without_a_title_with_its_clipped_question(home, capsys):
+    entry = base_entry()
+    del entry["title"]
+    out = cli(capsys, "ask", "--json", json.dumps(entry))
+    assert out["title"] == "Which cache should the service use?"
+
+
+def test_ask_stores_a_null_fit_as_no_estimate(home, capsys):
+    entry = base_entry()
+    entry["options"][1]["fit"] = None
+    out = cli(capsys, "ask", "--json", json.dumps(entry))
+    assert out["action"] == "continue"
+    assert stored(home, "q", out["id"])["options"][1]["fit"] is None
+
+
+def test_ask_refiles_a_missing_fit_as_a_gap(capsys):
+    entry = base_entry()
+    del entry["options"][0]["fit"]
+    out = cli(capsys, "ask", "--json", json.dumps(entry))
+    assert out["action"] == "refile" and out["by_option"] == {"A": ["fit"]}
+
+
+@pytest.mark.parametrize("fit", ["88", 101, -1, 88.5, True])
+def test_ask_refiles_a_fit_that_is_neither_null_nor_an_integer_0_to_100(fit, capsys):
+    entry = base_entry()
+    entry["options"][0]["fit"] = fit
+    out = cli(capsys, "ask", "--json", json.dumps(entry))
+    assert out["action"] == "refile" and out["by_option"] == {"A": ["fit"]}
+    assert out["error"] == "option A: fit: must be an integer 0 to 100, or null"
+
+
+def test_list_table_prints_an_aligned_table_with_the_title_cut_to_40_code_points(home, capsys):
+    title = "A title that is long enough to be cut to forty code points"
+    item = ask_item(capsys, title=title)
+    assert askaway.main(["list", "--table"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].split() == ["id", "status", "title", "risk", "age"]
+    assert lines[1].startswith(item) and title[:39] + "…" in lines[1]
+    assert lines[1].index("open") == lines[0].index("status")
+    assert lines[1].split()[-2:] == ["low", "0m"]
+
+
+def test_list_without_the_table_flag_still_prints_json(home, capsys):
+    item = ask_item(capsys)
+    assert cli(capsys, "list")["items"][0]["id"] == item
+
+
+def test_status_table_adds_the_reply_line_after_the_table(home, capsys):
+    item = ask_item(capsys)
+    cli(capsys, "answer", item, "B", "--by", "panel")
+    assert askaway.main(["status", item, "--table"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].split()[0] == "id" and lines[1].split()[1] == "answered"
+    assert lines[-1] == "reply: B"
+
+
+def test_prune_id_force_removes_an_open_question_of_a_live_session_and_names_it(home, capsys, monkeypatch):
+    live = ask_from(capsys, monkeypatch, SESSION)
+    assert "has not ended" in cli(capsys, "prune", "--id", live)["error"]
+    assert cli(capsys, "prune", "--id", live, "--force") == {"removed": 1, "id": live}
+    assert cli(capsys, "list") == {"items": []}
+
+
+def test_prune_id_force_still_refuses_an_answered_question(home, capsys, monkeypatch):
+    live = ask_from(capsys, monkeypatch, SESSION)
+    cli(capsys, "answer", live, "A", "--by", "panel")
+    assert "already answered" in cli(capsys, "prune", "--id", live, "--force")["error"]
+
+
+def test_prune_force_without_an_id_is_a_usage_error(home, capsys):
+    assert "--force needs --id" in usage_error(capsys, "prune", "--force")["error"]
+
+
+def flaky_write(monkeypatch, failures: int) -> dict[str, int]:
+    """Make the first `failures` question writes raise an OS error; returns the write count."""
+    real_write = askaway.write_atomic
+    calls = {"count": 0}
+
+    def write(target: Path, data) -> None:
+        calls["count"] += 1
+        if calls["count"] <= failures:
+            raise OSError(errno.EIO, "Input/output error")
+        real_write(target, data)
+
+    monkeypatch.setattr(askaway, "write_atomic", write)
+    return calls
+
+
+@pytest.mark.parametrize("failures", [1, 3])
+def test_a_high_risk_question_is_filed_after_a_retried_write(failures, home, capsys, monkeypatch):
+    calls = flaky_write(monkeypatch, failures)
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(risk="high")))
+    assert out["action"] == "pause" and calls["count"] == failures + 1
+    assert stored(home, "q", out["id"])["risk"] == "high"
+
+
+def test_a_high_risk_question_pauses_with_the_os_error_after_four_failed_writes(home, capsys, monkeypatch):
+    calls = flaky_write(monkeypatch, 4)
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(risk="high")))
+    assert out == {"action": "pause", "error": "Input/output error"}
+    assert calls["count"] == 4 and not list((home / "q").glob("q-*.json"))
+
+
+def test_a_low_risk_question_is_written_once_and_continues_on_error(home, capsys, monkeypatch):
+    calls = flaky_write(monkeypatch, 4)
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(risk="low")))
+    assert out == {"action": "continue", "recommended": "A", "error": "internal error"}
+    assert calls["count"] == 1
+
+
+@pytest.mark.parametrize(("stamp_age_days", "removed"), [(8, False), (2, True)])
+def test_the_daily_cleanup_waits_one_cycle_after_the_clock_jumped(stamp_age_days, removed, home, clock, capsys,
+                                                                  monkeypatch):
+    real_now = int(time.time() * 1000)
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    clock["ms"] = real_now - 40 * DAY_MS
+    item = ask_item(capsys)
+    cli(capsys, "answer", item, "A")
+    run_hook(capsys, monkeypatch, "deliver", deliver_event())
+    clock["ms"] = real_now
+    marker = home / "last_prune"
+    marker.touch()
+    stamp = time.time() - stamp_age_days * 86_400
+    os.utime(marker, (stamp, stamp))
+    askaway._maybe_prune()
+    assert (home / "q" / f"{item}.json").exists() is not removed
+    assert time.time() - marker.stat().st_mtime < 60
+
+
+@pytest.mark.parametrize(("stamp_age_days", "held"), [(8, True), (2, False)])
+def test_a_clock_jump_holds_the_read_time_expiry_of_an_unread_reply_for_one_cycle(
+        stamp_age_days, held, home, clock, capsys, monkeypatch):
+    real_now = int(time.time() * 1000)
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    clock["ms"] = real_now - 8 * DAY_MS  # the reply is older than the 7-day lapse window
+    item = ask_item(capsys)
+    cli(capsys, "answer", item, "B")
+    clock["ms"] = real_now
+    marker = home / "last_prune"
+    marker.touch()
+    stamp = time.time() - stamp_age_days * 86_400
+    os.utime(marker, (stamp, stamp))
+    assert cli(capsys, "list")["items"][0]["status"] == ("answered" if held else "expired")
+    out = run_hook(capsys, monkeypatch, "deliver", deliver_event())
+    assert (out != "") is held
+    assert (stored(home, "d", item).get("expired") is True) is (not held)
 
 
 def test_ask_refiles_when_risk_is_missing_and_files_nothing(home, capsys):
@@ -2839,7 +3079,7 @@ def test_refile_names_every_gap_at_once_grouped_by_field_then_option(home, capsy
     del entry["options"][1]["pros"]
     out = cli(capsys, "ask", "--json", json.dumps(entry))
     assert out == refile_reply("missing fields: analogy, undo; option B: does, pros; "
-                               "option B: fit: must be an integer 0 to 100",
+                               "option B: fit: must be an integer 0 to 100, or null",
                                missing=["analogy", "undo"], by_option={"B": ["does", "pros", "fit"]})
 
 
@@ -2875,7 +3115,7 @@ def test_same_session_asking_the_same_question_again_returns_the_open_id(home, c
     first = cli(capsys, "ask", "--json", json.dumps(base_entry()))
     again = cli(capsys, "ask", "--json",
                 json.dumps(base_entry(question="  WHICH cache should the\n service use? ")))
-    assert again == {"id": first["id"], "recommended": "A", "action": "open", "duplicate": True}
+    assert again == {"id": first["id"], "recommended": "A", "action": "open", "title": "Cache backend", "duplicate": True}
     assert [p.name for p in (home / "q").iterdir()] == [f"{first['id']}.json"]
 
 
@@ -3176,7 +3416,7 @@ def test_a_duplicate_of_a_paused_question_tells_the_agent_to_pause(home, capsys,
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
     first = cli(capsys, "ask", "--json", json.dumps(base_entry(risk="high")))
     again = cli(capsys, "ask", "--json", json.dumps(base_entry(risk="high")))
-    assert again == {"id": first["id"], "recommended": "A", "action": "pause", "duplicate": True}
+    assert again == {"id": first["id"], "recommended": "A", "action": "pause", "title": "Cache backend", "duplicate": True}
     assert [p.name for p in (home / "q").iterdir()] == [f"{first['id']}.json"]
 
 
@@ -3249,7 +3489,7 @@ def test_a_string_fit_is_refused_with_its_reason_not_as_a_bare_field(home, capsy
     options = base_entry()["options"]
     options[1]["fit"] = "40"
     out = cli(capsys, "ask", "--json", json.dumps(base_entry(options=options)))
-    assert out == refile_reply("option B: fit: must be an integer 0 to 100", by_option={"B": ["fit"]})
+    assert out == refile_reply("option B: fit: must be an integer 0 to 100, or null", by_option={"B": ["fit"]})
 
 
 @pytest.mark.parametrize("level", ["", "   "])
