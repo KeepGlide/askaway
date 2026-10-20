@@ -30,7 +30,7 @@ answers later in the Askaway panel, and the answer comes back into your session.
 Write each question in this order. The reader has not seen the conversation.
 
 1. **Context** (`context`): one or two sentences: the task and the step that stopped.
-2. **What it is** (`what`): 2 to 5 plain sentences: what the thing is, what the
+2. **What it is** (`what`): 2 to 5 plain sentences (guidance): what the thing is, what the
    spec says, what the code does today, and the discrepancy. At least 2 sentences;
    the CLI refuses fewer.
 3. **The problem** (`problem`): the concrete consequence if nothing is decided,
@@ -56,14 +56,14 @@ The CLI refuses longer text as `too long (n/limit)` and names the field, so keep
 | `what` | yes | 600 | At least 2 sentences, checked by the CLI, and at least 3 words. |
 | `problem` | yes | 400 | Consequence with one example. At least 3 words. |
 | `analogy` | yes | 300 | One everyday image. At least 3 words. |
-| `why`, `how` | yes | 300, 400 | One or two sentences each. At least 3 words each. |
-| `gains`, `losses` | yes | 300 | One or two sentences each. At least 3 words each. |
+| `why`, `how` | yes | 300, 400 | One or two sentences each (guidance). At least 3 words each. |
+| `gains`, `losses` | yes | 300 | One or two sentences each (guidance). At least 3 words each. |
 | `urgency` | yes | 300 | `Blocks in ~8 min` or `Can wait`. |
 | `urgency_level` | no | | `low`, `medium` or `high`: the colour grade of the Urgency line (green, orange, red). When absent, the card grades `urgency` by keywords, so agents should set it. |
 | `undo` | yes | 300 | For example `changing later ≈ 10 min`. |
 | `recommended` | yes | | One of the option keys. |
 | `risk` | yes | | `low`, `medium` or `high`. |
-| `options` | yes | | At least 2. Keys are consecutive uppercase letters from A, in order (A, B, C). Each has `key`, `label` (300), `does`, `pros`, `cons` (300 each, all required; `does`, `pros` and `cons` need at least 3 words each), `tradeoff` (300, one line, required) and `fit` (integer 0 to 100, required). |
+| `options` | yes | | At least 2. Keys are consecutive uppercase letters from A, in order (A, B, C). Each has `key`, `label` (300), `does`, `pros`, `cons` (300 each, all required; `does`, `pros` and `cons` need at least 3 words each), `tradeoff` (300, required; one line by guidance, as the CLI joins line breaks) and `fit` (integer 0 to 100, or `null` for no estimate; required). |
 
 The CLI refuses a long text under 3 words as `placeholder`, as it does text made only of `TBD`, `todo`, `n/a` or `lorem`. Do not pass `session` or `project`: the CLI fills them from the environment and the working directory. A subagent sends `"run_kind":"subagent"`.
 
@@ -77,7 +77,7 @@ JSON
 
 Outside Claude Code, `${CLAUDE_PLUGIN_ROOT}` is not set: use the absolute path of `scripts/askaway.py`, and a Codex brief gives that path.
 
-The CLI prints one JSON line: `{"id":"q-...","recommended":"A","action":"continue"}`.
+The CLI prints one JSON line: `{"id":"q-...","recommended":"A","title":"...","action":"continue"}`.
 
 - Read `action`. Add `--strict` if you branch on the exit code: it exits 1 on a refile or an error. Without it, a refile still exits 0.
 - `"action":"refile"` with an `error` such as `missing fields: analogy, undo; option B: fit`
@@ -86,6 +86,8 @@ The CLI prints one JSON line: `{"id":"q-...","recommended":"A","action":"continu
   Continue on the recommended option.
 - `"error":"internal error"` with `"action":"pause"` means nothing was filed either.
   Stop and report it; do not wait.
+- `"action":"pause"` with an `error` holding an OS error text means a high-risk question
+  was not written after four tries, and nothing was filed. Stop and report it; do not wait.
 - Pass the JSON on stdin with a quoted heredoc (`<<'JSON'`), as above. The shell
   expands nothing inside it, so apostrophes and backticks are safe. Use
   `--json '<JSON>'` only for text without an apostrophe; inside double quotes the
@@ -106,6 +108,8 @@ The CLI prints one JSON line: `{"id":"q-...","recommended":"A","action":"continu
   the turn, until the answer is delivered to your session. The pause ends at
   delivery, not when the user writes the answer. Check with a plain `status <id>`
   command (no shell operators), which the pause guard lets through.
+  A `pause` on a question filed without a session holds no session's pause: no hook
+  stops your calls, so you stop on your own and treat the `pause` reply as a stop.
 - `low` and `medium` never pause.
 - `"action":"open"` with `"duplicate":true`: the same question is already open.
   Do not file it again; continue on its `recommended` option.
