@@ -81,9 +81,12 @@ function stubHost(on: On, files: Map<string, string>, hold: Hold = {}) {
   })
   on('fs.exists', (_$, e) => ({ value: files.has(e.path) }))
   // The panel answers through the CLI (process.run below); a direct write to a/ would bypass its first-writer-wins link.
-  on('fs.write', (_$, e) => {
-    if (e.path.includes('/panel-tokens/')) return { value: undefined } // the panel's one-shot credential
-    throw new Error(`answer written directly: ${e.path}`)
+  on('fs.write', (_$, event) => {
+    if (event.path.includes('/panel-tokens/')) return { value: undefined } // the panel's one-shot credential
+    if (event.path.startsWith(`${STATE}/a/`)) throw new Error(`answer written directly: ${event.path}`)
+    // draft.json and cleared.json are shared state files: they land in the folder map, as on disk.
+    files.set(event.path, event.text)
+    return { value: undefined }
   })
   // The CLI's `answer` (create_once): the call is held at its write, then lands only if no answer exists yet.
   on('process.run', async (_$, e) => {
