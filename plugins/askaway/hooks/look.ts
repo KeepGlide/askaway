@@ -20,3 +20,10 @@ export const LINK_MARK = '▪' as const
 export const DETAILS_FILL = 'userMessageBackground' as const
 // The Urgency text's colour by grade: the engine's theme keys, so it follows light and dark as the diff numbers do.
 export const URGENCY_COLOR: Readonly<Record<UrgencyGrade, string>> = { low: 'success', medium: 'warning', high: 'error' }
+// Measured WCAG 2.x contrast of the text colours the pane draws, in the engine binary, light and dark themes (backgrounds
+// #FFFFFF and #111827). Each text colour must stay at 4.5:1 or better (WCAG 2.2 1.4.3). `dim` is the engine's dim line, a 50%
+// blend of the text colour: it fails 4.5:1 on white, so the footer is drawn without it (M68).
+export const TEXT_CONTRAST: Readonly<Record<'light' | 'dark', Readonly<Record<string, number>>>> = {
+  light: { text: 21, success: 5.32, warning: 4.71, error: 6.67, dim: 3.95 },
+  dark: { text: 17.74, success: 7.21, warning: 10.88, error: 6.48, dim: 5.25 },
+}

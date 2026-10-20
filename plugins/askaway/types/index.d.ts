@@ -104,6 +104,8 @@ declare module 'claude-code' {
       cleared: string[]
       // The answered cards still fading out (250 ms after the press): question id → press time. Drawn dim, then gone.
       leaving: Record<string, number>
+      // The move lock (350 ms after a pick, Next or Back): the option, Other, Next and Back buttons are drawn disabled and presses do nothing.
+      moveLock: boolean
       // Whether this session is inside a model turn of its own (turn.start to turn.complete; subagent turns excluded).
       turn: { isBusy: boolean }
       // Ids of open questions whose asking session has ended (`list --open` marks them `ended`): their card shows a notice.

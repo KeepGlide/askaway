@@ -213,9 +213,9 @@ export function parseAway(raw: unknown): boolean {
   return isRecord(raw) && raw.on === true
 }
 
-// The picks every session shares (draft.json): the ts they were written at and each question's pick. Any other shape
-// reads as no draft, so a malformed file changes nothing.
-type Draft = { ts: number; picks: Record<string, { key: string; text?: string }> }
+// The picks and kept Other labels every session shares (draft.json): the ts they were written at, each question's pick and
+// each question's label. A file with no labels reads as none. Any other shape reads as no draft, so a malformed file changes nothing.
+type Draft = { ts: number; picks: Record<string, { key: string; text?: string }>; labels: Record<string, string> }
 
 export function parseDraft(raw: unknown): Draft | undefined {
   const ts = isRecord(raw) ? raw.ts : undefined
@@ -228,7 +228,14 @@ export function parseDraft(raw: unknown): Draft | undefined {
     if (text !== undefined && typeof text !== 'string') return undefined
     picks[id] = text === undefined ? { key: pick.key } : { key: pick.key, text }
   }
-  return { ts, picks }
+  const rawLabels = isRecord(raw) && raw.labels !== undefined ? raw.labels : {}
+  if (!isRecord(rawLabels)) return undefined
+  const labels: Draft['labels'] = {}
+  for (const [id, label] of Object.entries(rawLabels)) {
+    if (typeof label !== 'string') return undefined
+    labels[id] = label
+  }
+  return { ts, picks, labels }
 }
 
 // The History lines Clear all hid (cleared.json): the ts of the press that wrote it and the question ids it hid. Any other
@@ -680,6 +687,14 @@ export function listText(lang: Lang, questions: readonly Question[], isAway: boo
 
 // The key prefix of the Other field.
 export const OTHER_INPUT_PREFIX = 'other-input-'
+
+// The key of a question's Other field in field round `round`. The engine keeps an Input's text by its key, so Keep empties
+// the field by a new round; round 0 keeps the plain key.
+export const otherInputKey = (questionId: string, round: number): string =>
+  round === 0 ? `${OTHER_INPUT_PREFIX}${questionId}` : `${OTHER_INPUT_PREFIX}${questionId}-${round}`
+
+// The key of a question's "Other…" button, which draws the kept label once there is one.
+export const otherButtonKey = (questionId: string): string => `other-${questionId}`
 
 // True when a focus move takes the ring off the Other field: the element it stood on was a field of that prefix, and the
 // ring moves to another element or to one of the engine's own stops (no element). The register records the field's text then.

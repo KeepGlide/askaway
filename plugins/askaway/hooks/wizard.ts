@@ -9,15 +9,18 @@ import { OTHER_KEY, OTHER_TEXT_MAX, groupKeyOf } from './model'
 export type Pick = { key: string; text?: string }
 
 // `questionId` is the id of the question on screen (the one at `step`); the pruning re-anchors the step to it when the
-// list shifts. The text typed in an "Other…" field lives in the field only until Enter records it as a pick.
+// list shifts. The text typed in an "Other…" field lives in the field until Keep moves it to `labels` (the kept text that
+// the Other button draws); `fieldRound` numbers the fields, since Keep empties one by giving it a new key.
 export type Wizard = {
   groupKey: string | null
   step: number
   questionId: string | null
   picks: Record<string, Pick>
+  labels: Record<string, string>
+  fieldRound: number
 }
 
-export const EMPTY_WIZARD: Wizard = { groupKey: null, step: 0, questionId: null, picks: {} }
+export const EMPTY_WIZARD: Wizard = { groupKey: null, step: 0, questionId: null, picks: {}, labels: {}, fieldRound: 0 }
 
 // The open questions of one group. `sessions` holds the same questions split by session (sessions in the order of
 // their oldest question, questions oldest first); `questions` is those sessions one after the other: the step order.
@@ -80,10 +83,27 @@ export function submittable(group: Group, wizard: Wizard): { id: string; pick: P
   return answers.length > 0 ? answers : undefined
 }
 
-// Enter in the Other field records its trimmed text, capped at OTHER_TEXT_MAX code points, as the Other pick and keeps the
-// wizard where it is; blank text takes an Other pick away. It never moves on: Submit and Next do that, as for any option.
+// The text of an Other field as it is kept: trimmed, and capped at OTHER_TEXT_MAX code points.
+const otherTextOf = (text: string): string => Array.from(text.trim()).slice(0, OTHER_TEXT_MAX).join('')
+
+// Keep in the Other field (Enter, or the Keep button) moves its text to the question's label, which the Other button then
+// draws. The Other pick of that question is dropped, so the label is picked only by a click on the button. The field round
+// moves on, so the field empties. Blank text changes nothing.
+export function keptOther(wizard: Wizard, id: string, text: string): Wizard {
+  const trimmed = otherTextOf(text)
+  if (trimmed === '') return wizard
+  const picks = { ...wizard.picks }
+  if (picks[id]?.key === OTHER_KEY) delete picks[id]
+  return { ...wizard, picks, labels: { ...wizard.labels, [id]: trimmed }, fieldRound: wizard.fieldRound + 1 }
+}
+
+// The text typed in an Other field and not kept yet, recorded when the field loses focus or a nav action runs: its trimmed
+// text is the Other pick, and keeps the wizard where it is; blank text takes an Other pick away. It never moves on. While
+// the question has a kept label, typed text is not recorded: Keep is the only way to set the Other text, so the pick and
+// the drawn label cannot disagree. The text stays in the field until Keep.
 export function submittedOther(wizard: Wizard, id: string, text: string): Wizard {
-  const trimmed = Array.from(text.trim()).slice(0, OTHER_TEXT_MAX).join('')
+  const trimmed = otherTextOf(text)
+  if (trimmed !== '' && wizard.labels[id] !== undefined) return wizard
   const picks = { ...wizard.picks }
   const pick: Pick | undefined = picks[id]
   if (trimmed !== '') picks[id] = { key: OTHER_KEY, text: trimmed }
@@ -164,5 +184,6 @@ export function pruneWizard(wizard: Wizard, openIds: readonly string[], activeTo
     ...wizard,
     step: clampStep(wizard.step, activeTotal),
     picks: keepOpen(wizard.picks, open),
+    labels: keepOpen(wizard.labels, open),
   }
 }

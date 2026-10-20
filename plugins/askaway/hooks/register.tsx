@@ -11,7 +11,6 @@ import { detectLang, resolveLang, t, type Lang } from './i18n'
 import { renderPane, type PaneActions, type PaneView } from './pane'
 import {
   EMPTY_BOARD,
-  OTHER_INPUT_PREFIX,
   OTHER_KEY,
   ageLabel,
   footerText,
@@ -20,6 +19,8 @@ import {
   leavesOtherField,
   listText,
   openQuestions,
+  otherButtonKey,
+  otherInputKey,
   parseAnswer,
   parseAnswerWritten,
   parseEndedIds,
@@ -42,8 +43,10 @@ import type { Group, Pick, Wizard } from './wizard'
 const PANE = 'askaway'
 const TITLE = 'Askaway'
 const POLL_MS = 5000
-// A draft.json stamped more than this past the clock is not applied: a far-future stamp would hold off every later draft.
+// A draft.json stamped more than this past the clock is pulled back to the clock: a far-future stamp would hold off later drafts.
 const DRAFT_SKEW_MS = 60_000
+// A pick, Next or Back locks the moves for this long: a second press inside the window (a double click) does nothing.
+const MOVE_LOCK_MS = 350
 // An answered card stays listed, dimmed, for this long after the press; then it leaves and its status line shows.
 const FADE_MS = 250
 // The `list --open` run that finds the ended sessions repeats at most this often while the linked open questions do not change (H11).
@@ -89,11 +92,17 @@ const endedAtom = atom({ plugin: 'askaway', key: 'ended' } as const, [] as strin
 const whoAtom = atom({ plugin: 'askaway', key: 'who' } as const, null as string | null)
 const quietAtom = atom({ plugin: 'askaway', key: 'quiet' } as const, false)
 const wizardAtom = atom({ plugin: 'askaway', key: 'wizard' } as const, flow.EMPTY_WIZARD)
+// Whether a move (a pick, Next or Back) ran within MOVE_LOCK_MS: the pane draws its buttons disabled meanwhile.
+const moveLockAtom = atom({ plugin: 'askaway', key: 'moveLock' } as const, false)
 // The ts of the picks this session last wrote to draft.json or applied from it. A draft with a newer ts is applied.
 let draftTs = 0
-// The picks whose draft.json write has not landed yet, by question id (undefined: the pick was removed). Each poll retries
-// them (H2), so a failed write neither drops the pick from this window nor from the folder's picks.
-const unsavedPicks = new Map<string, Pick | undefined>()
+// Whether a move (a pick, Next or Back) ran within MOVE_LOCK_MS; cleared by the timer set in moveOnce. The atom mirrors it.
+let moveLocked = false
+// The changes to draft.json, by question id: a pick or a kept label, undefined when it was removed.
+type DraftChanges = { picks: Map<string, Pick | undefined>; labels: Map<string, string | undefined> }
+// The picks and kept labels whose draft.json write has not landed yet. Each poll retries them (H2), so a failed write
+// neither drops the pick from this window nor from the folder's picks.
+const unsaved: DraftChanges = { picks: new Map(), labels: new Map() }
 // Whether the poll's retry of unsavedPicks failed and the person was told; the toast shows once per failure.
 let draftFailing = false
 // Whether an interval poll is running: a tick that comes meanwhile starts no second poll (the `handing` pattern).
@@ -372,40 +381,52 @@ async function pruneWizardState($: EngineInterface): Promise<void> {
   await update($, wizardAtom, current => prunedWizard(current, open))
 }
 
-const samePicks = (a: Wizard['picks'], b: Wizard['picks']): boolean => JSON.stringify(a) === JSON.stringify(b)
-
-// Whether a wizard holds anything a session start would lose: a card or a group on screen, or a pick.
-const hasWizardData = (wizard: Wizard): boolean =>
-  wizard.groupKey !== null || wizard.questionId !== null || Object.keys(wizard.picks).length > 0
-
-// Applies the picks of draft.json when it is newer than this session's last write or apply (newest ts wins) and no more
-// than DRAFT_SKEW_MS past the clock. Only the picks move: the step, the group and the card stay with this session. A draft
-// that moves no pick writes nothing, so the pane is not redrawn on every poll. The picks not yet on disk are laid over the
-// draft, so a draft another window wrote does not drop a pick made here. The update reads the wizard again, so a pick
-// pressed meanwhile is not thrown away; its own write carries a newer ts than this draft, so the next poll brings it back
-// should the apply land first.
-async function applyDraft($: EngineInterface, home: string): Promise<void> {
-  const draft = parseDraft(await readJson($, `${home}/draft.json`))
-  if (draft === undefined || draft.ts <= draftTs || draft.ts > (await $.clock.now()) + DRAFT_SKEW_MS) return
-  const open = openQuestions(await read($, board), await read($, leaving))
-  const picks = overlay(draft.picks, unsavedPicks)
-  const prev = await read($, wizardAtom)
-  if (!samePicks(prunedWizard({ ...prev, picks }, open).picks, prev.picks)) {
-    await update($, wizardAtom, current =>
-      prunedWizard({ ...current, picks: keepPicksChangedSince(prev.picks, current.picks, picks) }, open),
-    )
-  }
-  draftTs = Math.max(draftTs, draft.ts)
+function sameEntries<V>(a: Record<string, V>, b: Record<string, V>): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
 }
 
-// The picks to apply: `picks`, with each pick this window changed since `before` (the picks the apply read) taken from
-// `current`, so a pick pressed in the gap between that read and the update is not thrown away.
-function keepPicksChangedSince(
-  before: Record<string, Pick>,
-  current: Record<string, Pick>,
-  picks: Record<string, Pick>,
-): Record<string, Pick> {
-  const merged: Record<string, Pick> = { ...picks }
+// Whether a wizard holds anything a session start would lose: a card or a group on screen, a pick or a kept label.
+const hasWizardData = (wizard: Wizard): boolean =>
+  wizard.groupKey !== null ||
+  wizard.questionId !== null ||
+  Object.keys(wizard.picks).length > 0 ||
+  Object.keys(wizard.labels).length > 0
+
+// Applies the picks and kept labels of draft.json when it is newer than this session's last write or apply (newest ts wins).
+// A stamp more than DRAFT_SKEW_MS past the clock is pulled back to the clock, and the draft is applied. Only the picks and
+// labels move: the step, the group and the card stay with this session. A draft that moves nothing writes nothing, so the
+// pane is not redrawn on every poll. The changes not yet on disk are laid over the draft, so a draft another window wrote
+// does not drop a change made here. The update reads the wizard again, so a change made meanwhile is not thrown away; its
+// own write carries a newer ts than this draft, so the next poll brings it back should the apply land first.
+async function applyDraft($: EngineInterface, home: string): Promise<void> {
+  const draft = parseDraft(await readJson($, `${home}/draft.json`))
+  if (draft === undefined || draft.ts <= draftTs) return
+  const now = await $.clock.now()
+  const stamp = draft.ts > now + DRAFT_SKEW_MS ? now : draft.ts
+  const open = openQuestions(await read($, board), await read($, leaving))
+  const picks = overlay(draft.picks, unsaved.picks)
+  const labels = overlay(draft.labels, unsaved.labels)
+  const prev = await read($, wizardAtom)
+  const pruned = prunedWizard({ ...prev, picks, labels }, open)
+  if (!sameEntries(pruned.picks, prev.picks) || !sameEntries(pruned.labels, prev.labels)) {
+    await update($, wizardAtom, current =>
+      prunedWizard(
+        {
+          ...current,
+          picks: keepChangedSince(prev.picks, current.picks, picks),
+          labels: keepChangedSince(prev.labels, current.labels, labels),
+        },
+        open,
+      ),
+    )
+  }
+  draftTs = Math.max(draftTs, stamp)
+}
+
+// The entries to apply: `drafted`, with each entry this window changed since `before` (what the apply read) taken from
+// `current`, so a change made in the gap between that read and the update is not thrown away.
+function keepChangedSince<V>(before: Record<string, V>, current: Record<string, V>, drafted: Record<string, V>): Record<string, V> {
+  const merged: Record<string, V> = { ...drafted }
   for (const id of new Set([...Object.keys(before), ...Object.keys(current)])) {
     if (JSON.stringify(before[id]) === JSON.stringify(current[id])) continue
     if (current[id] === undefined) delete merged[id]
@@ -414,12 +435,12 @@ function keepPicksChangedSince(
   return merged
 }
 
-// The picks with `changes` laid over them: an undefined change removes its pick.
-function overlay(picks: Record<string, Pick>, changes: ReadonlyMap<string, Pick | undefined>): Record<string, Pick> {
-  const merged = { ...picks }
-  for (const [id, pick] of changes) {
-    if (pick === undefined) delete merged[id]
-    else merged[id] = pick
+// The entries with `changes` laid over them: an undefined change removes its entry.
+function overlay<V>(entries: Record<string, V>, changes: ReadonlyMap<string, V | undefined>): Record<string, V> {
+  const merged = { ...entries }
+  for (const [id, value] of changes) {
+    if (value === undefined) delete merged[id]
+    else merged[id] = value
   }
   return merged
 }
@@ -703,7 +724,7 @@ function clearPicks(prev: Wizard, ids: readonly string[], first?: string | null)
 // behind the clock or the last ts this session wrote or applied (H4), and becomes draftTs, so this session's own poll does
 // not apply the draft back over its screen. A file that exists but does not parse is held once, so no write drops every
 // other session's picks (H1); the next write replaces it with this window's picks and logs it, else no write would land.
-async function saveDraft($: EngineInterface, home: string, changes: ReadonlyMap<string, Pick | undefined>): Promise<void> {
+async function saveDraft($: EngineInterface, home: string, changes: DraftChanges): Promise<void> {
   const path = `${home}/draft.json`
   const draft = parseDraft(await readJson($, path))
   const unreadable = draft === undefined && (await $.fs.exists(path))
@@ -712,31 +733,42 @@ async function saveDraft($: EngineInterface, home: string, changes: ReadonlyMap<
     throw new Error(`askaway: ${path} does not parse; the picks were not written`)
   }
   if (unreadable) logFailure($, new Error(`${path} does not parse; overwritten with this window's picks`))
-  const base = unreadable ? (await read($, wizardAtom)).picks : (draft?.picks ?? {})
-  const merged = overlay(base, changes)
+  const stored = unreadable ? await read($, wizardAtom) : draft
+  const picks = overlay(stored?.picks ?? {}, changes.picks)
+  const labels = overlay(stored?.labels ?? {}, changes.labels)
   const shown = await read($, board)
   const open = new Set(openQuestions(shown, await read($, leaving)).map(question => question.id))
   const known = new Set(shown.questions.map(question => question.id))
-  const picks = flow.keepOpen(merged, new Set(Object.keys(merged).filter(id => open.has(id) || !known.has(id))))
+  const listed = new Set([...Object.keys(picks), ...Object.keys(labels)])
+  const kept = new Set([...listed].filter(id => open.has(id) || !known.has(id)))
   const ts = Math.max(await $.clock.now(), draftTs + 1)
-  await $.fs.write(path, `${JSON.stringify({ ts, picks })}\n`)
+  // A draft with no kept label keeps the shape it had before labels: the labels key is written only when one is kept.
+  const keptLabels = flow.keepOpen(labels, kept)
+  const labelsPart = Object.keys(keptLabels).length > 0 ? { labels: keptLabels } : {}
+  await $.fs.write(path, `${JSON.stringify({ ts, picks: flow.keepOpen(picks, kept), ...labelsPart })}\n`)
   draftTs = ts
   unreadableHeld = false
 }
 
-// Writes the picks not yet on draft.json. Returns whether the write landed; a failure is logged and the picks stay pending.
+// Drops from `queue` the changes a write has landed: those that still hold the value the write carried.
+function forgetLanded<V>(queue: Map<string, V>, landed: ReadonlyMap<string, V>): void {
+  for (const [id, value] of landed) {
+    if (queue.get(id) === value) queue.delete(id)
+  }
+}
+
+// Writes the picks and labels not yet on draft.json. Returns whether the write landed; a failure is logged and they stay pending.
 async function writeUnsaved($: EngineInterface, home: string): Promise<boolean> {
-  if (unsavedPicks.size === 0) return true
-  const batch = new Map(unsavedPicks)
+  if (unsaved.picks.size === 0 && unsaved.labels.size === 0) return true
+  const batch: DraftChanges = { picks: new Map(unsaved.picks), labels: new Map(unsaved.labels) }
   try {
     await saveDraft($, home, batch)
   } catch (error: unknown) {
     logFailure($, error)
     return false
   }
-  for (const [id, pick] of batch) {
-    if (unsavedPicks.get(id) === pick) unsavedPicks.delete(id)
-  }
+  forgetLanded(unsaved.picks, batch.picks)
+  forgetLanded(unsaved.labels, batch.labels)
   return true
 }
 
@@ -760,11 +792,17 @@ async function changeWizard($: EngineInterface, change: (prev: Wizard) => Wizard
   const after = await read($, wizardAtom)
   const folder = await folderOf($)
   if (folder === undefined) return
-  for (const id of new Set([...Object.keys(before.picks), ...Object.keys(after.picks)])) {
-    const pick: Pick | undefined = after.picks[id]
-    if (JSON.stringify(before.picks[id]) !== JSON.stringify(pick)) unsavedPicks.set(id, pick)
-  }
+  queueChanges(before.picks, after.picks, unsaved.picks)
+  queueChanges(before.labels, after.labels, unsaved.labels)
   await writeUnsaved($, folder)
+}
+
+// Queues each id whose entry differs between `before` and `after` (undefined when it was removed).
+function queueChanges<V>(before: Record<string, V>, after: Record<string, V>, queue: Map<string, V | undefined>): void {
+  for (const id of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    const value: V | undefined = after[id]
+    if (JSON.stringify(before[id]) !== JSON.stringify(value)) queue.set(id, value)
+  }
 }
 
 // Submit all: each question of the group gets its answer through the answer path, then its picks are cleared and the
@@ -841,7 +879,7 @@ async function moveWizard($: EngineInterface, move: (current: Wizard, group: Gro
 
 // The "Other…" link focuses the field of its question, which is already open under the link.
 async function focusOther($: EngineInterface, id: string): Promise<void> {
-  await $.ui.focus({ requestId: PANE, key: `${OTHER_INPUT_PREFIX}${id}` })
+  await $.ui.focus({ requestId: PANE, key: otherInputKey(id, (await read($, wizardAtom)).fieldRound) })
 }
 
 // The tree's press on a question: the card on screen becomes that question, as if the wizard had walked there with Next or
@@ -857,18 +895,28 @@ async function jumpToQuestion($: EngineInterface, id: string): Promise<void> {
 }
 
 // The Other text typed but not recorded yet, by question id. Typing keeps it here, not in the store, so a key does not
-// redraw the pane; it is recorded when the field loses focus, on Enter, and before a nav action (recordPendingOther).
+// redraw the pane; it is recorded when the field loses focus and before a nav action (recordPendingOther), and Keep drops it.
 const pendingOther = new Map<string, string>()
 
 // The key the pane's focus ring stood on last, as the ui.focus hook saw it: undefined for one of the engine's own stops.
 let focusedKey: string | undefined
 
-// Enter in the "Other…" field records its text as the pick and keeps the card; blank text takes the pick away. A question
+// The text of an "Other…" field recorded as the pick, not kept: blank text takes the pick away. A question
 // that is not open, or fading out, takes nothing.
 async function submitOther($: EngineInterface, id: string, text: string): Promise<void> {
   const { open, leaving: fading } = await snapshot($)
   if (fading[id] !== undefined || !open.some(question => question.id === id)) return
   await changeWizard($, prev => flow.submittedOther(prunedWizard(prev, open), id, text))
+}
+
+// Keep in the "Other…" field (Enter, or the Keep button) moves its text to the question's label and empties the field: the
+// focus goes to the Other button, which now draws the label. Blank text keeps nothing and leaves the field as it is. A
+// question that is not open, or fading out, takes nothing.
+async function keepOther($: EngineInterface, id: string, text: string): Promise<void> {
+  const { open, leaving: fading } = await snapshot($)
+  if (fading[id] !== undefined || !open.some(question => question.id === id) || text.trim() === '') return
+  await changeWizard($, prev => flow.keptOther(prunedWizard(prev, open), id, text))
+  await $.ui.focus({ requestId: PANE, key: otherButtonKey(id) })
 }
 
 // Records every pending Other text through submitOther, one after another. An entry whose question is no longer open is
@@ -893,6 +941,14 @@ function openPane($: EngineInterface): Promise<{ isPlaced: boolean }> {
   return $.ui.open({ id: PANE, title: TITLE, focus: true })
 }
 
+// Registers /askaway with the description of the language; /askaway lang calls it again (M69). Whether the engine
+// takes a changed description from a second registration is not verified; a refusal is logged once (SPEC, Lang).
+async function registerCommand($: EngineInterface, lang: Lang): Promise<void> {
+  await $.command.register({ name: 'askaway', description: t(lang, 'command.describeOpen') }).catch((error: unknown) =>
+    logFailure($, error),
+  )
+}
+
 // /askaway lang pt-BR|en|auto (default auto: the environment's locale): stores the choice and switches the language at once.
 async function setLang($: EngineInterface, value: string): Promise<string> {
   const choice = LANG_CHOICES.get(value.toLowerCase())
@@ -900,6 +956,7 @@ async function setLang($: EngineInterface, value: string): Promise<string> {
   await $.store.set(LANG_KEY, choice)
   const chosen = resolveLang(choice, await detectedLang($))
   await update($, langAtom, () => chosen)
+  await registerCommand($, chosen)
   return t(chosen, 'command.langSet', { lang: choice === 'auto' ? choice : LANG_NAMES[chosen] })
 }
 
@@ -917,22 +974,37 @@ async function dismissEndedOrSay($: EngineInterface, id: string): Promise<void> 
   })
 }
 
+// Sets the move lock: the flag the guard reads, and the atom the pane draws its buttons disabled from (so the pane redraws).
+function setMoveLock($: EngineInterface, locked: boolean): Promise<void> {
+  moveLocked = locked
+  return update($, moveLockAtom, () => locked)
+}
+
+// Runs a move (a pick, Next or Back) unless one ran within MOVE_LOCK_MS; while the lock holds, the pane draws those buttons
+// disabled. Submit and the other actions are not moves.
+function moveOnce($: EngineInterface, move: () => void): void {
+  if (moveLocked) return
+  report($, setMoveLock($, true))
+  $.clock.after(MOVE_LOCK_MS, () => report($, setMoveLock($, false)))
+  move()
+}
+
 const actionsFor = ($: EngineInterface): PaneActions => ({
   clearHistory: () => report($, clearHistory($)),
   dismissEnded: id => report($, dismissEndedOrSay($, id)),
-  pick: (id, key) => report($, afterPendingOther($, () => pickOption($, id, { key }))),
+  pick: (id, choice) => moveOnce($, () => report($, afterPendingOther($, () => pickOption($, id, choice)))),
   focusOther: id => report($, afterPendingOther($, () => focusOther($, id))),
   submitOne: id => report($, afterPendingOther($, () => submitOne($, id))),
   jump: id => report($, afterPendingOther($, () => jumpToQuestion($, id))),
   typeOther: (id, text) => {
     pendingOther.set(id, text)
   },
-  submitOther: (id, text) => {
+  keepOther: (id, text) => {
     pendingOther.delete(id)
-    report($, submitOther($, id, text))
+    report($, keepOther($, id, text))
   },
-  back: () => report($, afterPendingOther($, () => moveWizard($, (current, group) => flow.back(current, group)))),
-  next: () => report($, afterPendingOther($, () => moveWizard($, (current, group) => flow.next(current, group)))),
+  back: () => moveOnce($, () => report($, afterPendingOther($, () => moveWizard($, (current, group) => flow.back(current, group))))),
+  next: () => moveOnce($, () => report($, afterPendingOther($, () => moveWizard($, (current, group) => flow.next(current, group))))),
   submit: () => report($, afterPendingOther($, () => submitCurrent($))),
   saveWho: text => report($, saveWho($, text)),
   skipWho: () => report($, saveWho($, '')),
@@ -946,9 +1018,7 @@ export const register: Register = on => {
     await update($, langAtom, () => current)
     // A failed registration (a name already taken, say) must not stop the poll below: the band and the pane draw
     // from the board, and the folder is read only while the poller runs.
-    await $.command.register({ name: 'askaway', description: t(current, 'command.describeOpen') }).catch((error: unknown) =>
-      logFailure($, error),
-    )
+    await registerCommand($, current)
     const storedIds = await $.store.get(CLEARED_KEY)
     const ids = Array.isArray(storedIds) ? storedIds.filter((id): id is string => typeof id === 'string') : []
     await update($, cleared, () => ids)
@@ -961,6 +1031,7 @@ export const register: Register = on => {
     await update($, wizardAtom, prev => (hasWizardData(prev) ? prev : flow.EMPTY_WIZARD))
     // A session starts with no draft seen: the awaited first poll below applies the picks the folder holds.
     draftTs = 0
+    await setMoveLock($, false)
     const folder = await folderOf($)
     poller?.cancel()
     if (folder !== undefined) {
@@ -1041,13 +1112,14 @@ export const register: Register = on => {
       active,
       wizard,
       screen,
+      moveLocked: await read($, moveLockAtom),
       surface: e.surface,
     }
     return renderPane($.ui.resolve(e), view, actionsFor($), lang, heldFor(e.surface, e.requestId))
   })
 
   // The ring leaving the Other field: the move is passed on first, then the field's pending text is recorded, so a person
-  // who never pressed Enter keeps it. The hook never blocks, rewrites or re-targets the move.
+  // who never pressed Keep keeps it. The hook never blocks, rewrites or re-targets the move.
   on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
     const isLeavingOther = leavesOtherField(focusedKey, e.element)
     focusedKey = e.element

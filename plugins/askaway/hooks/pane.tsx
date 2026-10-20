@@ -12,7 +12,6 @@ import { DETAILS_FILL, LINK_MARK, URGENCY_COLOR } from './look'
 import { KEEPGLIDE_HEADER_SIZE, KEEPGLIDE_SUBMIT_SIZE, renderHistoryIcon, renderKeepGlide, renderLogo } from './logo-element'
 import {
   urgencyGradeOf,
-  OTHER_INPUT_PREFIX,
   OTHER_KEY,
   ageLabel,
   clearableIdsOf,
@@ -22,6 +21,8 @@ import {
   groupLabelOf,
   isRootSession,
   leadOf,
+  otherButtonKey,
+  otherInputKey,
   otherLetterOf,
   piecesOf,
   questionLabel,
@@ -34,7 +35,7 @@ import {
   type Leaving,
   type Section,
 } from './model'
-import type { Group, Screen, Wizard } from './wizard'
+import type { Group, Pick, Screen, Wizard } from './wizard'
 
 type Ui = Elements[RenderSurface]
 
@@ -48,6 +49,8 @@ export type PaneView = {
   active: Group | undefined
   // Already pruned to the open questions by the register.
   wizard: Wizard
+  // A move (a pick, Next or Back) ran within the last MOVE_LOCK_MS: its buttons are drawn disabled until it lifts.
+  moveLocked: boolean
   screen: Screen | undefined
   surface: RenderSurface
   // The footer line (footerText, hooks/model.ts), set by the register only while no question is open.
@@ -65,12 +68,12 @@ export type PaneActions = {
   dismissEnded: (id: string) => void
   saveWho: (text: string) => void
   skipWho: () => void
-  pick: (id: string, key: string) => void
+  pick: (id: string, choice: Pick) => void
   focusOther: (id: string) => void
   submitOne: (id: string) => void
   jump: (id: string) => void
   typeOther: (id: string, text: string) => void
-  submitOther: (id: string, text: string) => void
+  keepOther: (id: string, text: string) => void
   back: () => void
   next: () => void
   submit: () => void
@@ -81,6 +84,7 @@ type CardContext = {
   question: Question
   wizard: Wizard
   isLeaving: boolean
+  isMoveLocked: boolean
   held: HeldButtons
   surface: RenderSurface
 }
@@ -118,7 +122,8 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
   return pane
 }
 
-// The footer: one muted line under the status lines. Text only, never a row of the tree, and drawn only with no card up.
+// The footer: one line under the status lines, drawn without dim (the dim blend fails 4.5:1 on white, look.ts). Text only, never
+// a row of the tree, and drawn only with no card up.
 // The one-time question for the answerer's name: the sentence, a name field and Skip. Drawn above the card until answered.
 function renderAskWho(ui: Ui, lang: Lang, actions: PaneActions, held: HeldButtons): RenderElement | false {
   if (!('Input' in ui)) return false
@@ -143,7 +148,7 @@ function renderAskWho(ui: Ui, lang: Lang, actions: PaneActions, held: HeldButton
 
 function renderFooter(ui: Ui, text: string): RenderElement {
   const { Text } = ui
-  return <Text key="footer" dimColor>{text}</Text>
+  return <Text key="footer">{text}</Text>
 }
 
 // What the trees draw from: the view and the language, the actions a row's press runs, and the held table for its Buttons.
@@ -458,6 +463,7 @@ function renderQuestion(
     question,
     wizard: view.wizard,
     isLeaving: view.leaving[question.id] !== undefined,
+    isMoveLocked: view.moveLocked,
     held,
     surface: view.surface,
   }
@@ -579,7 +585,8 @@ function renderFirstBlock(ui: Ui, question: Question, isLeaving: boolean): Rende
 // The key and the label are one line each (singleLine), so a line break in a label cannot draw a fake option row.
 function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, option: QuestionOption): RenderElement {
   const { Box, Button, Text } = ui
-  const { question, isLeaving, wizard, held } = card
+  const { question, isLeaving, isMoveLocked, wizard, held } = card
+  const isDisabled = isLeaving || isMoveLocked
   const isPicked = wizard.picks[question.id]?.key === option.key
   const isRecommended = option.key === question.recommended
   const pickMark = isPicked ? '✓ ' : ''
@@ -590,17 +597,17 @@ function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContex
   const tradeoffLine = tradeoffLineOf(lang, option)
   const details = optionDetailsOf(lang, option)
   const onPress = () => {
-    if (isLeaving) return
-    actions.pick(question.id, option.key)
+    if (isDisabled) return
+    actions.pick(question.id, { key: option.key })
   }
   return (
     <Box key={`optrow-${question.id}-${option.key}`} flexDirection="column">
-      {held.hold(key, [text, isPicked, isBold, isLeaving, hotkey], onPress, press => (
+      {held.hold(key, [text, isPicked, isBold, isLeaving, isMoveLocked, hotkey], onPress, press => (
         <Button
           key={key}
           label={text}
           variant={isPicked ? 'primary' : 'secondary'}
-          dimColor={isLeaving}
+          dimColor={isDisabled}
           hotkey={hotkey}
           onPress={press}
         >
@@ -624,28 +631,34 @@ function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContex
 
 // "Other…": the last row under the options, a plain link drawn with its letter, "C · Other…" (otherLetterOf). Its field
 // sits on the row under it, under the same "└ " branch glyph the option sub-rows draw. The field is always open, ready to
-// type; the link only focuses it. Typing keeps the text in the pane's memory (typeOther), with no redraw; the register
-// records it as the Other pick when the field loses focus, on Enter (submitOther) or before a nav action, and the card
-// stays where it is. The field keeps its own text. The link is bold once Other is the pick; the typed text is not drawn
-// again under it. A surface with no Input (mobile) draws no field, so no Other option either.
+// type. Typing keeps the text in the pane's memory (typeOther), with no redraw. Keep (Enter, or the field's Keep button)
+// moves the text to the link, which then draws "C · <label>" and empties the field; the focus goes to the link. A press on
+// the link with a label picks it, else it only focuses the field. Text typed and not kept is recorded as the pick when the
+// field loses focus or before a nav action, and the card stays where it is. The link is bold once Other is the pick. A
+// surface with no Input (mobile) draws no field, so no Other option either.
 function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext): RenderElement | false {
   if (!('Input' in ui)) return false
   const { Box, Button, Input, Text } = ui
-  const { question, isLeaving, wizard, held } = card
-  const isChosen = wizard.picks[question.id]?.key === OTHER_KEY
-  const key = `other-${question.id}`
+  const { question, isLeaving, isMoveLocked, wizard, held } = card
+  const isDisabled = isLeaving || isMoveLocked
+  const pick = wizard.picks[question.id]
+  const kept: string | undefined = wizard.labels[question.id]
+  // With a kept label, the Other button is chosen only for that text: the drawn label and the pick never disagree.
+  const isChosen = pick?.key === OTHER_KEY && (kept === undefined || pick.text === kept)
+  const key = otherButtonKey(question.id)
   const letter = otherLetterOf(question.options)
-  const linkText = t(lang, 'option.other')
+  const linkText = kept === undefined ? t(lang, 'option.other') : singleLine(kept)
   const label = letter === undefined ? linkText : `${letter.toUpperCase()} · ${linkText}`
   const hotkey = letter
   const onPress = () => {
-    if (isLeaving) return
-    actions.focusOther(question.id)
+    if (isDisabled) return
+    if (kept === undefined) actions.focusOther(question.id)
+    else actions.pick(question.id, { key: OTHER_KEY, text: kept })
   }
   return (
     <Box key={`other-row-${question.id}`} flexDirection="column">
-      {held.hold(key, [label, isChosen, isLeaving, hotkey], onPress, press => (
-        <Button key={key} label={label} plain dimColor={isLeaving} hotkey={hotkey} onPress={press}>
+      {held.hold(key, [label, isChosen, isLeaving, isMoveLocked, hotkey], onPress, press => (
+        <Button key={key} label={label} plain dimColor={isDisabled} hotkey={hotkey} onPress={press}>
           <Text dimColor>{`${LINK_MARK} `}</Text>
           <Text underline bold={isChosen} dimColor={isLeaving}>{label}</Text>
         </Button>
@@ -655,11 +668,11 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
           <Text dimColor={isLeaving}>{BRANCH_PREFIX}</Text>
           <Box flexGrow={1}>
             <Input
-              key={`${OTHER_INPUT_PREFIX}${question.id}`}
+              key={otherInputKey(question.id, wizard.fieldRound)}
               placeholder={t(lang, 'input.placeholder')}
               submitLabel={t(lang, 'input.send')}
               onInput={text => actions.typeOther(question.id, text)}
-              onSubmit={text => actions.submitOther(question.id, text)}
+              onSubmit={text => actions.keepOther(question.id, text)}
             />
           </Box>
         </Box>
@@ -673,8 +686,8 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
 // pressed. Back, Next and Submit carry their letters on the terminal and on the desktop (letterFor).
 function renderNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: Screen): RenderElement {
   const { Box, Button } = ui
-  const { question, isLeaving, held } = card
-  const isBackOff = !screen.canBack || isLeaving
+  const { question, isLeaving, isMoveLocked, held } = card
+  const isBackOff = !screen.canBack || isLeaving || isMoveLocked
   const label = navLabelOf(card, 'back', t(lang, 'nav.back'))
   const hotkey = letterFor(card, 'back')
   const onPress = () => {
@@ -695,8 +708,8 @@ function renderNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, 
 // the group; nothing waits for a pick, because no answer can be sent.
 function renderEndedNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: Screen): RenderElement {
   const { Box, Button } = ui
-  const { question, isLeaving, held } = card
-  const isBackOff = !screen.canBack || isLeaving
+  const { question, isLeaving, isMoveLocked, held } = card
+  const isBackOff = !screen.canBack || isLeaving || isMoveLocked
   const backLabel = navLabelOf(card, 'back', t(lang, 'nav.back'))
   const dismissLabel = t(lang, 'card.dismiss')
   const hotkey = letterFor(card, 'back')
@@ -715,7 +728,7 @@ function renderEndedNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardCont
 
 function renderNext(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: Screen): RenderElement {
   const { Button } = ui
-  const isOff = !screen.canNext || card.isLeaving
+  const isOff = !screen.canNext || card.isLeaving || card.isMoveLocked
   const label = navLabelOf(card, 'next', t(lang, 'nav.next'))
   const hotkey = letterFor(card, 'next')
   const onPress = () => {

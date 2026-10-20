@@ -6,6 +6,7 @@ import {
   back,
   choose,
   groupsOf,
+  keptOther,
   next,
   pruneWizard,
   screenOf,
@@ -256,9 +257,8 @@ test('submittable lists every question in group order once all are picked, else 
 
 test('pruneWizard drops the picks of questions no longer open', () => {
   const wizard: Wizard = {
+    ...EMPTY_WIZARD,
     groupKey: '/work/app',
-    step: 0,
-    questionId: null,
     picks: { 'q-a-000001': A, 'q-gone-000002': B },
   }
   const pruned = pruneWizard(wizard, ['q-a-000001'], 1)
@@ -271,6 +271,17 @@ test('submittedOther records the trimmed text as the Other pick and keeps the wi
   const next = submittedOther(wizard, 'q-b-000002', '  Use a fork  ')
   expect(next.picks).toEqual({ 'q-a-000001': A, 'q-b-000002': { key: 'other', text: 'Use a fork' } })
   expect(next.step).toBe(1)
+})
+
+test('submittedOther with no kept label still records typed text as the Other pick (the pending path is unchanged)', () => {
+  const typed = submittedOther({ ...EMPTY_WIZARD, picks: { 'q-a-000001': A } }, 'q-b-000002', '  Second text ')
+  expect(typed.picks).toEqual({ 'q-a-000001': A, 'q-b-000002': { key: 'other', text: 'Second text' } })
+})
+
+test('submittedOther with a kept label leaves typed text unrecorded: the pick and the label stay the same', () => {
+  const kept: Wizard = { ...EMPTY_WIZARD, picks: { 'q-a-000001': { key: 'other', text: 'First text' } }, labels: { 'q-a-000001': 'First text' } }
+  expect(submittedOther(kept, 'q-a-000001', 'Second text')).toBe(kept)
+  expect(submittedOther(kept, 'q-a-000001', 'Second text').picks).toEqual({ 'q-a-000001': { key: 'other', text: 'First text' } })
 })
 
 test('submittedOther with blank text takes an Other pick away, and leaves a chosen option alone', () => {
@@ -287,6 +298,38 @@ test('submittedOther keeps at most 500 code points of the trimmed text, so 600 t
   const emoji = submittedOther(EMPTY_WIZARD, 'q-a-000001', '😀'.repeat(600)).picks['q-a-000001']
   expect([...(emoji?.text ?? '')]).toHaveLength(500)
   expect(submittedOther(EMPTY_WIZARD, 'q-a-000001', 'y'.repeat(500)).picks['q-a-000001']?.text).toBe('y'.repeat(500))
+})
+
+test('keptOther keeps the trimmed text as the label, at most 500 code points, and moves the field round on', () => {
+  const kept = keptOther(EMPTY_WIZARD, 'q-a-000001', `  ${'x'.repeat(600)}  `)
+  expect(kept.labels).toEqual({ 'q-a-000001': 'x'.repeat(500) })
+  expect(kept.fieldRound).toBe(1)
+  expect(keptOther(EMPTY_WIZARD, 'q-a-000001', '  Use a fork  ').labels).toEqual({ 'q-a-000001': 'Use a fork' })
+})
+
+test('keptOther with blank text changes nothing: the same wizard comes back, with the same field round', () => {
+  const wizard: Wizard = { ...EMPTY_WIZARD, fieldRound: 2, picks: { 'q-a-000001': { key: 'other', text: 'Use a fork' } } }
+  expect(keptOther(wizard, 'q-a-000001', '   ')).toBe(wizard)
+})
+
+test('keptOther drops the Other pick of that question and leaves an option pick alone', () => {
+  const wizard: Wizard = { ...EMPTY_WIZARD, picks: { 'q-a-000001': { key: 'other', text: 'Old' }, 'q-b-000002': B } }
+  expect(keptOther(wizard, 'q-a-000001', 'New').picks).toEqual({ 'q-b-000002': B })
+  const option: Wizard = { ...EMPTY_WIZARD, picks: { 'q-a-000001': A } }
+  expect(keptOther(option, 'q-a-000001', 'New').picks).toEqual({ 'q-a-000001': A })
+})
+
+test('keptOther on each Keep replaces the label and bumps the field round', () => {
+  const once = keptOther(EMPTY_WIZARD, 'q-a-000001', 'First')
+  const twice = keptOther(once, 'q-a-000001', 'Second')
+  expect(twice.labels).toEqual({ 'q-a-000001': 'Second' })
+  expect(twice.fieldRound).toBe(2)
+})
+
+test('pruneWizard drops the labels of questions no longer open', () => {
+  const wizard: Wizard = { ...EMPTY_WIZARD, labels: { 'q-a-000001': 'Use a fork', 'q-gone-000002': 'Gone' } }
+  expect(pruneWizard(wizard, ['q-a-000001'], 1).labels).toEqual({ 'q-a-000001': 'Use a fork' })
+  expect(Object.keys(wizard.labels)).toEqual(['q-a-000001', 'q-gone-000002'])
 })
 
 test('pruneWizard clamps the step to the last question of the group on screen after the drop', () => {
