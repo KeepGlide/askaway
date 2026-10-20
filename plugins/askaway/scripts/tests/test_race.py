@@ -50,7 +50,8 @@ def session_env(state: Path, session: str) -> dict[str, str]:
     """The environment of one writer: the state folder, a name, and the session the process runs in."""
     inherited = {k: v for k, v in os.environ.items() if not k.startswith(("CODEX_", "CLAUDE_CODE_"))}
     return {**inherited, "ASKAWAY_HOME": str(state), "ASKAWAY_WHO": "racer", "CLAUDE_CODE_SESSION_ID": session,
-            "ASKAWAY_DESKTOP_SESSIONS": str(state.parent / "desktop")}
+            "ASKAWAY_DESKTOP_SESSIONS": str(state.parent / "desktop"),
+            "ASKAWAY_PROJECTS": str(state.parent / "projects")}
 
 
 def run_cli(state: Path, session: str, *args: str) -> dict:

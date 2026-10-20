@@ -18,6 +18,17 @@ def _json_names(folder: str) -> set[str]:
     return {name for name in os.listdir(folder) if name.endswith(".json")}
 
 
+def _marked(path: str) -> bool:
+    """Is there a delivery marker for the fast path: a regular file with bytes in it? Its content is parsed only on the
+    slow path (item_status), where an empty or torn file is no marker. A symlink is never a marker: lstat does not follow it."""
+    import stat  # the fast path runs before the module imports
+    try:
+        status = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISREG(status.st_mode) and status.st_size > 0
+
+
 def _nothing_to_deliver() -> bool:
     """Is every answer already marked in d/? Runs before the heavy imports."""
     default_home = os.path.join(os.path.expanduser("~"), ".claude", "state", "askaway")
@@ -26,11 +37,8 @@ def _nothing_to_deliver() -> bool:
         answered = _json_names(os.path.join(home, "a"))
     except OSError:
         return True
-    try:
-        delivered = _json_names(os.path.join(home, "d"))
-    except OSError:
-        delivered = set()
-    return answered <= delivered
+    folder = os.path.join(home, "d")
+    return all(_marked(os.path.join(folder, name)) for name in answered)
 
 
 def _exit_if_idle() -> None:
@@ -48,6 +56,7 @@ if __name__ == "__main__":
 import argparse
 import contextlib
 import csv
+import fcntl
 import getpass
 import io
 import json
@@ -58,7 +67,7 @@ import stat
 import string
 import time
 import unicodedata
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from datetime import datetime, timezone
 from fnmatch import fnmatchcase
 from itertools import islice
@@ -108,12 +117,16 @@ REQUIRED_TEXT: Final = ("what", "problem", "context", "why", "how", "gains", "lo
                         "urgency", "undo")
 REQUIRED_OPTION_TEXT: Final = ("does", "pros", "cons")
 MIN_SENTENCES: Final = 2
-SENTENCE_END: Final = re.compile(r"[.!?]+(?:\s|$)")
+# A terminator is one or more of . ! ? before a space or the end, but not the full stop of a known abbreviation.
+SENTENCE_END: Final = re.compile(r"(?<!\be\.g)(?<!\bi\.e)(?<!\betc)(?<!\bvs)(?<!\bcf)[.!?]+(?:\s|$)", re.IGNORECASE)
+ONE_LINE_TEXT: Final = frozenset({"question", "title", "label", "tradeoff"})  # shown on one line: no line breaks kept
+BODY_CONTROL: Final = re.compile(r"(?!\n)[\x00-\x1f\x7f-\x9f]")  # a body keeps its line breaks; other controls go
 RECOMMENDED_MARKER: Final = re.compile(r"\s*\((?:recommended|recomendad[oa])\)\s*$", re.IGNORECASE)
 SESSION_TITLE_MAX: Final = 80
 SESSION_PATTERN: Final = re.compile(r"[A-Za-z0-9_-]{1,128}")
 DESKTOP_SESSIONS_ROOT: Final = Path.home() / ".config" / "Claude" / "claude-code-sessions"
 DESKTOP_SESSIONS_ENV: Final = "ASKAWAY_DESKTOP_SESSIONS"
+PROJECTS_ENV: Final = "ASKAWAY_PROJECTS"  # the transcripts folder; tests point it at a temp folder
 DESKTOP_ID_PREFIX: Final = "local_"  # every Claude Desktop session id the entry stores starts with it
 DESKTOP_GLOB: Final = f"*/*/{DESKTOP_ID_PREFIX}*.json"  # one folder per org and user, one file per Desktop session
 DESKTOP_FILE_MAX: Final = 2 * 1024 * 1024
@@ -143,6 +156,7 @@ MIN_WORDS: Final = 3
 PLACEHOLDER_WORDS: Final = frozenset({"tbd", "todo", "n/a", "lorem"})
 MISSING: Final = "missing"
 PLACEHOLDER: Final = "placeholder"
+NOT_UTF8: Final = "not valid UTF-8"
 FIT_RULE: Final = "must be an integer 0 to 100"
 KEY_RULE: Final = "option keys must be consecutive uppercase letters starting at A, in order (A, B, C...)"
 FOREIGN_RECHECK_S: Final = 60
@@ -163,15 +177,19 @@ _HOME_PREFIX: Final = r"(?:~|\$HOME|\$\{HOME\})"
 _MIRROR_PATH: Final = rf"(?:{re.escape(str(MIRROR_SCRIPT))}|{_HOME_PREFIX}/\.claude/mods/plugins/askaway/scripts/askaway\.py)"
 _FIXED_SCRIPTS: Final = "|".join([re.escape(str(SCRIPT_PATH)), _MIRROR_PATH])
 _PLUGIN_ROOT_SCRIPT: Final = re.escape("${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py")
-INBOX_CALL: Final = re.compile(
+_INBOX_HEAD: Final = (
     r"^\s*(?:/usr/bin/)?python3(?:\.\d+)?\s+"
     rf"(?:(?:{_FIXED_SCRIPTS})|\"(?:{_FIXED_SCRIPTS}|{_PLUGIN_ROOT_SCRIPT})\")"
-    r"\s+(?:ask|status|list|wait|export)\b[^;&|`$<>\n]*$"
+    r"\s+(?:ask|status|list|wait|export)\b"
 )
+INBOX_CALL: Final = re.compile(rf"{_INBOX_HEAD}[^;&|`$<>\n]*$")
+# The same call with a heredoc: its body is the JSON on stdin and never runs (see _heredoc_code).
+INBOX_HEREDOC: Final = re.compile(rf"{_INBOX_HEAD}[^;&|`$<>\n]*?<<-?\s*(['\"]?)(\w+)\1\s*$")
 # The Bash guard (a deterrent, SPEC.md): each command is read word by word as the shell reads it, and the words
 # are checked in command or write position. It does not model xargs, find -exec or a script file's own code.
 TMP_ROOT: Final = os.path.realpath("/tmp")
 HOME_VAR: Final = "ASKAWAY_HOME"
+ASK_LOCK: Final = ".ask.lock"  # the state folder's lock file: held by each ask from its duplicate check to its write
 ANSWER_DENIED: Final = ("Denied: an Askaway question is answered only by the user, in the Askaway panel, never "
                         "from a shell command. Keep working on the recommended option or end the turn.")
 STATE_DENIED: Final = ("Denied: the Askaway state folder is written only by askaway.py itself. The user answers "
@@ -183,7 +201,8 @@ SHELL_WORD: Final = (r"(?:\$\((?:[^()]|\([^()]*\))*\)|\\.|'[^']*'|\"(?:\\.|[^\"\
                      r"|[^\s;&|<>()'\"\\]|\\.)+")
 SHELL_TOKEN: Final = re.compile(
     rf"[ \t]*(?:(?P<op>&&|\|\||>>|>&|>\||<<-?|<>|&>|[;&|<>()\n])|(?P<word>{SHELL_WORD}))")
-WRITE_COMMANDS: Final = frozenset({"cp", "mv", "tee", "touch", "ln", "install", "truncate", "rsync"})
+WRITE_COMMANDS: Final = frozenset({"cp", "mv", "tee", "touch", "ln", "install", "truncate", "rsync",
+                                 "mkfifo", "mknod", "mkdir", "chmod", "chown", "chgrp", "setfacl", "chattr"})
 DELETE_COMMANDS: Final = frozenset({"rm", "unlink", "shred", "rmdir"})
 PYTHON_NAME: Final = re.compile(r"python(?:3(?:\.\d+)?)?")
 CODE_RUNNERS: Final = frozenset({"perl", "ruby", "node", "bun", "deno", "php"})
@@ -299,12 +318,43 @@ def create_once(target: Path, data: Mapping[str, Any]) -> bool:
     return True
 
 
-def read_json(path: Path) -> dict[str, Any] | None:
+def _regular_bytes(path: Path, limit: int | None = None) -> bytes | None:
+    """The bytes of a regular file that reads (at most limit, when one is given), else None.
+
+    A symlink, a FIFO, a device, a folder, an unreadable or an oversized file gives None. O_NOFOLLOW refuses a symlink
+    and O_NONBLOCK keeps a FIFO from blocking the open; the type check runs on the opened descriptor, so nothing swapped
+    in after the glob is read."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, RecursionError):  # a deeply nested file overflows the JSON parser
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
         return None
-    return data if isinstance(data, dict) else None
+    with os.fdopen(descriptor, "rb") as handle:
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                return None
+            data = handle.read() if limit is None else handle.read(limit + 1)
+        except OSError:
+            return None
+    return data if limit is None or len(data) <= limit else None
+
+
+def _is_regular(path: Path) -> bool:
+    """A regular file, not a symlink, FIFO, device or folder: only those are read as state."""
+    try:
+        return stat.S_ISREG(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+def read_json(path: Path) -> dict[str, Any] | None:
+    data = _regular_bytes(path)
+    if data is None:
+        return None
+    try:
+        parsed = json.loads(data.decode("utf-8"))
+    except (ValueError, RecursionError):  # a deeply nested file overflows the JSON parser
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _question_matches(item_id: str, entry: Mapping[str, Any]) -> bool:
@@ -319,6 +369,8 @@ def load_questions() -> tuple[list[dict[str, Any]], list[str]]:
     loaded: list[dict[str, Any]] = []
     damaged: list[str] = []
     for path in (state_home() / "q").glob("*.json"):
+        if not _is_regular(path):  # a FIFO, a symlink or a folder is not a question: skipped silently
+            continue
         entry = read_json(path)
         if entry is not None and _question_matches(path.stem, entry):
             loaded.append(entry)
@@ -336,10 +388,10 @@ def answer_lapsed(answer: Mapping[str, Any]) -> bool:
 def item_status(item_id: str) -> tuple[str, str | None]:
     answer = read_json(item_path("a", item_id))
     key = answer.get("key") if answer else None
-    if item_path("d", item_id).exists():
-        marker = read_json(item_path("d", item_id)) or {}
+    marker = read_json(item_path("d", item_id))  # an empty or torn marker is absent: the hook writes it again
+    if marker is not None:
         return ("expired" if marker.get("expired") is True else "delivered"), key
-    if item_path("a", item_id).exists():
+    if _is_regular(item_path("a", item_id)):
         if answer is None:  # answered, but the answer file does not read: the key is unknown
             return STATUS_DAMAGED_ANSWER, None
         return ("expired" if answer_lapsed(answer) else "answered"), key
@@ -357,8 +409,9 @@ def _without_format_chars(text: str) -> str:
 
 
 def _other_clean(text: str) -> str:
-    """The Other text on one line, without format characters or controls, capped at OTHER_TEXT_MAX code points."""
-    return _clip(" ".join(CONTROL_CHARS.sub(" ", _without_format_chars(text)).split()), OTHER_TEXT_MAX)
+    """The Other text on one line, without format characters or controls, the first OTHER_TEXT_MAX code points and no
+    ellipsis (SPEC: a plain cap, in storage and in the delivery line)."""
+    return " ".join(CONTROL_CHARS.sub(" ", _without_format_chars(text)).split())[:OTHER_TEXT_MAX]
 
 
 def other_text(answer: Mapping[str, Any] | None) -> str | None:
@@ -408,11 +461,24 @@ def _words(text: str) -> list[str]:
     return [word for word in (raw.strip(string.punctuation) for raw in text.lower().split()) if word]
 
 
+def _clean_text(name: str, raw: object) -> str:
+    """The text without format characters; control characters become spaces, and a body keeps its line breaks."""
+    if not isinstance(raw, str):
+        return ""
+    if name in ONE_LINE_TEXT:
+        return _one_line(raw)
+    return BODY_CONTROL.sub(" ", _without_format_chars(raw)).strip()
+
+
 def _read_text(name: str, raw: object, limit: int) -> tuple[str | None, str | None]:
-    """The stripped text without format characters, or None with the reason it is refused: missing, too long or a placeholder."""
-    text = _without_format_chars(raw).strip() if isinstance(raw, str) else ""
+    """The cleaned text, or None with the reason it is refused: missing, not UTF-8, too long or a placeholder."""
+    text = _clean_text(name, raw)
     if not text:
         return None, MISSING
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:  # a lone surrogate would crash the CSV export later
+        return None, NOT_UTF8
     if len(text) > limit:
         return None, f"too long ({len(text)}/{limit})"
     words = _words(text)
@@ -515,13 +581,9 @@ def _pause_gap(raw: Mapping[str, Any], gaps: Gaps) -> None:
         gaps.top["pause"] = "must be true or false"  # type-checked; only risk "high" pauses (SPEC: ask)
 
 
-def _option_key(raw: object) -> str:
-    if not isinstance(raw, dict):
-        raise ValueError("each option must be an object")  # noqa: TRY004 - CLI validation channel
+def _option_key(raw: Mapping[str, Any]) -> str | None:
     key = raw.get("key")
-    if not isinstance(key, str) or not key.strip():
-        raise ValueError("option key must be a non-empty string")
-    return key.strip()
+    return key.strip() if isinstance(key, str) and key.strip() else None
 
 
 def _option(raw: Mapping[str, Any], key: str, gaps: Gaps) -> dict[str, Any]:
@@ -539,11 +601,22 @@ def _options(raw_options: object, gaps: Gaps) -> list[dict[str, Any]]:
     if not isinstance(raw_options, list) or len(raw_options) < MIN_OPTIONS:
         gaps.notes.append(f"options must be a list of at least {MIN_OPTIONS} items")
         return []
-    keys = [_option_key(raw) for raw in raw_options]
+    objects: list[dict[str, Any]] = []
+    keys: list[str] = []
+    for position, raw in enumerate(raw_options, start=1):
+        if not isinstance(raw, dict):
+            gaps.notes.append(f"option {position}: each option must be an object")
+            continue
+        key = _option_key(raw)
+        if key is None:
+            gaps.notes.append(f"option {position}: key")
+            continue
+        objects.append(raw)
+        keys.append(key)
     gaps.keys = keys
     if keys != list(string.ascii_uppercase[:len(keys)]):
         gaps.notes.append(f"{KEY_RULE}; keys received: {', '.join(keys)}")
-    return [_option(raw, key, gaps) for raw, key in zip(raw_options, keys, strict=True)]
+    return [_option(raw, key, gaps) for raw, key in zip(objects, keys, strict=True)]
 
 
 def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
@@ -605,7 +678,7 @@ def cli_origin() -> Origin:
 
 
 def projects_root() -> Path:
-    return Path.home() / ".claude" / "projects"
+    return Path(os.environ.get(PROJECTS_ENV) or Path.home() / ".claude" / "projects")
 
 
 def project_folder(project: str | None) -> Path | None:
@@ -639,7 +712,7 @@ def _title_rows(path: Path) -> dict[str, str]:
                 continue
             try:
                 row = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):  # a deeply nested line overflows the parser: skipped as unreadable
                 continue
             kind = row.get("type") if isinstance(row, dict) else None
             if not isinstance(kind, str) or kind not in TITLE_FIELD_BY_TYPE:
@@ -694,21 +767,8 @@ def _desktop_title(value: object) -> str | None:
 
 
 def _desktop_bytes(path: Path) -> bytes | None:
-    """A regular file's bytes, at most DESKTOP_FILE_MAX. A FIFO, a device, a directory, a symlink or an
-    oversized file gives None. O_NOFOLLOW refuses a symlink; O_NONBLOCK keeps a FIFO from blocking the open;
-    the type check runs on the opened descriptor, so nothing swapped in after the glob is read."""
-    try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    except OSError:
-        return None
-    with os.fdopen(descriptor, "rb") as handle:
-        try:
-            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-                return None
-            data = handle.read(DESKTOP_FILE_MAX + 1)
-        except OSError:
-            return None
-    return data if len(data) <= DESKTOP_FILE_MAX else None
+    """A regular file's bytes, at most DESKTOP_FILE_MAX; None for anything else (see _regular_bytes)."""
+    return _regular_bytes(path, DESKTOP_FILE_MAX)
 
 
 def _desktop_text(path: Path) -> str | None:
@@ -890,29 +950,55 @@ def _refile(raw: object, error: str, gaps: Gaps) -> dict[str, Any]:
             "keys_received": gaps.keys}
 
 
+def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """A JSON object from its pairs; a repeated key refuses the entry instead of keeping the last value."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate key: {key}")
+        result[key] = value
+    return result
+
+
 def _entry_json(json_text: str | None) -> object:
     """The entry as JSON, from --json or stdin; a usage error says what to fix when there is none or it is not JSON."""
-    text = json_text if json_text is not None else sys.stdin.read()
+    text = json_text if json_text is not None else (sys.stdin.read() if sys.stdin is not None else "")  # no stdin: no entry
     if not text.strip():
         raise ValueError("no entry: pass --json or pipe it on stdin")
     try:
-        return json.loads(text)
-    except ValueError as exc:  # the parser's own words do not tell the agent what to fix
+        return json.loads(text, object_pairs_hook=_unique_keys)
+    except (json.JSONDecodeError, RecursionError) as exc:  # the parser's own words do not tell the agent what to fix
         raise ValueError("the entry is not valid JSON: check the quotes and escapes") from exc
+
+
+@contextlib.contextmanager
+def _ask_lock() -> Generator[None]:
+    """Hold the ask lock: an ask checks for a duplicate and files under it, so racing asks cannot both file."""
+    path = state_home() / ASK_LOCK
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)  # closing the descriptor releases the lock
 
 
 def cmd_ask(json_text: str | None) -> dict[str, Any]:
     raw: object = None
+    twin: dict[str, Any] | None = None
     try:
         raw = _entry_json(json_text)
         if not isinstance(raw, dict):
             raise ValueError("the entry must be a JSON object")  # noqa: TRY004 - CLI validation channel
         entry = build_entry(raw, cli_origin())
-        twin = open_twin(entry)
+        with _ask_lock():
+            twin = open_twin(entry)
+            if twin is None:
+                store_entry(entry)
         if twin is not None:  # a paused twin still holds the session, so the agent must stop, not continue
             action = "pause" if twin.get("pause") is True else "open"
             return {"id": twin["id"], "recommended": twin["recommended"], "action": action, "duplicate": True}
-        store_entry(entry)
     except EntryError as exc:  # the entry has gaps: the agent completes them and files again
         return _refile(raw, str(exc), exc.gaps)
     except ValueError as exc:  # the entry is unreadable or invalid: the agent files it again
@@ -1050,7 +1136,7 @@ def question_status(item_id: str) -> tuple[str, str | None]:
     """The status and key of a question, as status and wait report them. An unknown id is a usage error."""
     entry = read_json(item_path("q", item_id))
     if entry is None or not _question_matches(item_id, entry):
-        if not item_path("q", item_id).exists():
+        if not _is_regular(item_path("q", item_id)):  # as load_questions: a symlink, FIFO or folder is no question
             raise ValueError("unknown inbox id")
         return STATUS_DAMAGED, None
     return item_status(item_id)
@@ -1149,18 +1235,28 @@ def cmd_away(state: str) -> dict[str, Any]:
     return {"away": on}
 
 
-def _remove_item(item_id: str) -> None:
-    # Question first: an interrupted prune leaves orphan answers, never a reopened question.
-    for folder in ("q", "a", "d"):
-        item_path(folder, item_id).unlink(missing_ok=True)
+def _remove_item(item_id: str) -> bool:
+    """Remove the question, answer and marker of an item, question first, when every file that is there reads.
+
+    A file prune cannot read, or one that is not a regular file, keeps the whole item: no answer may outlive its
+    question, and a file prune cannot read is not prune's to delete. True when the item was removed."""
+    present = [item_path(folder, item_id) for folder in ("q", "a", "d") if os.path.lexists(item_path(folder, item_id))]
+    if not present or any(_regular_bytes(path) is None for path in present):
+        return False
+    for path in present:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            return False  # a question that stays keeps its answer and marker
+    return True
 
 
 def _remove_stale_temps() -> None:
     cutoff = time.time() - TEMP_STALE_S
     for folder in (state_home(), state_home() / "q", state_home() / "a", state_home() / "d"):
         for tmp in [*folder.glob(".*.tmp"), *(folder.glob(f"{TOKEN_DIR}/*") if folder == state_home() else ())]:
-            with contextlib.suppress(FileNotFoundError):
-                if tmp.stat().st_mtime < cutoff:
+            with contextlib.suppress(OSError):
+                if tmp.is_file() and tmp.stat().st_mtime < cutoff:
                     tmp.unlink()
 
 
@@ -1185,9 +1281,14 @@ def _unreadable_answers() -> list[str]:
 
 def _remove_damaged(damaged: Sequence[str]) -> int:
     """Clear damaged q/ or a/ files with their companion files, whatever the window: the user's way out of a pause."""
-    for item_id in damaged:
-        _remove_item(item_id)
-    return len(damaged)
+    return sum(_remove_item(item_id) for item_id in damaged)
+
+
+def _remove_orphans() -> int:
+    """Answer and marker files whose question file is gone: an interrupted prune left them, and no list shows them."""
+    ids = {path.stem for folder in ("a", "d") for path in (state_home() / folder).glob("*.json")
+           if ID_PATTERN.fullmatch(path.stem)}
+    return sum(_remove_item(item_id) for item_id in sorted(ids) if not os.path.lexists(item_path("q", item_id)))
 
 
 def _remove_closed(days: int, entries: Sequence[Mapping[str, Any]]) -> int:
@@ -1199,8 +1300,7 @@ def _remove_closed(days: int, entries: Sequence[Mapping[str, Any]]) -> int:
         if status not in CLOSED_STATUSES:
             continue
         settled = _settled_ts(entry["id"], status)
-        if settled is not None and settled < cutoff:
-            _remove_item(entry["id"])
+        if settled is not None and settled < cutoff and _remove_item(entry["id"]):
             removed += 1
     return removed
 
@@ -1211,21 +1311,33 @@ def cmd_prune(days: int) -> dict[str, Any]:
     _remove_stale_temps()
     entries, damaged = load_questions()
     unreadable = sorted({*damaged, *_unreadable_answers()})
-    return {"removed": _remove_damaged(unreadable) + _remove_closed(days, entries)}
+    removed = _remove_damaged(unreadable) + _remove_orphans()
+    return {"removed": removed + _remove_closed(days, entries)}
+
+
+def _prune_damaged_id(item_id: str) -> dict[str, Any]:
+    """prune --id on a q/ file that does not read or does not match its id: removed as the damaged pass removes it."""
+    if not os.path.lexists(item_path("q", item_id)):
+        raise ValueError("unknown inbox id")
+    if not _remove_item(item_id):
+        raise ValueError("damaged inbox file: its file does not read")
+    return {"removed": 1, "damaged": "damaged inbox file"}
 
 
 def cmd_prune_id(item_id: str) -> dict[str, Any]:
     """Remove one open question whose asking session has ended, or that has no session (the panel's Dismiss)."""
     entry = read_json(item_path("q", item_id))
-    if entry is None:
-        raise ValueError("unknown inbox id")
+    if entry is None or not _question_matches(item_id, entry):
+        return _prune_damaged_id(item_id)
     if item_status(item_id)[0] != "open":
         return {"error": "prune refused: the question is already answered"}
     session = entry.get("session")
     if session and not session_ended(session, entry.get("project")):
         return {"error": "prune refused: the session that asked has not ended"}
-    _remove_item(item_id)
+    if not _remove_item(item_id):
+        return {"error": "prune refused: a file of the question does not read"}
     return {"removed": 1}
+
 
 
 def _mark_delivered(item_id: str) -> bool:
@@ -1283,16 +1395,19 @@ def cmd_wait(item_id: str, timeout: float) -> dict[str, Any]:
 
 
 def cmd_export(since: str | None, fmt: str) -> str:
-    """Every question with its answer record, newest first; questions asked before --since are left out."""
+    """Every question with its answer record, newest first, and a row per damaged question; questions asked before --since are left out."""
     cutoff = since_cutoff(since) if since is not None else 0
+    entries, damaged = load_questions()
     rows = [{"id": entry["id"], "status": item_status(entry["id"])[0], "question": entry,
              "answer": read_json(item_path("a", entry["id"]))}
-            for entry in load_questions()[0] if entry["ts"] >= cutoff]
+            for entry in entries if entry["ts"] >= cutoff]
+    rows.extend({"id": item_id, "status": STATUS_DAMAGED, "question": None, "answer": None, "damaged": True}
+                for item_id in damaged)
     return render_export(rows, fmt)
 
 
 CSV_COLUMNS: Final = ("asked_at", "project", "title", "recommended", "answered_key", "label", "who", "by",
-                      "answered_at", "delivered")
+                      "answered_at", "delivered", "id")
 
 
 def _utc_text(ms: object) -> str:
@@ -1311,12 +1426,14 @@ def _csv_safe(cell: str) -> str:
 
 
 def _csv_cells(row: Mapping[str, Any]) -> list[str]:
+    if row["question"] is None:  # a damaged question keeps its row: empty cells, with its id in the last column
+        return [""] * (len(CSV_COLUMNS) - 1) + [row["id"]]
     question, answer = row["question"], row["answer"] or {}
     key = answer.get("key")
     cells = [_utc_text(question.get("ts")), str(question.get("project") or ""), str(question.get("title") or ""),
              str(question.get("recommended") or ""), str(key or ""), option_label(question, key) or "",
              answer_who(answer) or "", str(answer.get("by") or ""), _utc_text(answer.get("ts")),
-             "true" if row["status"] == "delivered" else "false"]
+             "true" if row["status"] == "delivered" else "false", str(row["id"])]
     return [_csv_safe(cell) for cell in cells]
 
 
@@ -1660,6 +1777,18 @@ def _code_reason(code: str, *, sandboxed: bool) -> str | None:
     return None
 
 
+def _heredoc_code(command: str) -> str:
+    """The text the code scan reads: an inbox call's heredoc body is JSON on stdin and never runs, so only the lines
+    outside it are read. Any other command keeps its body."""
+    head, _, rest = command.partition("\n")
+    opened = INBOX_HEREDOC.match(head)
+    if opened is None:
+        return command
+    lines = rest.split("\n")
+    end = next((index for index, line in enumerate(lines) if line.lstrip("\t") == opened[2]), None)
+    return head if end is None else "\n".join([head, *lines[end + 1:]])
+
+
 def _edits_in_place(name: str, args: Sequence[str]) -> bool:
     return name == "sed" and any(SED_IN_PLACE.fullmatch(arg) for arg in args)
 
@@ -1681,9 +1810,12 @@ def _write_targets(argv: Sequence[str], writes: Sequence[str]) -> tuple[list[str
 
 
 def _state_roots() -> tuple[str, ...]:
-    """The real state folders the guard protects: the default one, and ASKAWAY_HOME when it lies outside /tmp."""
-    roots = {os.path.realpath(DEFAULT_HOME), os.path.realpath(state_home())}
-    return tuple(sorted(root for root in roots if not root.startswith(TMP_ROOT + os.sep)))
+    """The real state folders the guard protects: the default one always, and ASKAWAY_HOME unless it lies under /tmp."""
+    roots = {os.path.realpath(DEFAULT_HOME)}
+    custom = os.path.realpath(state_home())
+    if not custom.startswith(TMP_ROOT + os.sep):
+        roots.add(custom)
+    return tuple(sorted(roots))
 
 
 def _inside(path: str, roots: Sequence[str]) -> bool:
@@ -1732,8 +1864,8 @@ class _ShellScan:
         tokens = _shell_tokens(command)
         if tokens is None:
             return _unreadable_reason(command)
-        if "<<" in command and (reason := _code_reason(command, sandboxed=False)) is not None:
-            return reason  # a heredoc body is code too
+        if "<<" in command and (reason := _code_reason(_heredoc_code(command), sandboxed=False)) is not None:
+            return reason  # a heredoc body is code too, except an inbox call's JSON body
         return next((reason for reason in map(self._simple, _simple_commands(tokens)) if reason is not None), None)
 
     def _simple(self, simple: _Simple) -> str | None:
@@ -1802,13 +1934,18 @@ def _file_tamper_reason(tool_input: Mapping[str, Any]) -> str | None:
 
 
 def _tamper_denial(event: Mapping[str, Any]) -> HookOutput:
-    """The deny for a Bash command, or a file tool call, that touches the state folder against the rules."""
-    tool_input = event.get("tool_input") or {}
-    if event.get("tool_name") == "Bash":
-        reason = bash_tamper_reason(str(tool_input.get("command", "")))
-    elif event.get("tool_name") in FILE_TOOLS:
-        reason = _file_tamper_reason(tool_input)
-    else:
+    """The deny for a Bash command, or a file tool call, that touches the state folder against the rules.
+
+    Fails open: a check that cannot run (a deleted working directory, say) denies nothing."""
+    try:
+        tool_input = event.get("tool_input") or {}
+        if event.get("tool_name") == "Bash":
+            reason = bash_tamper_reason(str(tool_input.get("command", "")))
+        elif event.get("tool_name") in FILE_TOOLS:
+            reason = _file_tamper_reason(tool_input)
+        else:
+            return None
+    except Exception:  # noqa: BLE001 - fail open: the pause check that follows still runs
         return None
     return deny(reason) if reason else None
 
@@ -1839,10 +1976,7 @@ def _holding_question(session: str) -> tuple[str, str | None] | None:
     return None
 
 
-def hook_pause_guard(event: Mapping[str, Any]) -> HookOutput:
-    tampering = _tamper_denial(event)  # runs in every session, away or not
-    if tampering is not None:
-        return tampering
+def _pause_decision(event: Mapping[str, Any]) -> HookOutput:
     session = event.get("session_id")
     if not session:
         return None
@@ -1862,9 +1996,19 @@ def hook_pause_guard(event: Mapping[str, Any]) -> HookOutput:
                 f"`python3 {SCRIPT_PATH} status {item_id}`.")
 
 
+def hook_pause_guard(event: Mapping[str, Any]) -> HookOutput:
+    tampering = _tamper_denial(event)  # runs in every session, away or not; fails open on its own
+    if tampering is not None:
+        return tampering
+    try:
+        return _pause_decision(event)
+    except Exception:  # noqa: BLE001 - fail closed: while a pause may hold the session, an error must not pass the call
+        return deny("Paused: the Askaway pause check failed, so this call is denied. Do read-only work or end the turn.")
+
+
 def answered_ids() -> list[str]:
     return sorted(path.stem for path in (state_home() / "a").glob("*.json")
-                  if ID_PATTERN.fullmatch(path.stem))
+                  if ID_PATTERN.fullmatch(path.stem) and _is_regular(path))
 
 
 def _receives(entry: Mapping[str, Any], session: str | None, cwd: object) -> bool:
@@ -1891,9 +2035,15 @@ def _answer_wording(answer: Mapping[str, Any]) -> str:
     return ANSWER_WORDING.get(str(answer.get("by")), "Answered by {who}").format(who=_literal(who))
 
 
+# A surrogate that is not half of a valid pair: JSON.stringify writes it as a \uXXXX escape, json.dumps does not.
+_HIGH_SURROGATES: Final = chr(0xD800) + "-" + chr(0xDBFF)
+_LOW_SURROGATES: Final = chr(0xDC00) + "-" + chr(0xDFFF)
+LONE_SURROGATE: Final = re.compile(f"[{_HIGH_SURROGATES}](?![{_LOW_SURROGATES}])|(?<![{_HIGH_SURROGATES}])[{_LOW_SURROGATES}]")
+
+
 def _literal(text: str) -> str:
     """Text as a JSON string literal of data: a quote or a line break in it cannot end or forge the line."""
-    return json.dumps(text, ensure_ascii=False)
+    return LONE_SURROGATE.sub(lambda match: f"{chr(92)}u{ord(match.group()):04x}", json.dumps(text, ensure_ascii=False))
 
 
 def _other_wording(text: str) -> str:
@@ -1903,7 +2053,7 @@ def _other_wording(text: str) -> str:
 
 def _delivery_line(entry: Mapping[str, Any], answer: Mapping[str, Any]) -> str:
     key, recommended = answer.get("key"), entry.get("recommended")
-    other = other_text(answer)
+    other = other_text(answer)  # the Other text as the delivery line quotes it: capped, as model.ts's deliveryLine does
     chosen = _other_wording(other) if other else _key_text(entry, key)
     line = f"{_answer_wording(answer)}: {chosen}. Askaway question {entry['id']} ({_literal(entry['title'])})."
     if key != recommended:
@@ -1929,7 +2079,7 @@ def _lapse_reason(entry: Mapping[str, Any], answer: Mapping[str, Any],
 def _deliver_one(item_id: str, session: str | None, cwd: object,
                  released: ReleasedScan | None = None) -> str | None:
     marker = item_path("d", item_id)
-    if marker.exists():
+    if read_json(marker) is not None:  # a readable marker closed it; an empty or torn one is written again
         return None
     entry = read_json(item_path("q", item_id))
     answer = read_json(item_path("a", item_id))
@@ -1965,7 +2115,8 @@ def _maybe_prune() -> None:
     with contextlib.suppress(OSError):
         _remove_stale_temps()
         _remove_closed(prune_days(), load_questions()[0])  # never a damaged file: the user clears those
-        marker.touch()
+    with contextlib.suppress(OSError):
+        marker.touch()  # the stamp moves even when some items were skipped
 
 
 def _foreign_recheck_due() -> bool:
@@ -1980,7 +2131,7 @@ def _foreign_recheck_due() -> bool:
 
 def _foreign(item_id: str, session: str | None, cwd: object) -> bool:
     """An open answer that another session (or project) receives: only a re-check can close it."""
-    if item_path("d", item_id).exists():
+    if read_json(item_path("d", item_id)) is not None:
         return False  # already closed: _deliver_one returns at once
     entry = read_json(item_path("q", item_id))
     return entry is not None and not _receives(entry, session, cwd)
@@ -2069,6 +2220,18 @@ def _exit_code(result: dict[str, Any] | str, args: Sequence[str]) -> int:
     return 1 if _failed(result) else 0
 
 
+def _os_error_text(exc: OSError) -> str:
+    """The OS reason and the path relative to the state folder, so no absolute home path reaches the reply."""
+    reason = exc.strerror or type(exc).__name__
+    if not exc.filename:
+        return reason
+    path = Path(str(exc.filename))
+    try:
+        return f"{reason}: {path.relative_to(state_home())}"
+    except ValueError:
+        return f"{reason}: {path.name}"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args[:1] == ["hook"]:
@@ -2082,6 +2245,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         result: dict[str, Any] | str = dispatch(args)
     except ValueError as exc:  # a usage error: unknown command, bad id or key, bad option value
         result, code = {"error": str(exc)}, 1
+    except OSError as exc:  # ask keeps its SPEC text; the other commands say which OS error stopped them
+        asks = next((word for word in args if not word.startswith("-")), "") == "ask"
+        result, code = {"error": "internal error" if asks else _os_error_text(exc)}, 1
     except Exception:  # noqa: BLE001 - the CLI always answers, on one line
         result, code = {"error": "internal error"}, 1
     if isinstance(result, str):
