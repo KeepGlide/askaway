@@ -21,7 +21,7 @@ A question card appears in the Askaway panel for each decision an agent filed wh
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Early access (0.4.0-beta.29):** the mod API moves between Claude Code releases, so expect changes until a stable release. The changes of this version are listed in [CHANGELOG.md](CHANGELOG.md).
+> ⚠️ **Early access (0.4.0-beta.30):** the mod API moves between Claude Code releases, so expect changes until a stable release. The changes of this version are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## 💡 What it is
 
@@ -394,10 +394,10 @@ The known limits of the single-user state folder are in the [Security](plugins/a
 
 | Category | Tests |
 |---|---|
-| Mod (TypeScript), `plugins/askaway/tests/` | 357 |
-| CLI and hooks (Python), `plugins/askaway/scripts/tests/` | 625 |
+| Mod (TypeScript), `plugins/askaway/tests/` | 385 |
+| CLI and hooks (Python), `plugins/askaway/scripts/tests/` | 695 |
 
-Counts from `claude plugin test plugins/askaway` (357 pass, 0 fail) and `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts` (625 tests), on 2026-10-20.
+Counts from `claude plugin test plugins/askaway` (385 pass, 0 fail) and `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts` (695 tests), on 2026-10-20.
 
 ## 🔧 Development
 

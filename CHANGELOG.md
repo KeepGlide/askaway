@@ -2,8 +2,47 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.29, set by the beta.29 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.30, set by the beta.30 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.30] - 2026-10-20
+
+Owner replies to the 21 questions of Gauntlet round 4 (20 filed on 2026-10-20 plus M72 filed during this release): 14 change code, 1 changes the tests (M36), 1 is covered by M63 (M65), 5 change only the docs (M54, M59, M62, M67, M72; M54, M62, M67 and M72 keep the current behaviour: the dim text outside the footer stays until the Desktop's real dim colour is measured in round 5). Plugin tests: 385 pass; pytest: 695 passed; `biome lint` clean. Review: code-inspect-reviewer on Sonnet high, 0 must, 4 should fixed or recorded, 6 nits recorded.
+
+### Added
+
+- `askaway.py <cmd> --help` or `-h` prints one JSON line `{"usage": ..., "options": [...]}` for every command, `hook` included, and exits 0, except `hook deliver -h` with nothing to deliver, which prints nothing (`_exit_if_idle` runs before the parser); the top-level help is unchanged (`command_help`, `help_reply`; `scripts/askaway.py`).
+- `list --table` and `status <id> --table` print an aligned table with `id`, `status`, `title` (cut to 40 code points), `risk` and `age`; `status --table` adds `reply: <key>` after it; alignment counts code points, so wide (CJK) or combining characters misalign (`_table_text`, `_age_text`, `_status_command`; `scripts/askaway.py`).
+- `prune --id <id> --force` removes an open question whose session has not ended, such as a terminal session, which never writes an end marker, or a Desktop session still running; an answered question is still refused. It is the user's manual mode: the agent cannot run it (`cmd_prune_id`, `_prune_command`; `scripts/askaway.py`).
+- Keep on Other works as a draft label: the typed text becomes the label of the Other button and is kept as a pick; typing again replaces the label and needs a new click. While a kept label exists, text typed and not kept is not recorded as an Other pick on blur, Next or Back; it stays pending until Keep (`keptOther`, `submittedOther`; `hooks/wizard.ts`, `hooks/register.tsx`).
+- `labels` in `draft.json`: the kept Other labels are shared by every session with the picks (`parseDraft`; `hooks/model.ts`, `hooks/register.tsx`).
+- The move lock is visible: while a pick, Next or Back holds it for 350 ms, Next and Back are drawn disabled and a second press does nothing; Submit all and the row Submit are not locked (`moveOnce`, `MOVE_LOCK_MS`; `hooks/register.tsx`).
+- `/askaway lang` registers `/askaway` again with the chosen language's description (`setLang`, `registerCommand`; `hooks/register.tsx`). The engine's handling of a second registration is not verified; a refused one is logged once, and the old description stays until the next session.
+
+### Changed
+
+- The Bash guard denies `prune --force` to the agent (`bash_tamper_reason`; `scripts/askaway.py`).
+- `query_` is a read prefix, so an `mcp__<server>__query_*` tool passes the pause guard; the guard reads the tool name only, so a generic `query_*` tool such as a SQL server's `query_database` passes when its name has no write word (`READ_ONLY_PREFIXES`, `is_read_only_mcp`; `scripts/askaway.py`).
+- The pause guard lets through a simple `askaway.py ask|status|list|wait|export` Bash call whose operator, `$` or backtick sits inside single quotes; outside single quotes they still deny (`inbox_call`, `_without_single_quoted`; `scripts/askaway.py`).
+- The `ask` reply carries `title`, the validated title (the clipped question when none was given), and a duplicate reply carries it too (`cmd_ask`; `scripts/askaway.py`).
+- `fit: null` is accepted and stored as null (no estimate); any other value must be an integer 0 to 100, and a missing `fit` is still a gap (`_strict_fit`, `FIT_RULE`; `scripts/askaway.py`).
+- A high-risk question that fails to write is tried four times in all, 50 ms apart; if the fourth try fails, `ask` prints `"action":"pause"` with the OS error and files nothing. Low and medium risk are unchanged. If every attempt fails only after `os.replace` (in the directory fsync), the question is on disk although the reply says nothing was filed; the pause stands. A failure to take `.ask.lock` is `internal error`, not retried (`store_high_risk`, `file_question`, `HIGH_RISK_ATTEMPTS`; `scripts/askaway.py`).
+- A clock jump (a daily stamp older than 7 days, `CLOCK_JUMP_S`) holds the daily cleanup's closed-item sweep and stale-temp removal, and the read-time expiry of unread answers, for that cycle. The daily stamp moves only in cycles with unread replies, so a machine idle for more than 7 days looks like a clock jump: the first such cycle delivers an overdue unread reply once, and `status` says answered while the pane draws expired (`_clock_jumped`, `_maybe_prune`, `answer_lapsed`; `scripts/askaway.py`).
+- A draft stamped more than `DRAFT_SKEW_MS` (60 s) ahead of the clock is applied, with its stamp pulled back to the clock, instead of being ignored (`applyDraft`; `hooks/register.tsx`).
+- The footer is drawn without dim, since the dim line measures 3.95:1 on white, below 4.5:1; the urgency colours measure 4.71 to 10.88 across both themes (`TEXT_CONTRAST`, `renderFooter`; `hooks/look.ts`, `hooks/pane.tsx`).
+
+### Tests
+
+- The race suites keep the state folder in memory: `stubHost` in `tests/race.test.ts` and the folder map in `tests/panel-race.test.ts` store every write, and `draft.json` and `cleared.json` are written the way production writes them (`$.fs.write`, no atomic rename).
+- Six new race cases: a draft stamped past the skew, a failing listing, a torn delivery marker, overlapping polls, 200 open questions, and a no-space write of `draft.json` (`tests/race.test.ts`).
+
+### Docs
+
+- The Bash guard, a deterrent and not a token, is the barrier that keeps the agent from answering its own question, and the token layer covers the panel path only (M54; `plugins/askaway/SPEC.md`).
+- The sentence and line limits in the question playbook are guidance; the CLI checks size, minimum words and the two-sentence minimum of `what` (M59; `plugins/askaway/SPEC.md`, `plugins/askaway/skills/askaway-question-playbook/SKILL.md`).
+- The pt-BR lead line of the panel is "Na opção <key> desde <HH:MM>", the code's phrase (M62; `card.lead.agent`, `hooks/i18n.ts`; `plugins/askaway/SPEC.md`).
+- A high-risk question filed without a session holds no session's pause, and the agent stops on its own on a `pause` reply (M67; `_holding_question`; `plugins/askaway/SPEC.md`, `plugins/askaway/skills/askaway-question-playbook/SKILL.md`).
+- The SPEC and the question playbook document the `ask` reply with `title`, the high-risk `pause` with an OS error, `fit: null`, the per-command help, `--table`, `prune --id --force` and the language re-registration.
 
 ## [0.4.0-beta.29] - 2026-10-20
 

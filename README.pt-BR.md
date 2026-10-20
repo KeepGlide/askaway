@@ -21,7 +21,7 @@ Um cartão de pergunta aparece no painel do Askaway para cada decisão que um ag
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Acesso antecipado (0.4.0-beta.29):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável. As mudanças desta versão estão listadas no [CHANGELOG.md](CHANGELOG.md).
+> ⚠️ **Acesso antecipado (0.4.0-beta.30):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável. As mudanças desta versão estão listadas no [CHANGELOG.md](CHANGELOG.md).
 
 ## 💡 O que é
 
@@ -394,10 +394,10 @@ Os limites conhecidos da pasta de estado de um só usuário estão nas seções 
 
 | Categoria | Testes |
 |---|---|
-| Mod (TypeScript), `plugins/askaway/tests/` | 357 |
-| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 625 |
+| Mod (TypeScript), `plugins/askaway/tests/` | 385 |
+| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 695 |
 
-Contagens de `claude plugin test plugins/askaway` (357 passam, 0 falham) e `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts` (625 testes), em 2026-10-20.
+Contagens de `claude plugin test plugins/askaway` (385 passam, 0 falham) e `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts` (695 testes), em 2026-10-20.
 
 ## 🔧 Desenvolvimento
 
