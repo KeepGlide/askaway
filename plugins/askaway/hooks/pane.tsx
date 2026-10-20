@@ -28,6 +28,7 @@ import {
   riskLabel,
   sectionsOf,
   sessionLabelOf,
+  singleLine,
   type HistoryEntry,
   type HistoryGroup,
   type Leaving,
@@ -539,14 +540,16 @@ function renderTitleRow(ui: Ui, lang: Lang, question: Question, isLeaving: boole
 }
 
 // The Urgency line under the title: its bold title in the default colour, its text in the colour of its grade (URGENCY_COLOR).
+// When the question sets its grade (urgency_level), the title names it too ("Urgency (high):"), so the grade is not colour alone.
 function renderUrgency(ui: Ui, lang: Lang, question: Question, isLeaving: boolean): RenderElement | false {
   const [section] = sectionsOf(lang, question, 'before-options')
   if (section === undefined) return false
   const { Box, Text } = ui
+  const heading = question.urgency_level === undefined ? section.heading : `${section.heading} (${t(lang, `urgency.grade.${question.urgency_level}`)})`
   return (
     <Box key="explanation-before-options" flexDirection="column">
       <Text dimColor={isLeaving}>
-        <Text bold>{`${section.heading}: `}</Text>
+        <Text bold>{`${heading}: `}</Text>
         <Text color={URGENCY_COLOR[urgencyGradeOf(question)]}>{section.body}</Text>
       </Text>
     </Box>
@@ -571,14 +574,16 @@ function renderFirstBlock(ui: Ui, question: Question, isLeaving: boolean): Rende
 }
 
 // A full-width option, headed by its key letter ("A · label"), its tradeoff and fit under it, then what happens, its pros
-// and its cons. The picked one is the primary button; the recommended one, the one whose key is the recommended key, when
-// not picked, is bold and says "(Recommended)" in its text.
+// and its cons. The picked one is the primary button and its label starts "✓ " (the pick is not colour alone); the
+// recommended one, the one whose key is the recommended key, when not picked, is bold and says "(Recommended)" in its text.
+// The key and the label are one line each (singleLine), so a line break in a label cannot draw a fake option row.
 function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, option: QuestionOption): RenderElement {
   const { Box, Button, Text } = ui
   const { question, isLeaving, wizard, held } = card
   const isPicked = wizard.picks[question.id]?.key === option.key
   const isRecommended = option.key === question.recommended
-  const text = `${option.key} · ${option.label}${isRecommended ? ` (${t(lang, 'option.recommended')})` : ''}`
+  const pickMark = isPicked ? '✓ ' : ''
+  const text = `${singleLine(option.key)} · ${pickMark}${singleLine(option.label)}${isRecommended ? ` (${t(lang, 'option.recommended')})` : ''}`
   const isBold = isRecommended && !isPicked
   const key = `opt-${question.id}-${option.key}`
   const hotkey = optionHotkey(option.key)
