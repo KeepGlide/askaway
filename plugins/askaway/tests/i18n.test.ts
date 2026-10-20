@@ -1,4 +1,5 @@
 import { expect, test } from 'claude-code/testing'
+import * as i18nModule from '../hooks/i18n'
 import { MESSAGES, detectLang, plural, resolveLang, t, type MessageKey } from '../hooks/i18n'
 
 const placeholdersOf = (text: string): string[] => [...text.matchAll(/\{(\w+)\}/g)].map(match => match[1] ?? '')
@@ -72,4 +73,13 @@ test('plural picks the one form for exactly 1 and the many form otherwise, in bo
 test('the pt-BR reply to the language command names the language with its placeholder filled', () => {
   expect(t('pt', 'command.langSet', { lang: 'Português' })).toBe('O idioma do Askaway agora é Português.')
   expect(t('en', 'command.langSet', { lang: 'English' })).toBe('Askaway language is now English.')
+})
+
+// gauntlet 4, package B2
+test('gauntlet 4, B2 M33: no key nothing reads is left in either dictionary, and i18n exports no langName', () => {
+  for (const key of ['card.answeredElsewhere', 'command.describeLang', 'command.describeAway']) {
+    expect(Object.keys(MESSAGES.en)).not.toContain(key)
+    expect(Object.keys(MESSAGES.pt)).not.toContain(key)
+  }
+  expect('langName' in i18nModule).toBe(false)
 })
