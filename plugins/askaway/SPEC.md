@@ -387,8 +387,8 @@ status list). `hooks/pane.tsx`, `renderPane`.
     "⚖️ What we lose" (`losses`; pt "⚖️ O que perdemos") and "🧭 Context and origin" (`context`; pt "🧭 Contexto e origem")
     last. Each section is one line, "heading: text": the heading in bold, the text regular, wrapping as one paragraph; every
     name in the text (a slash command, or anything the agent wrote between backticks) is drawn in bold ink (`piecesOf`,
-    `renderSection`). The sections come from `sectionsOf` (slot `details`). The block has no border. Its background is the fill of its theme family (`DETAILS_FILL`,
-    `hooks/look.ts`): `#282828` for a dark theme, `#EEEDE9` for a light one (provisional). A theme the plugin does not resolve (`auto`, `custom:<slug>`) gets no fill: the block carries no background, and the engine's own theme shows through. Its padding is one cell across
+    `renderSection`). The sections come from `sectionsOf` (slot `details`). The block has no border. Its background is the engine theme key `userMessageBackground` (`DETAILS_FILL`,
+    `hooks/look.ts`): the fill of the user's own message in every theme, resolved by the engine for the effective theme. The plugin keeps no theme state. Its padding is one cell across
     and one row above and below, so the text does not touch the fill's edge (`renderDetailsBlock`, `hooks/pane.tsx`).
   - the question text, bold;
   - the lead line, dim, right under the question: "On <key> since <HH:MM>. Pick another option to switch; no answer keeps <key>.",
@@ -524,7 +524,7 @@ Two guards keep the drawn state from changing for nothing:
 Colour: the accent `#3566C8` (`ACCENT_COLOR`, `hooks/look.ts`) is never used for text (since 0.4.0-beta.7, commit 0a01eb5):
 text is bold ink, or the theme's own foreground, and the pane draws no fill of its own, except the details block (below): the explanation and the status rows sit on the card's background. Measured WCAG 2.x
 contrast of the accent, for the record: 5.40:1 on `#FFFFFF` and 3.28:1 on `#111827` (`#1E40AF` measured 8.72:1 and 2.03:1).
-The details block's fill follows the theme. The engine's theme row (`$.config.list`, key `theme`) names the theme: it is read at session start and again on each `config.set` of that row (`hooks/register.tsx`), and stored as `askaway.theme`. A name starting with `light` is the light family, a name starting with `dark` (or no theme row at all) the dark one, and any other value is not resolved: `auto`, `custom:<slug>` and other names give the family `unknown`, and the details block draws no fill for them (`themeFamilyOf`, `hooks/look.ts`). `DETAILS_FILL` gives each resolved family's fill.
+The details block's fill is the engine theme key `userMessageBackground` (`DETAILS_FILL`, `hooks/look.ts`), the fill of the user's own message in every theme. The engine resolves it for the effective theme: every built-in theme defines the key (light, dark, their daltonized and ansi variants), and `auto` is resolved by the engine to the Desktop's system theme, so the plugin keeps no theme state of its own.
 
 ## Polling
 

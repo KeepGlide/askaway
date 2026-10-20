@@ -114,10 +114,6 @@ declare module 'claude-code' {
       quiet: boolean
       // The language in use: the stored choice, else the environment's. Set at session start and by /askaway lang.
       lang: 'en' | 'pt'
-      // The theme family the details block fills by (look.ts themeFamilyOf): "light" for a theme name starting with
-      // "light", "dark" for one starting with "dark" or no theme row, "unknown" for any other value (auto, custom:<slug>),
-      // which draws no fill. Read from the engine's theme row at session start, and written on each config.set of it.
-      theme: 'dark' | 'light' | 'unknown'
       // The question wizard (hooks/wizard.ts `Wizard`): the group on screen, the step, the question on screen and the picks
       // by question id. An Other pick carries its free text in `text`.
       wizard: {

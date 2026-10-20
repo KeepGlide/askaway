@@ -30,7 +30,7 @@ import {
 import { heldButtons } from '../hooks/held'
 import { placeUnder, renderPane, renderTreeQuestion } from '../hooks/pane'
 import { t } from '../hooks/i18n'
-import { ACCENT_COLOR, DETAILS_FILL, LINK_MARK, URGENCY_COLOR, themeFamilyOf } from '../hooks/look'
+import { ACCENT_COLOR, LINK_MARK, URGENCY_COLOR } from '../hooks/look'
 import type { Answer, Board } from '../types'
 
 const HOME = '/test-home'
@@ -315,18 +315,6 @@ const parsedQuestion = (id: string, ts: number, extra: Record<string, unknown> =
 }
 const answerOf = (id: string, key: string, ts: number, text?: string): Answer => ({ id, key, by: 'panel', ts, text })
 const NO_STATUS = { cleared: [], now: 0, leaving: {} } as const
-
-test('look: themeFamilyOf reads a name starting with light as light, one starting with dark or no row as dark, and auto or custom as unknown', () => {
-  expect(themeFamilyOf('light')).toBe('light')
-  expect(themeFamilyOf('light-ansi')).toBe('light')
-  expect(themeFamilyOf('light-daltonized')).toBe('light')
-  expect(themeFamilyOf('dark')).toBe('dark')
-  expect(themeFamilyOf('dark-daltonized')).toBe('dark')
-  expect(themeFamilyOf(undefined)).toBe('dark')
-  expect(themeFamilyOf(null)).toBe('dark')
-  expect(themeFamilyOf('auto')).toBe('unknown')
-  expect(themeFamilyOf('custom:x')).toBe('unknown')
-})
 
 test('model: the urgency grade is the level the file names, else the one its words suggest in English or Portuguese, else low', () => {
   const grade = (extra: Record<string, unknown>) => urgencyGradeOf(parsedQuestion('q-u-000001', 1000, extra))
@@ -1885,56 +1873,45 @@ test('the card has no details toggle and no e hotkey: every section is drawn at 
 const detailsFillOf = async (ui: Awaited<ReturnType<typeof mountPane>>): Promise<unknown> =>
   (await ui.find({ type: 'Box', key: 'details-q-l1-aaaaaa' }))?.props.backgroundColor
 
-test('the details fill follows the theme family: #EEEDE9 under a light theme, #282828 under a dark one, and a theme change redraws it', async ($, on) => {
-  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, FULL_CARD)]])
-  stubHost(on, files, true, {}, {}, {}, 'light-ansi')
-  await $.session.start(SESSION)
-  for (const surface of SURFACES) {
-    const ui = await mountPane($, surface)
-    expect(await detailsFillOf(ui)).toBe(DETAILS_FILL.light)
-    await ui.unmount()
-  }
-  const ui = await mountPane($)
-  await $.config.set({ key: 'theme', value: 'dark-daltonized' })
-  expect(await detailsFillOf(ui)).toBe(DETAILS_FILL.dark)
-  await $.config.set({ key: 'theme', value: 'light' })
-  expect(await detailsFillOf(ui)).toBe(DETAILS_FILL.light)
-  await ui.unmount()
-})
-
-const detailsPropsOf = async (ui: Awaited<ReturnType<typeof mountPane>>) =>
-  (await ui.find({ type: 'Box', key: 'details-q-l1-aaaaaa' }))?.props
-
-test('the details block carries no backgroundColor under auto, so the engine theme shows through', async ($, on) => {
-  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, FULL_CARD)]])
-  stubHost(on, files, true, {}, {}, {}, 'auto')
-  await $.session.start(SESSION)
-  for (const surface of SURFACES) {
-    const ui = await mountPane($, surface)
-    expect(await detailsPropsOf(ui)).not.toHaveProperty('backgroundColor')
-    await ui.unmount()
-  }
-})
-
-test('the details fill is the dark one when the theme row is absent', async ($, on) => {
+test('the details block draws the engine theme key userMessageBackground when there is no theme row', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, FULL_CARD)]])
   stubHost(on, files, true, {}, {}, {}, null)
   await $.session.start(SESSION)
+  for (const surface of SURFACES) {
+    const ui = await mountPane($, surface)
+    expect(await detailsFillOf(ui)).toBe('userMessageBackground')
+    await ui.unmount()
+  }
+})
+
+test('the details block draws the engine theme key userMessageBackground under a dark theme row', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, FULL_CARD)]])
+  stubHost(on, files, true, {}, {}, {}, 'dark')
+  await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await detailsFillOf(ui)).toBe(DETAILS_FILL.dark)
+  expect(await detailsFillOf(ui)).toBe('userMessageBackground')
   await ui.unmount()
 })
 
-test('a config.set to a custom theme drops the details fill, and a dark theme brings it back', async ($, on) => {
+test('the details block draws the engine theme key userMessageBackground under a light theme row', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, FULL_CARD)]])
+  stubHost(on, files, true, {}, {}, {}, 'light')
+  await $.session.start(SESSION)
+  const ui = await mountPane($)
+  expect(await detailsFillOf(ui)).toBe('userMessageBackground')
+  await ui.unmount()
+})
+
+test('a config.set of the theme keeps the details block on userMessageBackground, whatever the value', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, FULL_CARD)]])
   stubHost(on, files)
   await $.session.start(SESSION)
   const ui = await mountPane($)
-  expect(await detailsFillOf(ui)).toBe(DETAILS_FILL.dark)
-  await $.config.set({ key: 'theme', value: 'custom:x' })
-  expect(await detailsPropsOf(ui)).not.toHaveProperty('backgroundColor')
-  await $.config.set({ key: 'theme', value: 'dark' })
-  expect(await detailsFillOf(ui)).toBe(DETAILS_FILL.dark)
+  expect(await detailsFillOf(ui)).toBe('userMessageBackground')
+  for (const value of ['light', 'dark-daltonized', 'auto', 'custom:x']) {
+    await $.config.set({ key: 'theme', value })
+    expect(await detailsFillOf(ui)).toBe('userMessageBackground')
+  }
   await ui.unmount()
 })
 
@@ -3756,7 +3733,7 @@ test('the card draws the first block as two plain paragraphs, then the details b
   await ui.unmount()
 })
 
-test('the section titles are bold and their bodies regular; the details block has no border, a theme fill, and its title first, bold beside the mark', async ($, on) => {
+test('the section titles are bold and their bodies regular; the details block has no border, the userMessageBackground fill, and its title first, bold beside the mark', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, FULL_CARD)]])
   stubHost(on, files)
   await $.session.start(SESSION)
@@ -3770,7 +3747,7 @@ test('the section titles are bold and their bodies regular; the details block ha
     const block = nodes.find(node => keyOfNode(node) === 'details-q-l1-aaaaaa')
     const inBlock = nodesOf(block)
     expect(block?.props).not.toHaveProperty('borderStyle')
-    expect(block?.props).toMatchObject({ backgroundColor: DETAILS_FILL.dark })
+    expect(block?.props).toMatchObject({ backgroundColor: 'userMessageBackground' })
     expect(inBlock.some(node => isBoldText(node) && childrenOf(node).includes('Detalhes do Askaway:'))).toBe(true)
     // The title row is the block's first child; its mark is the Askaway SVG on the desktop and the glyph on the terminal.
     const firstChild = Array.isArray(block?.children) ? block.children[0] : undefined
@@ -4373,7 +4350,7 @@ test('away mode shows on the pane counter line: the counter text with the list a
   const ui = { Box: fakeElement('Box'), Text: fakeElement('Text'), Button: fakeElement('Button') }
   const view = {
     questions: [], history: [], now: 0, leaving: {}, groups: [], active: undefined, wizard: { picks: {} },
-    screen: undefined, surface: 'terminal', footer: undefined, ended: [], askWho: false, theme: 'unknown',
+    screen: undefined, surface: 'terminal', footer: undefined, ended: [], askWho: false,
   }
   const drawnWith = (away: boolean): string =>
     JSON.stringify(renderPane(ui as never, { ...view, away } as never, {} as never, 'en', heldButtons()))

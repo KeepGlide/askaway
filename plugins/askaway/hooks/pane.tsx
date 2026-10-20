@@ -8,7 +8,7 @@ import type { Question, QuestionOption } from '../types'
 import { t, type Lang } from './i18n'
 import type { HeldButtons } from './held'
 import { DIVIDER_COLUMNS, DIVIDER_HEIGHT, DIVIDER_PX, dividerSvg } from './divider'
-import { DETAILS_FILL, LINK_MARK, URGENCY_COLOR, type ThemeFamily } from './look'
+import { DETAILS_FILL, LINK_MARK, URGENCY_COLOR } from './look'
 import { KEEPGLIDE_HEADER_SIZE, KEEPGLIDE_SUBMIT_SIZE, renderHistoryIcon, renderKeepGlide, renderLogo } from './logo-element'
 import {
   urgencyGradeOf,
@@ -57,8 +57,6 @@ export type PaneView = {
   away?: boolean
   // True until the person gave a name or skipped: the pane then asks for it above the card, once.
   askWho: boolean
-  // The theme family (look.ts themeFamilyOf): it picks the fill of the details block.
-  theme: ThemeFamily
 }
 
 export type PaneActions = {
@@ -84,7 +82,6 @@ type CardContext = {
   isLeaving: boolean
   held: HeldButtons
   surface: RenderSurface
-  theme: ThemeFamily
 }
 
 export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: Lang, held: HeldButtons): RenderElement {
@@ -462,7 +459,6 @@ function renderQuestion(
     isLeaving: view.leaving[question.id] !== undefined,
     held,
     surface: view.surface,
-    theme: view.theme,
   }
   const { isLeaving } = card
   const isEnded = view.ended.includes(question.id)
@@ -491,20 +487,14 @@ function renderQuestion(
   )
 }
 
-// The fill props of the details block: the fill of its theme family, or none for an unresolved theme (auto, custom:<slug>),
-// so the engine's own theme shows through and the block carries no backgroundColor at all.
-function detailsFillProps(theme: ThemeFamily): { backgroundColor?: string } {
-  return theme === 'unknown' ? {} : { backgroundColor: DETAILS_FILL[theme] }
-}
-
 // The details block: the "Askaway Details:" title line (the mark, then the text in bold), then the sections (Analogy,
-// Why to Context). It has no border: its fill is the fill of the card's theme family (DETAILS_FILL), none when the theme is
-// unresolved, and its padding keeps the text off the fill's edge. The title is the block's first child.
+// Why to Context). It has no border: its fill is the engine's user-message background (DETAILS_FILL), and its padding keeps
+// the text off the fill's edge. The title is the block's first child.
 function renderDetailsBlock(ui: Ui, lang: Lang, card: CardContext, sections: Section[]): RenderElement {
   const { Box, Text } = ui
-  const { question, isLeaving, surface, theme } = card
+  const { question, isLeaving, surface } = card
   return (
-    <Box key={`details-${question.id}`} flexDirection="column" gap={1} {...detailsFillProps(theme)} paddingX={1} paddingY={1}>
+    <Box key={`details-${question.id}`} flexDirection="column" gap={1} backgroundColor={DETAILS_FILL} paddingX={1} paddingY={1}>
       <Box key="details-title" flexDirection="row" alignItems="center" gap={1}>
         {renderLogo(ui, surface)}
         <Text bold dimColor={isLeaving}>{t(lang, 'details.title')}</Text>

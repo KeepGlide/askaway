@@ -2,13 +2,12 @@
 // the toast and the /askaway command. $ stays in this file: the engine follows $ only inside the module that holds
 // the hook, so the calls on $ live here. Pure rules live in model.ts, the wizard's in wizard.ts, the text in i18n.ts.
 import { atom, read, update } from 'claude-code'
-import type { ConfigRow, EngineInterface, Register, RenderSurface } from 'claude-code'
+import type { EngineInterface, Register, RenderSurface } from 'claude-code'
 
 import type { Answer, Board, Delivery, PromptMarker, Question } from '../types'
 import { renderBand } from './band'
 import { heldButtons, type HeldButtons } from './held'
 import { detectLang, langName, resolveLang, t, type Lang } from './i18n'
-import { themeFamilyOf, type ThemeFamily } from './look'
 import { renderPane, type PaneActions, type PaneView } from './pane'
 import {
   EMPTY_BOARD,
@@ -56,8 +55,6 @@ const LANG_KEY = 'lang'
 const WHO_KEY = 'who'
 // Quiet mode (/askaway quiet on|off): true stops the toast per new question and the fade after an answer.
 const QUIET_KEY = 'quiet'
-// The engine's theme row (`$.config.list`, `config.set`): its value names the theme, whose family fills the details block.
-const THEME_KEY = 'theme'
 // The choices of /askaway lang, as typed (case does not matter; `pt` and `pt_br` still work); `pt-BR` is stored as
 // the dictionary's `pt`, and `auto` follows the environment. A Map, so `constructor` and the like are not choices.
 const LANG_CHOICES: ReadonlyMap<string, string> = new Map([
@@ -84,8 +81,6 @@ const leaving = atom({ plugin: 'askaway', key: 'leaving' } as const, {} as Recor
 const turn = atom({ plugin: 'askaway', key: 'turn' } as const, { isBusy: false })
 // The language in use, and the question wizard (group, step, picks, Other…).
 const langAtom = atom({ plugin: 'askaway', key: 'lang' } as const, DEFAULT_LANG)
-// The theme family of the engine's theme row: the details block's fill (look.ts DETAILS_FILL). Dark until the row is read.
-const themeAtom = atom({ plugin: 'askaway', key: 'theme' } as const, 'dark' as ThemeFamily)
 // The open questions whose asking session has ended (`list --open` marks them): the card shows a notice for them.
 const endedAtom = atom({ plugin: 'askaway', key: 'ended' } as const, [] as string[])
 // The stored answerer name: null before the question was asked, '' after a skip, else the name.
@@ -879,12 +874,6 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const current = await currentLang($)
     await update($, langAtom, () => current)
-    // A failed read keeps the dark fill, as the rest of the start keeps going past a failure.
-    const themeRows = await $.config.list().catch((error: unknown): ConfigRow[] => {
-      logFailure($, error)
-      return []
-    })
-    await update($, themeAtom, () => themeFamilyOf(themeRows.find(row => row.key === THEME_KEY)?.value))
     // A failed registration (a name already taken, say) must not stop the poll below: the band and the pane draw
     // from the board, and the folder is read only while the poller runs.
     await $.command.register({ name: 'askaway', description: t(current, 'command.describeOpen') }).catch((error: unknown) =>
@@ -914,14 +903,6 @@ export const register: Register = on => {
       poller = $.clock.every(POLL_MS, () => report($, pollInbox($, folder, ownSession)))
     }
     return next(e)
-  })
-
-  // The person changed the theme in /config: the details fill follows the new family, so the pane redraws. A denied change
-  // keeps the family the row had, since the engine keeps the old value.
-  on('config.set', { key: THEME_KEY }, async ($, e, next) => {
-    const result = await next(e)
-    if (result.deny === undefined) await update($, themeAtom, () => themeFamilyOf(result.value))
-    return result
   })
 
   // The main loop's turns. A subagent's turn.complete carries its agentId and leaves the main turn alone.
@@ -982,7 +963,6 @@ export const register: Register = on => {
       wizard,
       screen,
       surface: e.surface,
-      theme: await read($, themeAtom),
     }
     return renderPane($.ui.resolve(e), view, actionsFor($), lang, heldFor(e.surface, e.requestId))
   })

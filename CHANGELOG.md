@@ -5,6 +5,14 @@ All notable changes to Askaway are recorded here, newest first. The format follo
 `plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.27, set by the beta.27 release commit.
 Commit hashes name the change in `git log`.
 
+## [0.4.0-beta.28] - 2026-10-20
+
+Reported by the owner on the Desktop light theme after the third gauntlet round: the details block drew a dark fill with grey text, unreadable.
+
+### Fixed
+
+- The "Askaway Details:" block no longer picks its fill from the theme row. The plugin mapped the engine's theme row to a family and painted a hex per family: with no theme row (the engine's default, `auto`, which the Desktop resolves to its system theme) it chose the dark family, so the block was unreadable on a light Desktop; under an explicit `auto` row it drew no fill at all, and now draws the theme's own. The block now carries `backgroundColor="userMessageBackground"`, the engine's own theme key for the user's message surface, defined in every built-in theme and resolved by the engine for the effective theme. `DETAILS_FILL` is now the constant `'userMessageBackground'`; `themeFamilyOf`, the family table and the `askaway.theme` atom with its `config.set` watch are removed (`hooks/look.ts`, `hooks/register.tsx`).
+
 ## [0.4.0-beta.27] - 2026-10-19
 
 Owner's replies to the 30 questions of the third gauntlet round: 12 keep the current behaviour, 13 change code, 5 change only the docs. Two could not be done inside the engine (an accessible name for the Other field, recording the Other text on a window switch) and are recorded as limits; the tree rows stay links without hotkeys, by the owner's choice.
