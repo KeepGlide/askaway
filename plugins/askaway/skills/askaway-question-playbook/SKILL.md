@@ -70,7 +70,9 @@ The CLI refuses a long text under 3 words as `placeholder`, as it does text made
 ## Filing
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '<the JSON from the worked example below>'
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask <<'JSON'
+<the JSON from the worked example below>
+JSON
 ```
 
 Outside Claude Code, `${CLAUDE_PLUGIN_ROOT}` is not set: use the absolute path of `scripts/askaway.py`, and a Codex brief gives that path.
@@ -84,8 +86,18 @@ The CLI prints one JSON line: `{"id":"q-...","recommended":"A","action":"continu
   Continue on the recommended option.
 - `"error":"internal error"` with `"action":"pause"` means nothing was filed either.
   Stop and report it; do not wait.
-- Keep the JSON in single quotes, or pipe it to `ask` on stdin. Inside double quotes
-  the shell would run a backticked name as a command.
+- Pass the JSON on stdin with a quoted heredoc (`<<'JSON'`), as above. The shell
+  expands nothing inside it, so apostrophes and backticks are safe. Use
+  `--json '<JSON>'` only for text without an apostrophe; inside double quotes the
+  shell would run a backticked name as a command. With an apostrophe in a field:
+
+  ```bash
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask <<'JSON'
+  {"title": "Cache", "question": "Don't drop the cache?", ...}
+  JSON
+  ```
+
+  The other fields follow the worked example below.
 
 ## After filing
 
@@ -127,7 +139,7 @@ The CLI prints one JSON line: `{"id":"q-...","recommended":"A","action":"continu
   one. Never leave a field empty or write a placeholder.
 - Put every command, skill, agent, file or flag that a field names between
   backticks, such as `software-test-engineer` or `hooks/pane.tsx`. The panel
-  draws these names in the accent colour and does not draw the backticks.
+  draws these names in bold and does not draw the backticks.
   A slash command may stand bare (`/reload-plugins`).
 
 ## Worked example
@@ -136,7 +148,8 @@ An invented case, to show the shape and the length of each part. It was run
 through `ask` against a throwaway `ASKAWAY_HOME` and accepted.
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask <<'JSON'
+{
   "title": "Windows install location",
   "question": "Where should the Windows build install for each user?",
   "context": "Packaging the Windows installer; the install step stops at the install folder. Scope: the installer only, no app code changes.",
@@ -157,5 +170,6 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{
     {"key": "C", "label": "Folder the user picks", "does": "The installer asks where to install the app, remembers the answer and uses that folder for updates.", "pros": "Each user picks a disk and folder that suit them; works on shared PCs.", "cons": "Adds a screen to the install flow and needs a tested default for people who press Next.", "tradeoff": "Costs one more screen and its tests; reversible later by removing the prompt.", "fit": 60}
   ],
   "recommended": "A"
-}'
+}
+JSON
 ```

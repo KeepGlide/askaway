@@ -141,7 +141,7 @@ Ground rules:
 - 🧑 needs the user's OK: steps 3, 4 and 9 change Claude Code's configuration or open its panel.
 - 💸 No step costs money. Askaway makes no network calls.
 - Platforms: the shell steps were checked on Linux only.
-- `${CLAUDE_PLUGIN_ROOT}` is the installed `askaway` plugin folder, the one the hooks and the skill use. In a shell, set it yourself before the commands. Each command carries its own `ASKAWAY_HOME`, so the test folder never touches the real state folder.
+- `${CLAUDE_PLUGIN_ROOT}` is the installed `askaway` plugin folder, the one the hooks and the skill use. In a shell, set it yourself before the commands. Find the folder with `claude plugin list`: the `Read from:` line under `askaway@keepglide`. Each command carries its own `ASKAWAY_HOME`, so the test folder never touches the real state folder.
 
 | # | Step | Run | Expect |
 |---|---|---|---|
@@ -151,14 +151,14 @@ Ground rules:
 | 4 | 🧑 Install the plugin | `claude plugin install askaway@keepglide` | Exit 0; `claude plugin list` shows `askaway@keepglide`. |
 | 5 | Make a test state folder | `mkdir -p /tmp/askaway-test` | Exit 0; the folder is empty. |
 | 6 | Check away mode | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" away status` | Prints `{"away": false}`. |
-| 7 | File a test question | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Test","question":"Pick A?","what":"A test question for the Askaway CLI. It only checks that a question is filed.","problem":"Nothing is decided by this test, so the check has no cost.","context":"Install spec check of the Askaway CLI.","options":[{"key":"A","label":"Yes","tradeoff":"Safe to accept and easy to change later","fit":90,"does":"The check takes option A.","pros":"Quick to verify.","cons":"Tests nothing else."},{"key":"B","label":"No","tradeoff":"Keeps the current behavior","fit":10,"does":"The check takes option B.","pros":"Changes nothing.","cons":"Gives no result."}],"recommended":"A","why":"A is the safe default for this test.","how":"The session continues on A at once.","gains":"The check finishes without a human.","losses":"Nothing is changed by the test.","analogy":"A dry run before the real job.","urgency":"Can wait","undo":"changing later ≈ 1 min","risk":"low"}'` | Prints `{"id": "q-…", "recommended": "A", "action": "continue"}`. |
-| 8 | Check the pause rule | Step 7 again, with `"risk":"high"` instead of `"risk":"low"` | Prints `"action": "pause"`. |
+| 7 | File a test question | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Test","question":"Pick option A today?","what":"A test question for the Askaway CLI. It only checks that a question is filed.","problem":"Nothing is decided by this test, so the check has no cost.","context":"Install spec check of the Askaway CLI.","options":[{"key":"A","label":"Yes","tradeoff":"Safe to accept and easy to change later","fit":90,"does":"The check takes option A.","pros":"Quick to verify.","cons":"Tests nothing else."},{"key":"B","label":"No","tradeoff":"Keeps the current behavior","fit":10,"does":"The check takes option B.","pros":"Changes nothing at all.","cons":"Gives no result."}],"recommended":"A","why":"A is the safe default for this test.","how":"The session continues on A at once.","gains":"The check finishes without a human.","losses":"Nothing is changed by the test.","analogy":"A dry run before the real job.","urgency":"Can wait","undo":"changing later ≈ 1 min","risk":"low"}'` | Prints `{"id": "q-…", "recommended": "A", "action": "continue"}`. |
+| 8 | Check the pause rule | Step 7 again in a second folder, `ASKAWAY_HOME=/tmp/askaway-test-2`, with `"risk":"high"` instead of `"risk":"low"` | Prints `"action": "pause"`. In the step 7 folder, the same text from the same session is a duplicate and prints `"action": "open"`. |
 | 9 | 🧑 Open the panel (in a Claude Code session) | `/askaway` | The Askaway panel opens. |
-| 10 | Hand back to the user | none | Report each result, the folder `/tmp/askaway-test` and any skipped step. Ask the user to delete `/tmp/askaway-test`. |
+| 10 | Hand back to the user | none | Report each result, the folders `/tmp/askaway-test` and `/tmp/askaway-test-2` and any skipped step. Ask the user to delete both folders. |
 
 ✅ **Done when:** steps 1, 2, 6, 7 and 8 match. Steps 3, 4 and 9 match once the user has approved them.
 
-To undo: `claude plugin uninstall askaway@keepglide`, `claude plugin marketplace remove keepglide`, and delete `/tmp/askaway-test`.
+To undo: `claude plugin uninstall askaway@keepglide`, `claude plugin marketplace remove keepglide`, and delete `/tmp/askaway-test` and `/tmp/askaway-test-2`.
 
 ## 📌 Pin and roll back
 
@@ -372,6 +372,13 @@ The state folder belongs to one user, and every Claude Code session that runs as
 - Question text is whatever the agent wrote. Keep secrets out of it.
 - An answer that is still unread 7 days after you sent it is closed as expired. The check runs on demand in the hooks of any session, and it applies even if the asking session is still alive. An answer whose asking session Claude Desktop has released is closed at once, as soon as any session's hook runs.
 
+
+## 🔒 Security
+
+Report a vulnerability privately, not in a public issue. [SECURITY.md](SECURITY.md) has the reporting channel, the supported versions and the response time.
+
+The known limits of the single-user state folder are in the [Security](plugins/askaway/SPEC.md#security) and [Panel credential](plugins/askaway/SPEC.md#panel-credential) sections of the spec. The Bash guard is a deterrent, not a guarantee (see [What it is](#-what-it-is)).
+
 ## 🩺 Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -383,9 +390,22 @@ The state folder belongs to one user, and every Claude Code session that runs as
 | An answer never reaches the session | The session has not read it yet, or the answer expired unread after 7 days | Check it with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" status <id>`; the status line in the panel shows the delivery state. |
 | The CLI prints `"error": "answer refused: ..."` | A `cli` answer to a question of another session, or from a shell with no session id | Answer from the Askaway panel, or from the session that asked. |
 
+## 🧪 Tests
+
+| Category | Tests |
+|---|---|
+| Mod (TypeScript), `plugins/askaway/tests/` | 357 |
+| CLI and hooks (Python), `plugins/askaway/scripts/tests/` | 625 |
+
+Counts from `claude plugin test plugins/askaway` (357 pass, 0 fail) and `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts` (625 tests), on 2026-10-20.
+
 ## 🔧 Development
 
 The tests and the layout of the repository are in [CONTRIBUTING.md](CONTRIBUTING.md). The mod tests run with `claude plugin test plugins/askaway`; the CLI tests with `pytest`.
+
+## 📝 Changelog
+
+The changes of each version are in [CHANGELOG.md](CHANGELOG.md), in the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
 ## 🤝 Contributing
 

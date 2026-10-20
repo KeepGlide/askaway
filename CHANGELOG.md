@@ -5,6 +5,76 @@ All notable changes to Askaway are recorded here, newest first. The format follo
 `plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.28, set by the beta.28 release commit.
 Commit hashes name the change in `git log`.
 
+## [0.4.0-beta.29] - 2026-10-20
+
+Gauntlet round 4 on 2026-10-20 (40 personas): 75 raw findings, 69 after merging, 48 adopted, 2 skipped, 20 owner questions filed in Askaway, all replied on the same day (their changes ship as beta.30). Plugin tests: 357 pass; pytest: 625 passed; `biome lint` clean. The race-test stubs item (M36) went to the owner as a twentieth question; the shared delivery-line fixture shipped. Review: code-inspect-reviewer on Sonnet high, 0 must, 7 should fixed, 9 nits (6 fixed, 3 left: `SENTENCE_END` after `etc?`, a poll with no timeout, `damaged_question_session` still using `read_text`).
+
+### Fixed
+
+- `read_json`, `load_questions` and `answered_ids` read only regular files, opened with `O_NOFOLLOW|O_NONBLOCK` and checked with `S_ISREG` (`_regular_bytes`, `_is_regular`; `scripts/askaway.py`).
+- The Bash guard denies `mkfifo`, `mknod` and `mkdir` toward the state folder (`WRITE_COMMANDS`), and the pause guard denies a call on an internal error instead of passing it (`_pause_decision`, `hook_pause_guard`).
+- `ask` refuses a text that does not encode as UTF-8, so a lone surrogate no longer breaks the CSV export (`_read_text`).
+- `what` counts `e.g.`, `i.e.`, `etc.`, `vs.` and `cf.` as non-terminal, and `2.0` still does not break a sentence (`SENTENCE_END`, `_sentence_count`).
+- A non-object option is a gap, and validation goes on, so one error names every gap (`_options`).
+- A deeply nested entry is refiled instead of crashing, and a deep transcript line is skipped (`_entry_json`, `_title_rows`).
+- Concurrent identical asks from one session file one question: the duplicate check and the write run under `.ask.lock` (`_ask_lock`, `cmd_ask`).
+- A closed stdin reads as an empty entry, and the refile names the missing entry (`_entry_json`).
+- A repeated JSON key refiles the entry instead of keeping the last value (`_unique_keys`, `_entry_json`).
+- `prune` removes only regular files whose bytes read; a file that does not parse or does not match its id is a damaged question and is removed as such. OS errors and folders are skipped, and the daily stamp moves anyway (`_remove_item`, `cmd_prune`, `_maybe_prune`).
+- `prune --id` on a question file that exists but does not read gives the damaged-question message (`_prune_damaged_id`, `cmd_prune_id`).
+- The state-folder guard protects the default folder even when HOME is under `/tmp` (`_state_roots`, `TMP_ROOT`).
+- Control characters become spaces in one-line texts, and body texts keep only their line breaks (`_clean_text`, `_read_text`, `_one_line`; `scripts/askaway.py`).
+- The untitled question label is cut by code points, so an emoji is not split (`questionLabel`, `clipText`; `hooks/model.ts`).
+- The footer names an Other answer by its letter, or "Other" / "Outra" when the question is gone (`lastAnswerText`, `otherKeyOf`; `hooks/model.ts`).
+- The footer and the toast draw the question's label on one line (`singleLine`, `questionLabel`; `hooks/model.ts`, `hooks/register.tsx`).
+- A pick made while a poll applies the draft is kept (`keepPicksChangedSince`; `hooks/register.tsx`).
+- The delivery marker is written atomically, and a torn marker counts as absent (`writeAtomic`, `parseJsonText`, `_marked`; `hooks/register.tsx`, `scripts/askaway.py`).
+- `away.json` is written through a temp file, and a failed read keeps the last away state (`readAway`, `writeAtomic`; `hooks/register.tsx`).
+- A failed folder listing keeps the previous board instead of emptying it (`readCached`, `jsonIds`; `hooks/register.tsx`).
+- An interval poll does not start while one runs (`polling`; `hooks/register.tsx`).
+- A non-ask command returns the OS error text, `<strerror>: <path>`, instead of `internal error` (`_os_error_text`, `main`; `scripts/askaway.py`).
+- An unknown `/askaway` verb replies with the usage line of the four verbs (`command.verbsHelp`; `hooks/register.tsx`, `hooks/i18n.ts`).
+- The panel token file is created at mode 600 before it is written (`mintPanelToken`; `hooks/register.tsx`).
+- A refused Dismiss on an ended card shows `toast.dismissFailed` (`dismissEndedOrSay`; `hooks/register.tsx`, `hooks/i18n.ts`).
+- Correction to beta.26: `prune` now keeps an item (question, answer and marker) when one of its files cannot be read at the OS level or is not a regular file; the beta.26 entry did not say so (`_remove_item`).
+- `_literal` writes a lone surrogate in an Other text as `\udXXX`, as `JSON.stringify` does, so the Python and TypeScript delivery lines match (`scripts/askaway.py`).
+- The Other text is capped at 500 code points with no ellipsis on both sides, in storage and in the delivery line (`other_text`; `scripts/askaway.py`).
+
+- The Bash guard denies `chmod`, `chown`, `chgrp`, `setfacl` and `chattr` toward the state folder (`WRITE_COMMANDS`): a mode change can make a question unreadable and so free its pause.
+- An inbox call's heredoc body is JSON data, so the Bash guard does not read it as code: an `ask` whose text names the reply helper or the state folder is no longer denied. The lines outside the body are still read, and the body of any other heredoc is still code (`_heredoc_code`, `_ShellScan`; `scripts/askaway.py`).
+- The pause guard's tamper check fails open on its own error, such as a deleted working directory, which denied every tool call; a failing pause lookup still denies (`_tamper_denial`, `hook_pause_guard`).
+- The deliver fast path counts a non-empty regular marker without parsing it; the slow path still reads it and treats an empty or torn one as absent (`_marked`, `item_status`).
+- `writeAtomic` writes a dot-prefixed temp `.<name>.<random>.tmp` beside the target and moves it with `mv -fT`, so two windows writing one target no longer collide and a folder at the target fails instead of swallowing the temp; the CLI's stale-temp prune covers that name (`writeAtomic`, `randomHex`; `hooks/register.tsx`).
+- The panel token file is made with `install -m 600 /dev/null`, written, then `chmod 600`, and a failed install or chmod mints no token (`mintPanelToken`; `hooks/register.tsx`).
+- `question_status` skips a symlink, FIFO or folder in `q/` as `load_questions` does, so it reports an unknown id (`question_status`).
+
+### Changed
+
+- `export --format csv` has an `id` column, last, filled on every row; a damaged question's row fills only that cell (`CSV_COLUMNS`, `_csv_cells`; `scripts/askaway.py`).
+- `prune` sweeps answer and marker files whose question is gone (`_remove_orphans`, `cmd_prune`).
+- `export` gives one row per damaged question, with null fields and `"damaged": true` (`cmd_export`).
+- The picked option carries "✓ " before its label (`renderOption`; `hooks/pane.tsx`).
+- `/askaway lang` names the language (`LANG_NAMES`; `hooks/register.tsx`).
+- `ASKAWAY_PROJECTS` overrides the projects root (`PROJECTS_ENV`, `projects_root`; `scripts/askaway.py`).
+- The Urgency title carries the grade word when `urgency_level` is set (`renderUrgency`; `hooks/pane.tsx`, `urgency.grade.*` in `hooks/i18n.ts`).
+- Six unused i18n entries and `langName` are removed; `footer.otherKey` and `urgency.grade.*` are added (`hooks/i18n.ts`).
+
+### Tests
+
+- A round of three where the second reply fails keeps its pick, and a second Submit all writes the one left (`tests/askaway.test.ts`).
+- A poll drops a draft pick for a question already replied (`tests/askaway.test.ts`).
+- Each refile case pins its expected message (`scripts/tests/test_askaway.py`).
+- One shared fixture, `tests/delivery-lines.ts` (17 cases), is read by both suites, so a drift between `_delivery_line` and `deliveryLine` fails a test on each side (`scripts/tests/test_askaway.py`, `tests/askaway.test.ts`).
+
+### Docs
+
+- The `${CLAUDE_PLUGIN_ROOT}` note says where to find the plugin folder (`claude plugin list`); the AI-install example's steps 7 and 8 use text the validator accepts, and step 8 runs in its own folder (`README.md`, `README.pt-BR.md`).
+- A Security section links the new `SECURITY.md` from both READMEs (`SECURITY.md`, `README.md`, `README.pt-BR.md`).
+- The question playbook shows a quoted heredoc (`<<'JSON'`) for text with an apostrophe, and draws backtick names in bold (`skills/askaway-question-playbook/SKILL.md`).
+- SPEC: the wait sentence on the delivery marker (`cmd_wait`), the "Clear all button" typo, and `LOGO_GLYPH` in `hooks/logo.ts`, drawn by `hooks/logo-element.tsx` (`SPEC.md`).
+- The CONTRIBUTING file map lists the hooks files it missed (`CONTRIBUTING.md`).
+- The beta.27 entry: the reply counts are 13 / 10 / 5 / 2, and the `cleared.json` line matches the SPEC (`CHANGELOG.md`).
+
 ## [0.4.0-beta.28] - 2026-10-20
 
 Reported by the owner on the Desktop light theme after the third gauntlet round: the details block drew a dark fill with grey text, unreadable.
@@ -15,7 +85,7 @@ Reported by the owner on the Desktop light theme after the third gauntlet round:
 
 ## [0.4.0-beta.27] - 2026-10-19
 
-Owner's replies to the 30 questions of the third gauntlet round: 12 keep the current behaviour, 13 change code, 5 change only the docs. Two could not be done inside the engine (an accessible name for the Other field, recording the Other text on a window switch) and are recorded as limits; the tree rows stay links without hotkeys, by the owner's choice.
+Owner's replies to the 30 questions of the third gauntlet round: 13 keep the current behaviour, 10 change code, 5 change only the docs, 2 recorded as engine limits. Two could not be done inside the engine (an accessible name for the Other field, recording the Other text on a window switch) and are recorded as limits; the tree rows stay links without hotkeys, by the owner's choice.
 
 ### Changed
 
@@ -27,7 +97,7 @@ Owner's replies to the 30 questions of the third gauntlet round: 12 keep the cur
 - Dismiss on an ended card reads "Dismiss (removes)" / "Dispensar (remove)".
 - The delivery line quotes `who`, the title and each option label as JSON strings on both surfaces, so a quote or a newline inside them cannot break the line (`_literal` in `scripts/askaway.py`; `deliveryLine` in `hooks/model.ts`).
 - `wait` on a question filed with `run_kind` `subagent` prints the reply line and leaves the delivery marker to the main session's deliver hook, so the main session also gets the line (`cmd_wait`).
-- An id in `cleared.json` whose reply file prune removed is dropped at the next poll, so the file no longer grows without bound (`applyCleared`).
+- An id in `cleared.json` whose reply file prune removed is dropped from the session's list at the next poll; the next Clear all removes it from cleared.json (`applyCleared`).
 - SPEC.md: the card never folds (the per-option lines and the details block are always drawn); Clear all is one-way from the pane and touches no q/, a/ or d/ file; a new Security section records that the CLI trusts `CLAUDE_CODE_SESSION_ID` from the environment.
 
 ### Removed

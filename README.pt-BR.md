@@ -141,7 +141,7 @@ Regras básicas:
 - 🧑 precisa de aprovação do usuário: os passos 3, 4 e 9 mudam a configuração do Claude Code ou abrem o painel dele.
 - 💸 Nenhum passo custa dinheiro. O Askaway não faz chamadas de rede.
 - Plataformas: os passos de shell foram verificados só no Linux.
-- `${CLAUDE_PLUGIN_ROOT}` é a pasta do plugin `askaway` instalado, a que os ganchos e a skill usam; num shell, defina-a você mesmo antes dos comandos. Cada comando leva o próprio `ASKAWAY_HOME`, então a pasta de teste nunca toca a pasta de estado real.
+- `${CLAUDE_PLUGIN_ROOT}` é a pasta do plugin `askaway` instalado, a que os ganchos e a skill usam; num shell, defina-a você mesmo antes dos comandos. Ache a pasta com `claude plugin list`: a linha `Read from:` sob `askaway@keepglide`. Cada comando leva o próprio `ASKAWAY_HOME`, então a pasta de teste nunca toca a pasta de estado real.
 
 | # | Passo | Rodar | Expect |
 |---|---|---|---|
@@ -151,14 +151,14 @@ Regras básicas:
 | 4 | 🧑 Instalar o plugin | `claude plugin install askaway@keepglide` | Código de saída 0; `claude plugin list` mostra `askaway@keepglide`. |
 | 5 | Criar uma pasta de estado de teste | `mkdir -p /tmp/askaway-test` | Código de saída 0; a pasta está vazia. |
 | 6 | Verificar o modo ausente | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" away status` | Imprime `{"away": false}`. |
-| 7 | Registrar uma pergunta de teste | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Test","question":"Pick A?","what":"A test question for the Askaway CLI. It only checks that a question is filed.","problem":"Nothing is decided by this test, so the check has no cost.","context":"Install spec check of the Askaway CLI.","options":[{"key":"A","label":"Yes","tradeoff":"Safe to accept and easy to change later","fit":90,"does":"The check takes option A.","pros":"Quick to verify.","cons":"Tests nothing else."},{"key":"B","label":"No","tradeoff":"Keeps the current behavior","fit":10,"does":"The check takes option B.","pros":"Changes nothing.","cons":"Gives no result."}],"recommended":"A","why":"A is the safe default for this test.","how":"The session continues on A at once.","gains":"The check finishes without a human.","losses":"Nothing is changed by the test.","analogy":"A dry run before the real job.","urgency":"Can wait","undo":"changing later ≈ 1 min","risk":"low"}'` | Imprime `{"id": "q-…", "recommended": "A", "action": "continue"}`. |
-| 8 | Verificar a regra de pausa | Passo 7 de novo, com `"risk":"high"` no lugar de `"risk":"low"` | Imprime `"action": "pause"`. |
+| 7 | Registrar uma pergunta de teste | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Test","question":"Pick option A today?","what":"A test question for the Askaway CLI. It only checks that a question is filed.","problem":"Nothing is decided by this test, so the check has no cost.","context":"Install spec check of the Askaway CLI.","options":[{"key":"A","label":"Yes","tradeoff":"Safe to accept and easy to change later","fit":90,"does":"The check takes option A.","pros":"Quick to verify.","cons":"Tests nothing else."},{"key":"B","label":"No","tradeoff":"Keeps the current behavior","fit":10,"does":"The check takes option B.","pros":"Changes nothing at all.","cons":"Gives no result."}],"recommended":"A","why":"A is the safe default for this test.","how":"The session continues on A at once.","gains":"The check finishes without a human.","losses":"Nothing is changed by the test.","analogy":"A dry run before the real job.","urgency":"Can wait","undo":"changing later ≈ 1 min","risk":"low"}'` | Imprime `{"id": "q-…", "recommended": "A", "action": "continue"}`. |
+| 8 | Verificar a regra de pausa | Passo 7 de novo numa segunda pasta, `ASKAWAY_HOME=/tmp/askaway-test-2`, com `"risk":"high"` no lugar de `"risk":"low"` | Imprime `"action": "pause"`. Na pasta do passo 7, a mesma pergunta da mesma sessão é uma duplicata e imprime `"action": "open"`. |
 | 9 | 🧑 Abrir o painel (numa sessão do Claude Code) | `/askaway` | A janela do painel do Askaway abre. |
-| 10 | Devolver ao usuário | nenhum | Informe cada resultado, a pasta `/tmp/askaway-test` e qualquer passo pulado. Peça ao usuário para apagar `/tmp/askaway-test`. |
+| 10 | Devolver ao usuário | nenhum | Informe cada resultado, as pastas `/tmp/askaway-test` e `/tmp/askaway-test-2` e qualquer passo pulado. Peça ao usuário para apagar as duas pastas. |
 
 ✅ **Pronto quando:** os passos 1, 2, 6, 7 e 8 batem. Os passos 3, 4 e 9 batem depois que o usuário aprovar.
 
-Para desfazer: `claude plugin uninstall askaway@keepglide`, `claude plugin marketplace remove keepglide` e apague `/tmp/askaway-test`.
+Para desfazer: `claude plugin uninstall askaway@keepglide`, `claude plugin marketplace remove keepglide` e apague `/tmp/askaway-test` e `/tmp/askaway-test-2`.
 
 ## 📌 Fixar e voltar a versão
 
@@ -372,6 +372,13 @@ A pasta de estado pertence a um usuário, e todas as sessões do Claude Code que
 - O texto da pergunta é o que o agente escreveu. Mantenha segredos fora dele.
 - Uma resposta ainda não lida 7 dias depois de enviada é encerrada como expirada. A verificação roda sob demanda, nos ganchos de qualquer sessão, e vale mesmo que a sessão que perguntou ainda esteja viva. Uma resposta cuja sessão que perguntou foi liberada pelo Claude Desktop é encerrada na hora, assim que o gancho de qualquer sessão rodar.
 
+
+## 🔒 Segurança
+
+Reporte uma vulnerabilidade em privado, não em uma issue pública. [SECURITY.md](SECURITY.md) traz o canal de reporte, as versões com suporte e o prazo de resposta.
+
+Os limites conhecidos da pasta de estado de um só usuário estão nas seções [Security](plugins/askaway/SPEC.md#security) e [Panel credential](plugins/askaway/SPEC.md#panel-credential) da spec. O guarda do Bash é um desestímulo, não uma garantia (veja [O que é](#-o-que-é)).
+
 ## 🩺 Solução de problemas
 
 | Sintoma | Causa provável | Correção |
@@ -383,9 +390,22 @@ A pasta de estado pertence a um usuário, e todas as sessões do Claude Code que
 | Uma resposta nunca chega à sessão | A sessão ainda não leu, ou a resposta expirou sem ser lida depois de 7 dias | Confira com `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" status <id>`; a linha de estado no painel mostra o estado da entrega. |
 | A CLI imprime `"error": "answer refused: ..."` | Uma resposta `cli` a uma pergunta de outra sessão, ou a partir de um shell sem id de sessão | Responda pelo painel do Askaway, ou pela sessão que perguntou. |
 
+## 🧪 Testes
+
+| Categoria | Testes |
+|---|---|
+| Mod (TypeScript), `plugins/askaway/tests/` | 357 |
+| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 625 |
+
+Contagens de `claude plugin test plugins/askaway` (357 passam, 0 falham) e `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts` (625 testes), em 2026-10-20.
+
 ## 🔧 Desenvolvimento
 
 Os testes e a organização do repositório estão em [CONTRIBUTING.md](CONTRIBUTING.md). Os testes do mod rodam com `claude plugin test plugins/askaway`; os testes da CLI, com `pytest`.
+
+## 📝 Changelog
+
+As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md), no formato [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## 🤝 Contribuição
 
