@@ -7,7 +7,7 @@ import type { EngineInterface, Register, RenderSurface } from 'claude-code'
 import type { Answer, Board, Delivery, PromptMarker, Question } from '../types'
 import { renderBand } from './band'
 import { heldButtons, type HeldButtons } from './held'
-import { detectLang, langName, resolveLang, t, type Lang } from './i18n'
+import { detectLang, resolveLang, t, type Lang } from './i18n'
 import { renderPane, type PaneActions, type PaneView } from './pane'
 import {
   EMPTY_BOARD,
@@ -29,6 +29,7 @@ import {
   parseCleared,
   parseDraft,
   parseQuestion,
+  questionLabel,
   sameBoard,
   clearableIdsOf,
   historyOf,
@@ -39,7 +40,6 @@ import * as flow from './wizard'
 import type { Group, Pick, Wizard } from './wizard'
 
 const PANE = 'askaway'
-const PLUGIN = 'askaway'
 const TITLE = 'Askaway'
 const POLL_MS = 5000
 // A draft.json stamped more than this past the clock is not applied: a far-future stamp would hold off every later draft.
@@ -65,6 +65,8 @@ const LANG_CHOICES: ReadonlyMap<string, string> = new Map([
   ['auto', 'auto'],
 ])
 const DEFAULT_LANG: Lang = 'en'
+// The names /askaway lang shows in its reply: each language's own name (`auto` is shown as the person typed it).
+const LANG_NAMES: Readonly<Record<Lang, string>> = { en: 'English', pt: 'Português' }
 
 // The drawn state. The pane and the band draw from these; the poll and the handlers write them, so each change
 // redraws the instances that read it. They are declared here because the engine reads atoms in the file that
@@ -94,6 +96,8 @@ let draftTs = 0
 const unsavedPicks = new Map<string, Pick | undefined>()
 // Whether the poll's retry of unsavedPicks failed and the person was told; the toast shows once per failure.
 let draftFailing = false
+// Whether an interval poll is running: a tick that comes meanwhile starts no second poll (the `handing` pattern).
+let polling = false
 // Whether the last write held the picks because draft.json did not parse. The next write overwrites the file (H1, one held write).
 let unreadableHeld = false
 
@@ -127,9 +131,11 @@ function report($: EngineInterface, job: Promise<unknown>): void {
   void job.catch((error: unknown) => logFailure($, error))
 }
 
-// Names of the JSON files in a folder. A missing folder reads as empty.
-async function jsonIds($: EngineInterface, dir: string): Promise<string[]> {
-  const entries = await $.fs.list(dir).catch(() => [])
+// Names of the JSON files in a folder. A missing folder reads as empty; a folder that exists but cannot be listed reads as
+// undefined, so the caller keeps what it knew (one failed listing must not empty the board).
+async function jsonIds($: EngineInterface, dir: string): Promise<string[] | undefined> {
+  const entries = await $.fs.list(dir).catch(() => undefined)
+  if (entries === undefined) return (await $.fs.exists(dir).catch(() => true)) ? undefined : []
   return entries
     .filter(entry => entry.kind === 'file' && entry.name.endsWith('.json'))
     .map(entry => entry.name.slice(0, -'.json'.length))
@@ -138,7 +144,10 @@ async function jsonIds($: EngineInterface, dir: string): Promise<string[]> {
 // A file may be mid-write or gone between the list and the read. An unreadable or invalid file reads as
 // absent (the spec's rule for readers), so the next poll picks it up.
 async function readJson($: EngineInterface, path: string): Promise<unknown> {
-  const text = await $.fs.read(path).catch(() => undefined)
+  return parseJsonText(await $.fs.read(path).catch(() => undefined))
+}
+
+function parseJsonText(text: unknown): unknown {
   if (typeof text !== 'string') return undefined
   try {
     return JSON.parse(text)
@@ -147,13 +156,40 @@ async function readJson($: EngineInterface, path: string): Promise<unknown> {
   }
 }
 
+// The away file's state: off when the file is missing, the state kept when it exists but cannot be read (a failed read
+// is not a missing file, so it does not flip the pane).
+async function readAway($: EngineInterface, home: string, kept: boolean): Promise<boolean> {
+  const path = `${home}/away.json`
+  const text = await $.fs.read(path).catch(() => undefined)
+  if (text === undefined && (await $.fs.exists(path).catch(() => true))) return kept
+  return parseAway(parseJsonText(text))
+}
+
+// A random lowercase hex string of `bytes` random bytes.
+function randomHex(bytes: number): string {
+  return [...crypto.getRandomValues(new Uint8Array(bytes))].map(byte => byte.toString(16).padStart(2, '0')).join('')
+}
+
+// Writes a file whole or not at all: the text goes to a temp file beside it, and `mv` renames it over the target (a rename
+// within one folder is atomic; $.fs has no rename). The temp name is dot-prefixed and random, so two writers of one target
+// never share a temp file, and the CLI's `.*.tmp` prune finds an orphan. `mv -T` refuses a folder target instead of moving into it.
+export async function writeAtomic($: EngineInterface, path: string, text: string): Promise<void> {
+  const slash = path.lastIndexOf('/')
+  const temp = `${path.slice(0, slash + 1)}.${path.slice(slash + 1)}.${randomHex(8)}.tmp`
+  await $.fs.write(temp, text)
+  const run = await $.process.run(['mv', '-fT', temp, path])
+  if (run.exitCode !== 0) throw new Error(`askaway: could not move ${temp} into place: ${(run.stderr || run.stdout).trim()}`)
+}
+
 async function readCached<T>(
   $: EngineInterface,
   dir: string,
   cache: Map<string, T>,
   parse: (raw: unknown, id: string) => T | undefined,
 ): Promise<{ found: T[]; ids: string[] }> {
-  const ids = await jsonIds($, dir)
+  const listed = await jsonIds($, dir)
+  // A failed listing keeps the cache as it stands, so this poll reads the folder as the last poll left it.
+  const ids = listed ?? [...cache.keys()]
   const found: T[] = []
   for (const id of ids) {
     const value = cache.get(id) ?? parse(await readJson($, `${dir}/${id}.json`), id)
@@ -162,8 +198,10 @@ async function readCached<T>(
       found.push(value)
     }
   }
-  for (const id of [...cache.keys()]) {
-    if (!ids.includes(id)) cache.delete(id)
+  if (listed !== undefined) {
+    for (const id of [...cache.keys()]) {
+      if (!ids.includes(id)) cache.delete(id)
+    }
   }
   return { found, ids }
 }
@@ -211,7 +249,7 @@ async function announceNew($: EngineInterface, next: Board): Promise<void> {
   if (await read($, quietAtom)) return
   const lang = await read($, langAtom)
   for (const question of fresh) {
-    if (isOpenIn(next, question.id)) $.ui.toast(t(lang, 'toast.newQuestion', { title: question.title }))
+    if (isOpenIn(next, question.id)) $.ui.toast(t(lang, 'toast.newQuestion', { title: questionLabel(question) }))
   }
 }
 
@@ -306,7 +344,7 @@ async function dismissEnded($: EngineInterface, home: string, id: string): Promi
 // The interval poll of a session also hands its own answers to its prompt (handDue).
 async function pollInbox($: EngineInterface, home: string, ownSession?: string): Promise<void> {
   const { board: next, answerFileIds } = await readBoard($, home)
-  const away = parseAway(await readJson($, `${home}/away.json`))
+  const away = await readAway($, home, await read($, isAway))
   const now = await $.clock.now()
   await mergeBoard($, next)
   await applyCleared($, home, answerFileIds)
@@ -353,9 +391,27 @@ async function applyDraft($: EngineInterface, home: string): Promise<void> {
   const picks = overlay(draft.picks, unsavedPicks)
   const prev = await read($, wizardAtom)
   if (!samePicks(prunedWizard({ ...prev, picks }, open).picks, prev.picks)) {
-    await update($, wizardAtom, current => prunedWizard({ ...current, picks }, open))
+    await update($, wizardAtom, current =>
+      prunedWizard({ ...current, picks: keepPicksChangedSince(prev.picks, current.picks, picks) }, open),
+    )
   }
   draftTs = Math.max(draftTs, draft.ts)
+}
+
+// The picks to apply: `picks`, with each pick this window changed since `before` (the picks the apply read) taken from
+// `current`, so a pick pressed in the gap between that read and the update is not thrown away.
+function keepPicksChangedSince(
+  before: Record<string, Pick>,
+  current: Record<string, Pick>,
+  picks: Record<string, Pick>,
+): Record<string, Pick> {
+  const merged: Record<string, Pick> = { ...picks }
+  for (const id of new Set([...Object.keys(before), ...Object.keys(current)])) {
+    if (JSON.stringify(before[id]) === JSON.stringify(current[id])) continue
+    if (current[id] === undefined) delete merged[id]
+    else merged[id] = current[id]
+  }
+  return merged
 }
 
 // The picks with `changes` laid over them: an undefined change removes its pick.
@@ -402,9 +458,10 @@ async function handOne(
   const lines: string[] = []
   for (const { answer, text } of items) {
     const marker = `${home}/d/${answer.id}.json`
-    if (await $.fs.exists(marker)) continue
+    // A marker that does not parse is no marker (a torn write): it is replaced, so the answer is handed once and not never.
+    if (parseDelivery(await readJson($, marker), answer.id) !== undefined) continue
     const stamp: PromptMarker = { id: answer.id, session, ts: await $.clock.now(), via: 'prompt' }
-    await $.fs.write(marker, `${JSON.stringify(stamp)}\n`)
+    await writeAtomic($, marker, `${JSON.stringify(stamp)}\n`)
     lines.push(text)
   }
   if (lines.length > 0) await $.prompt.submit({ text: lines.join('\n') })
@@ -459,12 +516,17 @@ async function writeAnswer($: EngineInterface, home: string, id: string, key: st
 // mode-600 file in a mode-700 folder under the state folder, and passed to the CLI in ASKAWAY_PANEL_TOKEN. The CLI spends it.
 // A second layer behind the Bash guard, not isolation.
 async function mintPanelToken($: EngineInterface, home: string): Promise<string> {
-  const token = [...crypto.getRandomValues(new Uint8Array(16))].map(byte => byte.toString(16).padStart(2, '0')).join('')
+  const token = randomHex(16)
   const dir = `${home}/panel-tokens`
   const file = `${dir}/${token}`
   await $.process.run(['install', '-d', '-m', '700', dir])
+  // The file is created at mode 600 before it gets its text, and set to 600 again after the write: $.fs.write takes no mode,
+  // and a write by temp file and rename would leave the default mode. A failed install or chmod throws: no token is handed out.
+  const made = await $.process.run(['install', '-m', '600', '/dev/null', file])
+  if (made.exitCode !== 0) throw new Error(`askaway: could not create the panel token file: ${(made.stderr || made.stdout).trim()}`)
   await $.fs.write(file, `${JSON.stringify({ ts: await $.clock.now() })}\n`)
-  await $.process.run(['chmod', '600', file])
+  const mode = await $.process.run(['chmod', '600', file])
+  if (mode.exitCode !== 0) throw new Error(`askaway: could not set the panel token file to mode 600: ${(mode.stderr || mode.stdout).trim()}`)
   return token
 }
 
@@ -590,8 +652,8 @@ async function quietReply($: EngineInterface, lang: Lang, value: string): Promis
 
 // Flips away.json and returns the new state.
 async function toggleAway($: EngineInterface, home: string): Promise<boolean> {
-  const on = !parseAway(await readJson($, `${home}/away.json`))
-  await $.fs.write(`${home}/away.json`, `${JSON.stringify({ on, ts: await $.clock.now() })}\n`)
+  const on = !(await readAway($, home, await read($, isAway)))
+  await writeAtomic($, `${home}/away.json`, `${JSON.stringify({ on, ts: await $.clock.now() })}\n`)
   await update($, isAway, () => on)
   return on
 }
@@ -838,7 +900,7 @@ async function setLang($: EngineInterface, value: string): Promise<string> {
   await $.store.set(LANG_KEY, choice)
   const chosen = resolveLang(choice, await detectedLang($))
   await update($, langAtom, () => chosen)
-  return t(chosen, 'command.langSet', { lang: langName(chosen) })
+  return t(chosen, 'command.langSet', { lang: choice === 'auto' ? choice : LANG_NAMES[chosen] })
 }
 
 async function awayText($: EngineInterface, lang: Lang): Promise<string> {
@@ -847,9 +909,17 @@ async function awayText($: EngineInterface, lang: Lang): Promise<string> {
   return t(lang, isNowAway ? 'command.awayOn' : 'command.awayOff')
 }
 
+// Dismiss on an ended card: a prune the CLI refuses leaves the question listed, and the person is told by a toast; the cause is logged.
+async function dismissEndedOrSay($: EngineInterface, id: string): Promise<void> {
+  await withFolder($, folder => dismissEnded($, folder, id)).catch(async (error: unknown) => {
+    logFailure($, error)
+    $.ui.toast(t(await read($, langAtom), 'toast.dismissFailed'))
+  })
+}
+
 const actionsFor = ($: EngineInterface): PaneActions => ({
   clearHistory: () => report($, clearHistory($)),
-  dismissEnded: id => report($, withFolder($, folder => dismissEnded($, folder, id))),
+  dismissEnded: id => report($, dismissEndedOrSay($, id)),
   pick: (id, key) => report($, afterPendingOther($, () => pickOption($, id, { key }))),
   focusOther: id => report($, afterPendingOther($, () => focusOther($, id))),
   submitOne: id => report($, afterPendingOther($, () => submitOne($, id))),
@@ -900,7 +970,16 @@ export const register: Register = on => {
       // A hot reload keeps the board, so the first poll writes nothing: the band and the pane are drawn on request.
       $.ui.invalidate('ui.render')
       const ownSession = await $.session.id().catch(() => undefined)
-      poller = $.clock.every(POLL_MS, () => report($, pollInbox($, folder, ownSession)))
+      poller = $.clock.every(POLL_MS, () => {
+        if (polling) return
+        polling = true
+        report(
+          $,
+          pollInbox($, folder, ownSession).finally(() => {
+            polling = false
+          }),
+        )
+      })
     }
     return next(e)
   })
@@ -925,7 +1004,7 @@ export const register: Register = on => {
     if (verb === 'quiet') return { text: await quietReply($, lang, value) }
     if (verb === 'who') return { text: await whoReply($, lang, rest) }
     if (verb === 'away') return { text: await awayText($, lang) }
-    if (verb !== '') return { text: t(lang, 'command.langInvalid') }
+    if (verb !== '') return { text: t(lang, 'command.verbsHelp') }
     const opened = await openPane($)
     if (opened.isPlaced) return { text: t(lang, 'command.opened') }
     const open = openQuestions(await read($, board), await read($, leaving))

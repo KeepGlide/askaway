@@ -70,7 +70,6 @@ const EN = {
   'command.whoNone': 'Askaway has no name for you yet. Set one with /askaway who <name>.',
   'nav.back': '← Back',
   'nav.next': 'Next →',
-  'card.answeredElsewhere': 'Answered elsewhere',
   'card.ended': 'The session that asked has ended; the agent stayed on {key}.',
   'card.dismiss': 'Dismiss (removes)',
   'card.session': 'See session ↗',
@@ -87,8 +86,6 @@ const EN = {
   'toast.replyHeld': 'Another window already replied {key}; that reply stays.',
   'toast.clearedPending': 'Cleared {n}; waiting replies still reach their sessions',
   'command.describeOpen': 'Open the Askaway pane with the pending questions',
-  'command.describeLang': 'Set the language: /askaway lang pt-BR|en|auto (default auto, the environment locale)',
-  'command.describeAway': 'Toggle away mode: questions go to the Askaway inbox',
   'command.opened': 'Askaway pane opened.',
   'command.awayOn': 'Askaway away mode is on.',
   'command.awayOff': 'Askaway away mode is off.',
@@ -108,6 +105,14 @@ const EN = {
   'footer.expired.one': '{n} expired',
   'footer.expired.many': '{n} expired',
   'details.title': 'Askaway Details:',
+  // gauntlet 4, B1
+  'toast.dismissFailed': 'Could not dismiss the question; it is still listed.',
+  'command.verbsHelp': 'Use /askaway, /askaway lang pt-BR|en|auto, /askaway quiet on|off, /askaway who <name> or /askaway away.',
+  // gauntlet 4, package B2
+  'urgency.grade.low': 'low',
+  'urgency.grade.medium': 'medium',
+  'urgency.grade.high': 'high',
+  'footer.otherKey': 'Other',
 } as const
 
 export type MessageKey = keyof typeof EN
@@ -173,7 +178,6 @@ const PT: Record<MessageKey, string> = {
   'command.whoNone': 'O Askaway ainda não tem um nome para você. Defina um com /askaway who <nome>.',
   'nav.back': '← Voltar',
   'nav.next': 'Próxima →',
-  'card.answeredElsewhere': 'Respondida em outro lugar',
   'card.ended': 'A sessão que perguntou terminou; o agente ficou na opção {key}.',
   'card.dismiss': 'Dispensar (remove)',
   'card.session': 'Ver sessão ↗',
@@ -190,8 +194,6 @@ const PT: Record<MessageKey, string> = {
   'toast.replyHeld': 'Outra janela já respondeu {key}; essa resposta foi mantida.',
   'toast.clearedPending': 'Limpas {n}; as respostas pendentes ainda chegam às sessões.',
   'command.describeOpen': 'Abre o painel do Askaway com as perguntas pendentes',
-  'command.describeLang': 'Define o idioma: /askaway lang pt-BR|en|auto (padrão auto, o idioma do ambiente)',
-  'command.describeAway': 'Liga ou desliga o modo ausente: as perguntas vão para a caixa do Askaway',
   'command.opened': 'Painel do Askaway aberto.',
   'command.awayOn': 'Modo ausente do Askaway ligado.',
   'command.awayOff': 'Modo ausente do Askaway desligado.',
@@ -211,14 +213,19 @@ const PT: Record<MessageKey, string> = {
   'footer.expired.one': '{n} expirada',
   'footer.expired.many': '{n} expiradas',
   'details.title': 'Detalhes do Askaway:',
+  // gauntlet 4, B1
+  'toast.dismissFailed': 'Não foi possível dispensar a pergunta; ela continua na lista.',
+  'command.verbsHelp': 'Use /askaway, /askaway lang pt-BR|en|auto, /askaway quiet on|off, /askaway who <nome> ou /askaway away.',
+  // gauntlet 4, package B2
+  'urgency.grade.low': 'baixa',
+  'urgency.grade.medium': 'média',
+  'urgency.grade.high': 'alta',
+  'footer.otherKey': 'Outra',
 }
 
 export const MESSAGES: Readonly<Record<Lang, Readonly<Record<MessageKey, string>>>> = { en: EN, pt: PT }
 
 const isLang = (value: unknown): value is Lang => value === 'en' || value === 'pt'
-
-// The name a person reads for a language: the dictionary's `pt` is Brazilian Portuguese.
-export const langName = (lang: Lang): string => (lang === 'pt' ? 'pt-BR' : 'en')
 
 export function detectLang(env: LangEnv): Lang {
   const locale = LOCALE_VARS.map(name => env[name]).find(value => value !== undefined && value.trim() !== '')

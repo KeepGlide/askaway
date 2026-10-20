@@ -182,7 +182,7 @@ const controlToSpace = (text: string): string => text.replace(/[\p{Cc}\p{Zl}\p{Z
 const deleteFormat = (text: string): string => text.replace(/\p{Cf}/gu, '')
 // askaway.py's _one_line: format characters are deleted, control characters and line breaks become spaces, so a title or
 // label cannot start a second line.
-const singleLine = (text: string): string => controlToSpace(deleteFormat(text)).split(/\s+/).filter(part => part !== '').join(' ')
+export const singleLine = (text: string): string => controlToSpace(deleteFormat(text)).split(/\s+/).filter(part => part !== '').join(' ')
 
 // The name an answer record carries (askaway.py's WHO_MAX and CONTROL_CHARS): at most WHO_MAX characters, the last one an
 // ellipsis, control characters become spaces and format characters are deleted. The read path (parseAnswer) applies it
@@ -417,12 +417,12 @@ const padTwoDigits = (value: number): string => String(value).padStart(2, '0')
 // The title line names a question by its title; a question with no title is named by its text, cut short.
 const TITLE_MAX = 24
 
-// The title of a question for the card and the tree: its title, else its text cut to TITLE_MAX characters.
+// The title of a question for the card, the tree, the footer and the toast: its title, else its text cut to TITLE_MAX
+// characters. One line always (singleLine), and cut by code points (clipText), so no line break or lone surrogate is drawn.
 export function questionLabel(question: Question): string {
-  const title = question.title.trim()
+  const title = singleLine(question.title)
   if (title !== '') return title
-  const text = question.question.trim()
-  return text.length > TITLE_MAX ? `${text.slice(0, TITLE_MAX - 1)}…` : text
+  return clipText(singleLine(question.question), TITLE_MAX)
 }
 
 // The name of a group: the title of its session family's root, title-cased, when its oldest question has one. Else the
@@ -589,12 +589,20 @@ export function footerText(lang: Lang, board: Board, now: number, cleared: reado
   return parts.filter((part): part is string => part !== undefined).join(' · ')
 }
 
-// The last answer as the footer names it: its question's title cut to FOOTER_TITLE_MAX characters (its id when the
-// question is gone), its key, and its age.
+// The key an Other answer is named by in the footer: its letter, as the options draw theirs ("C · Other…"), or the word for
+// Other when the question is gone and its letter with it. Never the raw key, which is an English word in the pt-BR footer.
+const otherKeyOf = (lang: Lang, question: Question | undefined): string => {
+  const letter = question === undefined ? undefined : otherLetterOf(question.options)
+  return letter === undefined ? t(lang, 'footer.otherKey') : letter.toUpperCase()
+}
+
+// The last answer as the footer names it: its question's label (questionLabel) cut to FOOTER_TITLE_MAX characters (its id
+// when the question is gone), its key (an Other answer by its letter), and its age.
 function lastAnswerText(lang: Lang, answer: Answer, question: Question | undefined, now: number): string {
-  const title = question?.title.trim() ?? ''
-  const name = clipText(title === '' ? answer.id : title, FOOTER_TITLE_MAX)
-  return t(lang, 'footer.last', { title: name, key: answer.key, age: ageLabel(lang, answer.ts, now) })
+  const label = question === undefined ? '' : questionLabel(question)
+  const name = clipText(label === '' ? answer.id : label, FOOTER_TITLE_MAX)
+  const key = answer.key === OTHER_KEY ? otherKeyOf(lang, question) : answer.key
+  return t(lang, 'footer.last', { title: name, key, age: ageLabel(lang, answer.ts, now) })
 }
 
 // The text cut to max code points, its last one an ellipsis.
