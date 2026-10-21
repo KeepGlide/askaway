@@ -148,6 +148,7 @@ PRUNE_STAMP: Final = "last_prune"  # the daily cleanup's stamp file, in the stat
 CLOCK_JUMP_S: Final = 7 * 86_400  # a daily stamp older than this means the wall clock moved, not a missed day
 RELEASED_SUFFIX: Final = ".desktop-released.json"
 TEMP_STALE_S: Final = 86_400
+STATE_FOLDER_MODE: Final = 0o700  # the state folder and its folders: other local users see no ids, names or sizes
 CLOSED_STATUSES: Final = frozenset({"delivered", "expired"})
 STATUS_DAMAGED: Final = "damaged"  # q/<id>.json does not read as a JSON object
 STATUS_DAMAGED_ANSWER: Final = "damaged answer"  # a/<id>.json does not read: answered, key unknown, still pauses
@@ -156,9 +157,15 @@ WAIT_DEFAULT_S: Final = 300.0
 WAIT_POLL_S: Final = 0.5
 MIN_WORDS: Final = 3
 PLACEHOLDER_WORDS: Final = frozenset({"tbd", "todo", "n/a", "lorem"})
+MIN_UNSPACED_LETTERS: Final = 2 * MIN_WORDS  # an unspaced script has no word breaks: about MIN_WORDS two-letter words
+UNSPACED_SCRIPT: Final = re.compile(r"[぀-ヿ㐀-䶿一-鿿豈-﫿\U00020000-\U0002fa1f]")
+EDGE_MARKS: Final = re.compile(r"^[\W_]+|[\W_]+$")  # punctuation and symbols (Unicode P and S) and underscores at a word's ends
 MISSING: Final = "missing"
 PLACEHOLDER: Final = "placeholder"
 NOT_UTF8: Final = "not valid UTF-8"
+NOT_UTF8_ENTRY: Final = "the entry must be UTF-8 JSON"
+TITLE_TYPE_RULE: Final = "must be a string, or left out to use the question"
+BYTE_ORDER_MARK: Final = "\ufeff"
 FIT_RULE: Final = "must be an integer 0 to 100, or null"
 KEY_RULE: Final = "option keys must be consecutive uppercase letters starting at A, in order (A, B, C...)"
 FOREIGN_RECHECK_S: Final = 60
@@ -216,7 +223,13 @@ PYTHON_NAME: Final = re.compile(r"python(?:3(?:\.\d+)?)?")
 CODE_RUNNERS: Final = frozenset({"perl", "ruby", "node", "bun", "deno", "php"})
 SHELL_NAMES: Final = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
 SHELL_C_FLAG: Final = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
-WRAPPER_NAMES: Final = frozenset({"command", "env", "exec", "nice", "nohup", "time", "timeout"})
+WRAPPER_NAMES: Final = frozenset({"builtin", "command", "env", "exec", "nice", "nohup", "time", "timeout"})
+DIRECTORY_CHANGERS: Final = frozenset({"cd", "pushd", "popd"})
+DIRECTORY_OPTION: Final = re.compile(r"-(?:-|[LPe@]+)")  # cd's own options and the end-of-options "--"; a lone "-" is OLDPWD
+DIRECTORY_STACK_INDEX: Final = re.compile(r"[+-]\d+")  # pushd's rotation of the stack: the directory it reaches is unknown
+DIRECTORY_WORD: Final = re.compile(r"\b(?:cd|pushd|popd)\b")
+SOURCE_NAMES: Final = frozenset({"source", "."})  # run in this shell, and the scan cannot read the file they run
+CDPATH_VAR: Final = "CDPATH"  # cd searches these folders for a relative operand
 PREFIX_WORDS: Final = frozenset({"!", "{", "do", "elif", "else", "if", "then", "until", "while"})
 WRAPPER_ARG: Final = re.compile(r"-\S*|[0-9.]+[smhd]?")
 ASSIGNMENT: Final = re.compile(r"([A-Za-z_]\w*)=(.*)", re.DOTALL)
@@ -228,9 +241,11 @@ EXPANSION: Final = re.compile(r"[$`*?\[{]")
 GLOB: Final = re.compile(r"[*?\[]")
 STATE_MENTION: Final = re.compile(r"state[\W_]*askaway|ASKAWAY_HOME")
 WRITE_CODE: Final = re.compile(r"open\(.*?(?:['\"][wax+]|>)|write|unlink|remove|rename|os\.replace\(|rmtree|copy|move"
+                               r"|os\.(?:symlink|link)\(|symlink_to|hardlink_to"
                                r"|touch|truncate|\b(?:rm|mv|cp|tee)\b")
 ANSWER_CODE: Final = re.compile(r"cmd_answer|answer\(|['\"]answer['\"]")
 ASKAWAY_CODE: Final = re.compile(r"import\s+askaway|from\s+askaway\s+import|askaway\.py")
+RUNS_CODE: Final = re.compile(r"subprocess|os\.(?:system|popen|exec\w*|spawn\w*)|\bpty\b|\.main\(|cmd_\w+")
 
 
 class Origin(NamedTuple):
@@ -273,8 +288,16 @@ def new_id(ms: int) -> str:
     return f"q-{to_base36(ms)}-{os.urandom(3).hex()}"
 
 
+def _make_folder(folder: Path) -> None:
+    """Create a folder of the state folder with mode 700, the state folder first. The umask only removes bits."""
+    state = state_home()
+    state.parent.mkdir(parents=True, exist_ok=True)
+    state.mkdir(mode=STATE_FOLDER_MODE, exist_ok=True)
+    folder.mkdir(mode=STATE_FOLDER_MODE, exist_ok=True)
+
+
 def _write_temp(target: Path, data: Mapping[str, Any]) -> Path:
-    target.parent.mkdir(parents=True, exist_ok=True)
+    _make_folder(target.parent)
     tmp = target.with_name(f".{target.name}.{os.urandom(4).hex()}.tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
@@ -322,7 +345,11 @@ def create_once(target: Path, data: Mapping[str, Any]) -> bool:
             os.replace(tmp, target)
     finally:
         tmp.unlink(missing_ok=True)
-    _fsync_dir(target.parent)
+    try:
+        _fsync_dir(target.parent)
+    except OSError as exc:  # the link already published the file: a failed directory sync is a warning, not a failure
+        sys.stderr.write(json.dumps({"warning": "directory sync failed after the link",
+                                     "error": _os_error_text(exc)}) + "\n")
     return True
 
 
@@ -468,8 +495,15 @@ def _sentence_count(text: str) -> int:
 
 
 def _words(text: str) -> list[str]:
-    """The words of a text, lower-cased, with the punctuation at their ends dropped."""
-    return [word for word in (raw.strip(string.punctuation) for raw in text.lower().split()) if word]
+    """The words of a text, lower-cased, with the punctuation and symbols at their ends dropped."""
+    return [word for word in (EDGE_MARKS.sub("", raw) for raw in text.lower().split()) if word]
+
+
+def _too_short(text: str, words: list[str]) -> bool:
+    """A long text needs MIN_WORDS words; an unspaced script has no word breaks, so its letters are counted instead."""
+    if UNSPACED_SCRIPT.search(text):
+        return sum(char.isalnum() for char in text) < MIN_UNSPACED_LETTERS
+    return len(words) < MIN_WORDS
 
 
 def _clean_text(name: str, raw: object) -> str:
@@ -493,7 +527,7 @@ def _read_text(name: str, raw: object, limit: int) -> tuple[str | None, str | No
     if len(text) > limit:
         return None, f"too long ({len(text)}/{limit})"
     words = _words(text)
-    if all(word in PLACEHOLDER_WORDS for word in words) or (name in LONG_TEXT and len(words) < MIN_WORDS):
+    if all(word in PLACEHOLDER_WORDS for word in words) or (name in LONG_TEXT and _too_short(text, words)):
         return None, PLACEHOLDER
     return text, None
 
@@ -552,7 +586,10 @@ def _top_texts(raw: Mapping[str, Any], gaps: Gaps) -> dict[str, str | None]:
 
 
 def _title(raw: Mapping[str, Any], question: str | None, gaps: Gaps) -> str:
-    text, reason = _read_text("title", raw.get("title"), TITLE_MAX)
+    raw_title = raw.get("title")
+    if raw_title is not None and not isinstance(raw_title, str):
+        gaps.top["title"] = TITLE_TYPE_RULE
+    text, reason = _read_text("title", raw_title, TITLE_MAX)
     if reason is not None and reason != MISSING:
         gaps.top["title"] = reason
     return text or _clip(question or "", TITLE_MAX)
@@ -614,7 +651,7 @@ def _options(raw_options: object, gaps: Gaps) -> list[dict[str, Any]]:
     if not isinstance(raw_options, list) or len(raw_options) < MIN_OPTIONS:
         gaps.notes.append(f"options must be a list of at least {MIN_OPTIONS} items")
         return []
-    objects: list[dict[str, Any]] = []
+    objects: list[tuple[dict[str, Any], str]] = []  # each option with its key; a keyless one is shown as #<position>
     keys: list[str] = []
     for position, raw in enumerate(raw_options, start=1):
         if not isinstance(raw, dict):
@@ -623,13 +660,14 @@ def _options(raw_options: object, gaps: Gaps) -> list[dict[str, Any]]:
         key = _option_key(raw)
         if key is None:
             gaps.notes.append(f"option {position}: key")
+            objects.append((raw, f"#{position}"))
             continue
-        objects.append(raw)
+        objects.append((raw, key))
         keys.append(key)
     gaps.keys = keys
     if keys != list(string.ascii_uppercase[:len(keys)]):
         gaps.notes.append(f"{KEY_RULE}; keys received: {', '.join(keys)}")
-    return [_option(raw, key, gaps) for raw, key in zip(objects, keys, strict=True)]
+    return [_option(raw, key, gaps) for raw, key in objects]
 
 
 def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
@@ -642,7 +680,9 @@ def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
     title = _title(raw, texts["question"], gaps)
     options = _options(raw.get("options"), gaps)
     recommended = raw.get("recommended")
-    if options and recommended not in [option["key"] for option in options]:
+    if recommended is None:
+        gaps.top["recommended"] = MISSING
+    elif options and recommended not in [option["key"] for option in options]:
         gaps.notes.append("recommended must be one of the option keys")
     what = texts["what"]
     if what is not None and _sentence_count(what) < MIN_SENTENCES:
@@ -1001,7 +1041,11 @@ def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 def _entry_json(json_text: str | None) -> object:
     """The entry as JSON, from --json or stdin; a usage error says what to fix when there is none or it is not JSON."""
-    text = json_text if json_text is not None else (sys.stdin.read() if sys.stdin is not None else "")  # no stdin: no entry
+    try:
+        text = json_text if json_text is not None else (sys.stdin.read() if sys.stdin is not None else "")  # no stdin: no entry
+    except UnicodeDecodeError as exc:
+        raise ValueError(NOT_UTF8_ENTRY) from exc
+    text = text.removeprefix(BYTE_ORDER_MARK)  # a UTF-8 BOM from some writers is not part of the JSON
     if not text.strip():
         raise ValueError("no entry: pass --json or pipe it on stdin")
     try:
@@ -1014,7 +1058,7 @@ def _entry_json(json_text: str | None) -> object:
 def _ask_lock() -> Generator[None]:
     """Hold the ask lock: an ask checks for a duplicate and files under it, so racing asks cannot both file."""
     path = state_home() / ASK_LOCK
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _make_folder(path.parent)
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
@@ -1023,8 +1067,21 @@ def _ask_lock() -> Generator[None]:
         os.close(fd)  # closing the descriptor releases the lock
 
 
+def _file_or_hold_twin(entry: Mapping[str, Any]) -> tuple[dict[str, Any] | None, OSError | None]:
+    """The open twin the entry repeats, else the entry filed, under the ask lock. A high-risk repeat also pauses the twin
+    (one atomic write), so the pause lookup holds the session for it."""
+    with _ask_lock():
+        twin = open_twin(entry)
+        if twin is None:
+            return None, file_question(entry)
+        if entry["pause"] is True:
+            twin = {**twin, "pause": True, "risk": "high"}  # pause == (risk == "high"), as build_entry keeps it
+            write_atomic(item_path("q", twin["id"]), twin)
+        return twin, None
+
+
 def _duplicate_reply(twin: Mapping[str, Any]) -> dict[str, Any]:
-    """The reply to a repeated ask: the open twin's id. A paused twin still holds the session, so the agent must stop."""
+    """The reply to a repeated ask: the open twin's id. A paused twin, or a high-risk repeat, makes the agent stop."""
     action = "pause" if twin.get("pause") is True else "open"
     return {"id": twin["id"], "recommended": twin["recommended"], "title": twin.get("title"),
             "action": action, "duplicate": True}
@@ -1038,9 +1095,7 @@ def cmd_ask(json_text: str | None) -> dict[str, Any]:
         if not isinstance(raw, dict):
             raise ValueError("the entry must be a JSON object")  # noqa: TRY004 - CLI validation channel
         entry = build_entry(raw, cli_origin())
-        with _ask_lock():
-            twin = open_twin(entry)
-            failure = file_question(entry) if twin is None else None
+        twin, failure = _file_or_hold_twin(entry)
         if failure is not None:  # a high-risk question that would not write: nothing filed, the agent stops
             return {"action": "pause", "error": _os_error_text(failure)}
         if twin is not None:
@@ -1281,13 +1336,21 @@ def cmd_away(state: str) -> dict[str, Any]:
     return {"away": on}
 
 
+def _present_files(item_id: str) -> list[Path]:
+    return [item_path(folder, item_id) for folder in ("q", "a", "d") if os.path.lexists(item_path(folder, item_id))]
+
+
+def _removable(present: Sequence[Path]) -> bool:
+    return bool(present) and all(_regular_bytes(path) is not None for path in present)
+
+
 def _remove_item(item_id: str) -> bool:
     """Remove the question, answer and marker of an item, question first, when every file that is there reads.
 
     A file prune cannot read, or one that is not a regular file, keeps the whole item: no answer may outlive its
     question, and a file prune cannot read is not prune's to delete. True when the item was removed."""
-    present = [item_path(folder, item_id) for folder in ("q", "a", "d") if os.path.lexists(item_path(folder, item_id))]
-    if not present or any(_regular_bytes(path) is None for path in present):
+    present = _present_files(item_id)
+    if not _removable(present):
         return False
     for path in present:
         try:
@@ -1307,10 +1370,13 @@ def _remove_stale_temps() -> None:
 
 
 def _settled_ts(item_id: str, status: str) -> int | None:
-    """When a closed item closed: its delivery marker, or for an expired answer, the answer."""
-    folder = "a" if status == "expired" else "d"
-    ts = (read_json(item_path(folder, item_id)) or {}).get("ts")
-    return ts if isinstance(ts, int) else None
+    """When a closed item closed: its delivery marker, or for an expired answer, the answer (the marker when the answer does not read)."""
+    folders = ("a", "d") if status == "expired" else ("d",)
+    for folder in folders:
+        ts = (read_json(item_path(folder, item_id)) or {}).get("ts")
+        if isinstance(ts, int):
+            return ts
+    return None
 
 
 def prune_days() -> int:
@@ -1325,40 +1391,50 @@ def _unreadable_answers() -> list[str]:
             if ID_PATTERN.fullmatch(path.stem) and item_status(path.stem)[0] == STATUS_DAMAGED_ANSWER]
 
 
-def _remove_damaged(damaged: Sequence[str]) -> int:
-    """Clear damaged q/ or a/ files with their companion files, whatever the window: the user's way out of a pause."""
-    return sum(_remove_item(item_id) for item_id in damaged)
-
-
-def _remove_orphans() -> int:
+def _orphan_ids() -> list[str]:
     """Answer and marker files whose question file is gone: an interrupted prune left them, and no list shows them."""
     ids = {path.stem for folder in ("a", "d") for path in (state_home() / folder).glob("*.json")
            if ID_PATTERN.fullmatch(path.stem)}
-    return sum(_remove_item(item_id) for item_id in sorted(ids) if not os.path.lexists(item_path("q", item_id)))
+    return [item_id for item_id in sorted(ids) if not os.path.lexists(item_path("q", item_id))]
 
 
-def _remove_closed(days: int, entries: Sequence[Mapping[str, Any]]) -> int:
+def _closed_ids(days: int, entries: Sequence[Mapping[str, Any]]) -> list[str]:
+    """The closed items whose closing time is older than the window."""
     cutoff = now_ms() - days * DAY_MS
-    removed = 0
+    ids: list[str] = []
     for entry in entries:
         status = item_status(entry["id"])[0]
         # Only closed items: an undelivered or unexpired record is never pruned, whatever the window.
         if status not in CLOSED_STATUSES:
             continue
         settled = _settled_ts(entry["id"], status)
-        if settled is not None and settled < cutoff and _remove_item(entry["id"]):
-            removed += 1
-    return removed
+        if settled is not None and settled < cutoff:
+            ids.append(entry["id"])
+    return ids
 
 
-def cmd_prune(days: int) -> dict[str, Any]:
+def _remove_all(item_ids: Sequence[str]) -> list[str]:
+    """Remove each item once, in order; returns the ids removed."""
+    return [item_id for item_id in dict.fromkeys(item_ids) if _remove_item(item_id)]
+
+
+def _would_remove(item_ids: Sequence[str]) -> list[str]:
+    """The ids _remove_all would remove, read only."""
+    return [item_id for item_id in dict.fromkeys(item_ids) if _removable(_present_files(item_id))]
+
+
+def cmd_prune(days: int, dry_run: bool) -> dict[str, Any]:
     if days < 0:
         raise ValueError("--days must not be negative")
-    _remove_stale_temps()
+    if not dry_run:
+        _remove_stale_temps()
     entries, damaged = load_questions()
-    unreadable = sorted({*damaged, *_unreadable_answers()})
-    removed = _remove_damaged(unreadable) + _remove_orphans()
-    return {"removed": removed + _remove_closed(days, entries)}
+    # Damaged files are cleared whatever the window: the user's way out of a pause.
+    candidates = [*sorted({*damaged, *_unreadable_answers()}), *_orphan_ids(), *_closed_ids(days, entries)]
+    if dry_run:
+        return {"dry_run": True, "would_remove_ids": _would_remove(candidates)}
+    removed = _remove_all(candidates)
+    return {"removed": len(removed), "removed_ids": removed}
 
 
 def _prune_damaged_id(item_id: str) -> dict[str, Any]:
@@ -1373,7 +1449,8 @@ def _prune_damaged_id(item_id: str) -> dict[str, Any]:
 def cmd_prune_id(item_id: str, force: bool) -> dict[str, Any]:
     """Remove one open question whose asking session has ended, or that has no session (the panel's Dismiss).
 
-    force also removes one whose session has not ended: a terminal session never writes an end marker.
+    force also removes one whose session has not ended, or one that holds a pause: a terminal session never writes
+    an end marker, and only the user lifts a pause. A released-session marker alone never lifts a pause.
     """
     entry = read_json(item_path("q", item_id))
     if entry is None or not _question_matches(item_id, entry):
@@ -1381,8 +1458,11 @@ def cmd_prune_id(item_id: str, force: bool) -> dict[str, Any]:
     if item_status(item_id)[0] != "open":
         return {"error": "prune refused: the question is already answered"}
     session = entry.get("session")
-    if not force and session and not session_ended(session, entry.get("project")):
-        return {"error": "prune refused: the session that asked has not ended"}
+    if not force and session:
+        if entry.get("pause") is True:
+            return {"error": "prune refused: the question holds a pause; only prune --id --force lifts it"}
+        if not session_ended(session, entry.get("project")):
+            return {"error": "prune refused: the session that asked has not ended"}
     if not _remove_item(item_id):
         return {"error": "prune refused: a file of the question does not read"}
     return {"removed": 1, "id": item_id} if force else {"removed": 1}
@@ -1551,11 +1631,13 @@ def _status_command(args: argparse.Namespace) -> dict[str, Any] | str:
 
 
 def _prune_command(args: argparse.Namespace) -> dict[str, Any]:
-    if args.item_id:
+    if args.item_id is not None:  # an empty id is an invalid id, never a bulk prune
+        if args.dry_run:
+            raise ValueError("--dry-run takes no --id")
         return cmd_prune_id(args.item_id, args.force)
     if args.force:
         raise ValueError("--force needs --id")
-    return cmd_prune(args.days)
+    return cmd_prune(args.days, args.dry_run)
 
 
 class _Parser(argparse.ArgumentParser):
@@ -1605,6 +1687,7 @@ def build_parser() -> argparse.ArgumentParser:
     prune.add_argument("--days", type=int, default=prune_days())
     prune.add_argument("--id", dest="item_id")
     prune.add_argument("--force", action="store_true")
+    prune.add_argument("--dry-run", action="store_true")
     prune.add_argument("--strict", action="store_true")
     prune.set_defaults(run=_prune_command)
 
@@ -1896,6 +1979,12 @@ def _inline_code(argv: Sequence[str]) -> str | None:
     return next((args[index + 1] for index, arg in enumerate(args[:-1]) if arg in ("-c", "-e")), None)
 
 
+def _directory_operand(operand: str) -> str | None:
+    """The expanded operand of a cd or pushd, or None when it is `-`, a stack index, or still holds a variable, a glob or a brace."""
+    target = _expand(operand, str(DEFAULT_HOME))
+    return None if target == "-" or DIRECTORY_STACK_INDEX.fullmatch(target) or EXPANSION.search(target) else target
+
+
 def _code_reason(code: str, *, sandboxed: bool) -> str | None:
     """Code that writes the state folder, or that answers a question (an answer into a sandbox home is fine).
 
@@ -1907,6 +1996,8 @@ def _code_reason(code: str, *, sandboxed: bool) -> str | None:
         return STATE_DENIED
     if not sandboxed and ASKAWAY_CODE.search(code) and ANSWER_CODE.search(code):
         return ANSWER_DENIED
+    if not sandboxed and "askaway" in code and RUNS_CODE.search(code):
+        return ANSWER_DENIED  # the answer word may be built at run time; running the CLI from code is the route
     return None
 
 
@@ -1986,10 +2077,12 @@ def _unreadable_reason(command: str) -> str | None:
 
 
 class _ShellScan:
-    """One Bash command read as the shell runs it: the working directory and the ASKAWAY_HOME it exports."""
+    """One Bash command read as the shell runs it: the working directory, whether the guard knows it, and the
+    ASKAWAY_HOME it exports."""
 
-    def __init__(self, cwd: str, exported: Mapping[str, str], roots: tuple[str, ...]) -> None:
+    def __init__(self, cwd: str, exported: Mapping[str, str], roots: tuple[str, ...], cwd_known: bool = True) -> None:
         self.cwd = cwd
+        self.cwd_known = cwd_known  # False once a directory change the guard cannot follow has run
         self.exported = dict(exported)
         self.roots = roots
 
@@ -2011,12 +2104,23 @@ class _ShellScan:
         if HOME_VAR in env and self._hits_state(env[HOME_VAR], str(DEFAULT_HOME), delete=False):
             return STATE_DENIED
         reason = self._checks(simple, argv, env, env.get(HOME_VAR, self.exported.get(HOME_VAR, "")))
-        if reason is None and name == "cd":
-            self.cwd = self._cd_target(argv)
+        if self._directory_untracked(name, argv, env):
+            self.cwd_known = False
+        if reason is None and name in DIRECTORY_CHANGERS:
+            self._change_directory(name, argv)
         return reason
 
+    def _directory_untracked(self, name: str, argv: Sequence[str], env: Mapping[str, str]) -> bool:
+        """Does the command move this shell's directory where the scan cannot follow it?
+
+        CDPATH sends a relative cd to another folder. A sourced file, and an eval whose text holds a cd, run in this
+        shell, and the scan of their text does not carry the directory back."""
+        if CDPATH_VAR in env or name in SOURCE_NAMES:
+            return True
+        return name == "eval" and any(DIRECTORY_WORD.search(text) for text in _script_texts(argv))
+
     def _checks(self, simple: _Simple, argv: Sequence[str], env: Mapping[str, str], home: str) -> str | None:
-        sandboxed = bool(home) and _sandbox_value(home, self.cwd)
+        sandboxed = bool(home) and (self.cwd_known or os.path.isabs(home)) and _sandbox_value(home, self.cwd)
         askaway_home = home if sandboxed else str(DEFAULT_HOME)
         checks = [_answer_reason(argv, sandboxed), _forced_prune_reason(argv),
                   self._write_reason(simple, argv, askaway_home), self._nested(simple, env, argv)]
@@ -2031,23 +2135,44 @@ class _ShellScan:
         return STATE_DENIED if hit else None
 
     def _hits_state(self, text: str, askaway_home: str, *, delete: bool) -> bool:
-        """Does an unquoted word name a path inside a state folder (or above one, when it deletes)?"""
-        literal = GLOB.split(_expand(text, askaway_home), maxsplit=1)[0]
+        """Does an unquoted word name a path inside a state folder, or above one when it deletes or globs?
+
+        A glob reaches every path under the directory before its first wildcard, so that directory is checked."""
+        expanded = _expand(text, askaway_home)
+        if not self.cwd_known and not os.path.isabs(expanded):
+            return True  # after an untracked directory change, a relative word cannot be placed
+        wildcard = GLOB.search(expanded)
+        literal = expanded if wildcard is None else expanded[:expanded.rfind(os.sep, 0, wildcard.start()) + 1]
         path = os.path.realpath(os.path.join(self.cwd, literal))
-        return _inside(path, self.roots) or (delete and _above(path, self.roots))
+        return _inside(path, self.roots) or ((delete or wildcard is not None) and _above(path, self.roots))
 
     def _nested(self, simple: _Simple, env: Mapping[str, str], argv: Sequence[str]) -> str | None:
         """Text the command runs on its own: $(...) or `...` (with the exports so far), sh -c or eval (with the prefix)."""
         scans = [(self.exported, text) for word in simple.words for text in _substitutions(word)]
         scans += [({**self.exported, **env}, text) for text in _script_texts(argv)]
         for exported, text in scans:
-            reason = _ShellScan(self.cwd, exported, self.roots).text(text)
+            reason = _ShellScan(self.cwd, exported, self.roots, self.cwd_known).text(text)
             if reason is not None:
                 return reason
         return None
 
-    def _cd_target(self, argv: Sequence[str]) -> str:
-        target = _expand(_unquote(argv[1]), str(DEFAULT_HOME)) if len(argv) > 1 else str(Path.home())
+    def _change_directory(self, name: str, argv: Sequence[str]) -> None:
+        """Follow the directory a cd or pushd leaves; any change the guard cannot resolve leaves it unknown."""
+        target = self._directory_after(name, argv)
+        self.cwd_known = target is not None
+        if target is not None:
+            self.cwd = target
+
+    def _directory_after(self, name: str, argv: Sequence[str]) -> str | None:
+        """The directory a cd or pushd leaves, or None: popd, a swap, cd -, a variable, a glob, or more operands."""
+        operands = [_unquote(word) for word in argv[1:] if not DIRECTORY_OPTION.fullmatch(_unquote(word))]
+        if name == "popd" or len(operands) > 1:
+            return None
+        if not operands:
+            return None if name == "pushd" else str(Path.home())
+        target = _directory_operand(operands[0])
+        if target is None or (not self.cwd_known and not os.path.isabs(target)):
+            return None
         return os.path.realpath(os.path.join(self.cwd, target))
 
 
@@ -2124,7 +2249,7 @@ def _pause_decision(event: Mapping[str, Any]) -> HookOutput:
     if title is None:
         return deny(f"Paused: Askaway question {item_id} is damaged (its file does not read), so it cannot be "
                     f"answered. The user clears it with `python3 {SCRIPT_PATH} prune`. Do read-only work or end the turn.")
-    return deny(f"Paused: Askaway question {item_id} ({title}) needs the "
+    return deny(f"Paused: Askaway question {item_id} ({_literal(title)}) needs the "
                 "user's answer. Do read-only work or end the turn; check with "
                 f"`python3 {SCRIPT_PATH} status {item_id}`.")
 
@@ -2260,7 +2385,8 @@ def _maybe_prune() -> None:
     if not _clock_jumped(marker):
         with contextlib.suppress(OSError):
             _remove_stale_temps()
-            _remove_closed(prune_days(), load_questions()[0])  # never a damaged file: the user clears those
+            _remove_all(_closed_ids(prune_days(), load_questions()[0]))  # never a damaged file: the user clears those
+            _remove_all(_orphan_ids())
     with contextlib.suppress(OSError):
         marker.touch()  # the stamp moves even when some items were skipped, so the next cycle runs
 
@@ -2308,11 +2434,13 @@ def hook_deliver(event: Mapping[str, Any]) -> HookOutput:
     if not item_ids or not isinstance(event_name, str):
         return None
     lines = _deliver_lines(item_ids, event.get("session_id") or None, event.get("cwd"), _foreign_recheck_due())
+    if lines:
+        # Printed and flushed before the daily cleanup: the lines are claimed already, and a kill during the cleanup
+        # must not cost them (run_hook prints only what a handler returns, so this run prints its output here).
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": event_name,
+                                                 "additionalContext": "\n".join(lines)}}), flush=True)
     _maybe_prune()  # after the deliveries: their clock-jump hold is read before this call moves the stamp
-    if not lines:
-        return None
-    return {"hookSpecificOutput": {"hookEventName": event_name,
-                                   "additionalContext": "\n".join(lines)}}
+    return None
 
 
 HOOK_MODES: Final[dict[str, Callable[[Mapping[str, Any]], HookOutput]]] = {
@@ -2360,17 +2488,38 @@ def command_help(command: str) -> dict[str, Any]:
     return {"usage": parser.format_usage().removeprefix("usage: ").strip(), "options": [*HELP_FLAGS, *flags]}
 
 
+def _value_flags(command: str) -> frozenset[str]:
+    """The option strings of one sub-command that take a value: the word after one is that option's value."""
+    parser = _subcommands().get(command)
+    if parser is None:
+        return frozenset()
+    return frozenset(flag for action in parser._actions if action.nargs != 0 for flag in action.option_strings)
+
+
+def _help_words_as_values(args: Sequence[str]) -> list[str]:
+    """Join a help flag to the option before it, so `--text -h` gives -h as the value, not as a flag."""
+    values = _value_flags(args[0]) if args else frozenset()
+    words: list[str] = []
+    for word in args:
+        if words and words[-1] in values and word in HELP_FLAGS:
+            words[-1] = f"{words[-1]}={word}"
+        else:
+            words.append(word)
+    return words
+
+
 def help_reply(args: Sequence[str]) -> dict[str, Any] | None:
     """The one-line help for `<command> -h|--help`, hook included, or None when the call asks for no help."""
-    if not any(word in HELP_FLAGS for word in args[1:]):
+    words = _help_words_as_values(args)
+    if not any(word in HELP_FLAGS for word in words[1:]):
         return None
-    if args[0] == "hook":
+    if words[0] == "hook":
         return {"usage": "askaway.py hook {" + "|".join(HOOK_MODES) + "}", "options": list(HELP_FLAGS)}
-    return command_help(args[0]) if args[0] in _subcommands() else None
+    return command_help(words[0]) if words[0] in _subcommands() else None
 
 
 def dispatch(argv: Sequence[str]) -> dict[str, Any] | str:
-    args = build_parser().parse_args(list(argv))
+    args = build_parser().parse_args(_help_words_as_values(argv))
     return args.run(args)
 
 
