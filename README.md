@@ -1,31 +1,62 @@
+<div align="center">
+
+<img src="assets/askaway-cover-1600x400.png" alt="Askaway: a question inbox for Claude Code." width="100%" />
+
 # 🔷 Askaway
 
 [![🇺🇸 English](https://img.shields.io/badge/%F0%9F%87%BA%F0%9F%87%B8-English-blue.svg)](README.md) [![🇧🇷 Português (Brasil)](https://img.shields.io/badge/%F0%9F%87%A7%F0%9F%87%B7-Portugu%C3%AAs%20(Brasil)-green.svg)](README.pt-BR.md)
 
-A question card appears in the Askaway panel for each decision an agent filed while you were away. You answer it there, and the agent is already doing A unless you choose otherwise. Each answer goes back to the Claude Code session that asked.
+**A question inbox for Claude Code: agents file the decisions they need while you are away, and you answer them in one panel.**
 
-**Terms used on this page**
+[![Version](https://img.shields.io/github/v/tag/KeepGlide/askaway?sort=semver&color=2BB8AE&label=version)](https://github.com/KeepGlide/askaway/tags) [![License: MIT](https://img.shields.io/badge/license-MIT-1E2A47)](LICENSE) [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-1E2A47)](#-prerequisites) [![Python 3.12+](https://img.shields.io/badge/python-%E2%89%A53.12-1E2A47)](#-prerequisites)
 
-| Term | Meaning |
-|---|---|
-| **Away** | The session is away when its permission mode is `bypassPermissions`, away mode is on (`/askaway away`), or `CLAUDE_CODE_SESSION_ATTENDED=0`. An agent that is away files questions instead of waiting. |
-| **Session** | One Claude Code session. Each question records the session that asked, and its answer goes back to that session. |
-| **Recommended** | The option the agent marks as its default. It keeps working on it until you answer, and your answer overrides it. |
-| **Risk** | How risky accepting the recommended option is: `low`, `medium` or `high`. Only `high` pauses. |
-| **Pause** | A hold on the agent that asked a `high` question (the main thread or one subagent): its edits, shell commands and other changing tool calls are blocked until the answer is delivered to its session. |
-| **Fit** | The agent's own 0-100 estimate of how well an option suits the task. Askaway does not measure or check it. |
+[Installation](#-installation) · [Usage](#-usage) · [Changelog](CHANGELOG.md) · [Report a bug](https://github.com/KeepGlide/askaway/issues/new) · [Security](SECURITY.md)
 
-![The Askaway pane beside the Context and Environment panes, light theme: two projects, four sessions, five questions, one card open](assets/window-light-en.png)
+</div>
 
-![The same pane on the dark theme](assets/window-dark-en.png)
+<details>
+<summary><strong>📑 Contents</strong></summary>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+- [📌 Status](#-status)
+- [💡 Why it exists](#-why-it-exists)
+- [🎁 What it delivers](#-what-it-delivers)
+- [📸 Screenshots](#-screenshots)
+- [⚡ Quick start](#-quick-start)
+- [⚙️ How it works](#%EF%B8%8F-how-it-works)
+- [📋 Prerequisites](#-prerequisites)
+- [🚀 Installation](#-installation)
+- [🤖 Install with an AI agent (spec)](#-install-with-an-ai-agent-spec)
+- [🔄 Updating](#-updating)
+- [🧹 Uninstall](#-uninstall)
+- [🧭 Usage](#-usage)
+- [🎛️ Configuration](#%EF%B8%8F-configuration)
+- [🧠 How agents file questions](#-how-agents-file-questions)
+- [🧩 From Codex](#-from-codex)
+- [🗂️ State folder](#%EF%B8%8F-state-folder)
+- [🔒 Security and privacy](#-security-and-privacy)
+- [🩺 Troubleshooting](#-troubleshooting)
+- [🐞 Known issues](#-known-issues)
+- [🧪 Tests](#-tests)
+- [🔧 Development](#-development)
+- [📝 Changelog](#-changelog)
+- [🤝 Contributing](#-contributing)
+- [🧑‍🔧 Maintainer](#-maintainer)
+- [📄 License](#-license)
 
-> ⚠️ **Early access (0.4.0-beta.36):** the mod API moves between Claude Code releases, so expect changes until a stable release. The changes of this version are listed in [CHANGELOG.md](CHANGELOG.md).
+</details>
 
-## 💡 What it is
+## 📌 Status
 
-An agent that needs a decision while you are away has two bad options: stop and wait, or guess. Askaway gives it a third one. The agent files the question with a recommended option and keeps working on it. You answer later in the Askaway panel, and your answers go back to the session that asked.
+**Beta** (`0.4.0-beta.37`, early access). Askaway follows [SemVer](https://semver.org/): while the version is `0.y.z`, anything may change at any time. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
+
+> [!WARNING]
+> The mod API moves between Claude Code releases, so expect changes until a stable release.
+
+## 💡 Why it exists
+
+A question card appears in the Askaway panel for each decision an agent filed while you were away. You answer it there, and the agent is already doing its recommended option unless you choose otherwise. Each answer goes back to the Claude Code session that asked.
+
+An agent that needs a decision while you are away has two bad options: stop and wait, or guess. Askaway gives it a third one. The agent files the question with a recommended option and keeps working on it. You answer later in the Askaway panel, and your answers go back to the session that asked. It is for anyone who runs Claude Code agents away from the terminal, in away mode or with `bypassPermissions`.
 
 The agent keeps doing what does not depend on your answer. When you are back, the toast and the band button above the prompt tell you questions are waiting. You open the panel and find every question filed by any session of any project, one card at a time, each with what the agent added to help you judge it:
 
@@ -46,16 +77,51 @@ Askaway does not:
 - make network calls: questions and answers are files on your machine;
 - stop the work for every question: only a risky question pauses a session, and only the session whose id the question carries.
 
-## ✨ Advantages
+### Terms used on this page
 
-- **Answer when you are back, from any project or session.** The panel reads the state folder that every Claude Code session on your machine shares, so the open questions of all projects show in one place. Each answer goes back to the session that asked.
+| Term | Meaning |
+|---|---|
+| **Away** | The session is away when its permission mode is `bypassPermissions`, away mode is on (`/askaway away`), or `CLAUDE_CODE_SESSION_ATTENDED=0`. An agent that is away files questions instead of waiting. |
+| **Session** | One Claude Code session. Each question records the session that asked, and its answer goes back to that session. |
+| **Recommended** | The option the agent marks as its default. It keeps working on it until you answer, and your answer overrides it. |
+| **Risk** | How risky accepting the recommended option is: `low`, `medium` or `high`. Only `high` pauses. |
+| **Pause** | A hold on the agent that asked a `high` question (the main thread or one subagent): its edits, shell commands and other changing tool calls are blocked until the answer is delivered to its session. |
+| **Fit** | The agent's own 0-100 estimate of how well an option suits the task. Askaway does not measure or check it. |
+
+## 🎁 What it delivers
+
+- **Answer from any project or session.** The panel reads the state folder that every Claude Code session on your machine shares, so the open questions of all projects show in one place (`/askaway`). Each answer goes back to the session that asked.
 - **A tree by Desktop Group, session family and session.** A question asked from a Claude Desktop session in a sidebar Group is grouped under that Group's name, read from the Desktop config (`claude_desktop_config.json`). Other questions group by session family: each Claude Desktop session family with open questions (its root session and the sessions it started or forked) is a group, named by the root's title, with its sessions and their questions under it. The family is read from Claude Desktop's own session records on this machine; questions with no family group by project.
-- **A recommended default.** Every question carries the option the agent would take, so the session keeps working instead of waiting for you.
+- **A recommended default.** Every question carries the option the agent would take, so the session keeps working instead of waiting for you (the CLI prints `"action": "continue"`).
+- **Submit all per group.** Pressing **Submit all** sends every answer of the group to the sessions that asked, and **Submit Answer** sends one answer at once (`answer <id> <key> --by panel`).
+- **Hotkeys.** Option letters, Back, Next and Submit all work from the keyboard, on the terminal and on the Desktop (see [Hotkeys](#hotkeys)).
+- **Away mode switch.** `/askaway away` turns away mode on or off and reports the state (`away.json`).
 - **First click on the desktop.** Each button keeps its press handle across redraws (`hooks/held.ts`), which is the cause of the first click the desktop used to drop.
 - **Risk-aware pausing.** A question with `risk` high pauses the agent that asked it (the main thread, or one subagent) in the session whose id it carries, until the answer is delivered to that session. The other agents keep working; a question with no recorded asker pauses the whole session. A question from Codex has no session id: it replies `"action": "pause"`, but nothing holds a Codex run, so its script waits for the answer itself ([From Codex](#-from-codex)). Low and medium questions never pause.
 - **Two languages.** English and Brazilian Portuguese, from your locale or with `/askaway lang`. A question may carry its own `translations`, so `/askaway lang` switches the whole card.
+- **A CLI for agents and scripts.** `scripts/askaway.py` has eight commands (`ask`, `answer`, `status`, `list`, `wait`, `export`, `away`, `prune`), each printing one JSON line ([CLI commands](#cli-commands)).
+
+## 📸 Screenshots
+
+![The Askaway pane beside the Context and Environment panes, light theme: two projects, four sessions, five questions, one card open](assets/window-light-en.png)
+
+![The same pane on the dark theme](assets/window-dark-en.png)
+
+![The Askaway band above the prompt](assets/band-en.png)
+
+## ⚡ Quick start
+
+One command installs the marketplace and the plugin (tested with Claude Code 2.1.296):
+
+```bash
+claude plugin install askaway --marketplace KeepGlide/claude-plugins
+```
+
+Restart Claude Code, or run `/reload-plugins` if your version has it, then run `/askaway` to open the panel. The step-by-step install is in [Installation](#-installation).
 
 ## ⚙️ How it works
+
+Askaway has two parts. The CLI (`scripts/askaway.py`) files, answers and reports questions as one JSON file each in the state folder. The panel (a mod in `hooks/`) polls that folder every 5 seconds (`POLL_MS = 5000` in `hooks/register.tsx`) and writes answers only through the CLI. The command hooks of each session read the same folder: they hand each answer to the session that asked, and they hold the agent that asked a `high` risk question until its answer is delivered.
 
 Components and the file flow:
 
@@ -89,23 +155,21 @@ sequenceDiagram
     Agent->>Agent: continue on the answer
 ```
 
-## 📋 Requirements
+## 📋 Prerequisites
 
 - Claude Code that loads mods and plugin hooks. Tested with Claude Code 2.1.296 (`claude --version`).
 - Python 3.12 or newer as `python3` on your `PATH`, standard library only (the script uses the `type` statement). Tested with Python 3.12.3.
 - No account, service or API key.
 
+| Platform | Status | Notes |
+|---|---|---|
+| Linux | ✅ | Tested with Claude Code 2.1.296 and Python 3.12.3. The shell steps of the install spec were checked here only. |
+| macOS | ⚠️ | The Claude Desktop session folder is `~/Library/Application Support/Claude/claude-code-sessions` since 0.4.0-beta.37, covered by unit tests only (`scripts/tests/test_platform_paths.py`). |
+| Windows | ❌ | Not tested. The code has no Windows path for the Claude Desktop session folder (`scripts/askaway.py:127-128`). |
+
 ## 🚀 Installation
 
 The catalog lives in [KeepGlide/claude-plugins](https://github.com/KeepGlide/claude-plugins), the KeepGlide marketplace. This repository holds only the Askaway plugin.
-
-One command installs the marketplace and the plugin (tested with Claude Code 2.1.296):
-
-```bash
-claude plugin install askaway --marketplace KeepGlide/claude-plugins
-```
-
-Or step by step:
 
 ### 1️⃣ Add the marketplace
 
@@ -122,14 +186,6 @@ claude plugin install askaway@keepglide
 ### 3️⃣ Load it
 
 Restart Claude Code, or run `/reload-plugins` inside a session if your version has it. Then run `/askaway` to open the panel.
-
-### Uninstall
-
-```bash
-claude plugin uninstall askaway@keepglide
-```
-
-**Remove your data.** Uninstalling does not remove the state folder, `~/.claude/state/askaway` (or the `ASKAWAY_HOME` folder you set), because it lies outside the plugin folder. Removing it is your choice: deleting the folder deletes every question and answer in it.
 
 ## 🤖 Install with an AI agent (spec)
 
@@ -160,11 +216,13 @@ Ground rules:
 
 To undo: `claude plugin uninstall askaway@keepglide`, `claude plugin marketplace remove keepglide`, and delete `/tmp/askaway-test` and `/tmp/askaway-test-2`.
 
-## 📌 Pin and roll back
+## 🔄 Updating
 
 The version you get is the one the KeepGlide catalog pins. Its entry for Askaway names a git tag (`ref`) and a commit (`sha`), and `claude plugin install askaway@keepglide` installs that pair.
 
-To list the tags, run `git ls-remote --tags https://github.com/KeepGlide/askaway.git`. Each release is tagged `v0.4.0-beta.N`, except beta.7, which has no tag; its release commit is `9a07ae9`.
+### Pin and roll back
+
+To list the tags, run `git ls-remote --tags https://github.com/KeepGlide/askaway.git`. Tags exist from `v0.4.0-beta.3` on, except beta.7, which has no tag; its release commit is `9a07ae9`.
 
 To roll back, KeepGlide moves the catalog's `ref` and `sha` back to the previous tag and its commit. Then reinstall the plugin with the commands in [Installation](#-installation):
 
@@ -173,11 +231,34 @@ claude plugin uninstall askaway@keepglide
 claude plugin install askaway@keepglide
 ```
 
+## 🧹 Uninstall
+
+Remove the plugin:
+
+```bash
+claude plugin uninstall askaway@keepglide
+```
+
+Optional: remove the marketplace entry, if no other plugin from it is installed:
+
+```bash
+claude plugin marketplace remove keepglide
+```
+
+**Remove your data.** Uninstalling does not remove the state folder, `~/.claude/state/askaway` (or the `ASKAWAY_HOME` folder you set), because it lies outside the plugin folder. Removing it is your choice:
+
+```bash
+rm -r ~/.claude/state/askaway
+```
+
+> [!CAUTION]
+> Deleting the state folder deletes every question and answer in it. Use your `ASKAWAY_HOME` path instead if you set one.
+
+**What stays:** the state folder with its questions, answers and delivery markers, and the marketplace entry, until you remove them as above. Askaway writes only inside the state folder ([What Askaway reads and writes](#what-askaway-reads-and-writes)), so nothing else on your machine changes.
+
 ## 🧭 Usage
 
 Agents file questions instead of stopping. You answer them in the panel, one card at a time, and send each group's answers at once.
-
-![The Askaway band above the prompt](assets/band-en.png)
 
 While questions are open, a band sits above the prompt: `2 questions waiting · 1 group`, with an **Answer** button on hotkey `1`. A toast announces each new question that arrives while the session is open; questions already open when it starts get no toast.
 
@@ -190,13 +271,18 @@ While questions are open, a band sits above the prompt: `2 questions waiting · 
 5. **← Back** goes to the previous question. **Next →** goes to the next one, with or without an answer. It is on every question but the last.
 6. On the group's last question, the forward button is **Submit all (N)**, where N is the number of questions of the group on screen. It is pressable only once every question has an answer. Pressing it sends every answer of the group to the sessions that asked. Nothing is sent before this button.
 
+### History
+
 Under the card, the **History** block is drawn as the tree above is: a history icon (a clock turning back) and **History** as its heading, then the answers of the last while, grouped by Desktop Group or session family, and by session, each answer as one `○` row: the question's whole title, ` ✓ ` and the answer with where it stands (`Keep · sent 14:32`, where Keep is the chosen option's label or an Other reply's quoted text, then `delivered 14:33 (read by the session)` once the session has read it, `the session ended before reading it`, or `expired unread`: no session read it within 7 days; nothing is added while it waits). When the question was asked from a Desktop session, the family label and the session row are links that open those sessions on the Desktop; a Desktop Group's name and the question's title are plain text; the terminal draws all of them as plain text. A delivered line stays until Clear all; the other lines stay too. **Clear all (N)** at the very bottom removes every row shown, waiting ones included (the answer file stays, so the session still reads it).
 
 When no question is open, the pane shows one footer line under the History tree, with the counts: `1 answered in the last 24 h · last: <title> → <label>, <age> · 1 not yet read · 1 expired`. The first part reads `none answered in the last 24 h` when no answer falls in the last 24 h; the unread and expired parts show only when they are not zero, and leave out the rows Clear all hid. It is absent while a question is open.
 
 ### Anatomy of a card
 
-The card draws these parts from top to bottom. The labels are the English ones; the panel shows them in Portuguese when the language is `pt-BR`.
+<details>
+<summary>The parts of a card, from top to bottom</summary>
+
+The labels are the English ones; the panel shows them in Portuguese when the language is `pt-BR`.
 
 The card opens with the title, the Urgency line (coloured by its grade), the explanation before the question (**What it is** and **The problem**, two plain paragraphs with no heading), the **Askaway Details:** block (the mark and the title, then **Analogy**, **💡 Why A**, **↩️ Undo**, **🛠️ How**, **🎁 What we gain**, **⚖️ What we lose** and **🧭 Context and origin**), the question, the lead line under it, the options with their tradeoff, fit, the **What happens**, **Pros** and **Cons** lines, and the nav row. The details are always open: there is no link or key to open them.
 
@@ -208,7 +294,9 @@ The card opens with the title, the Urgency line (coloured by its grade), the exp
 6. **The options:** each one a full-width button, `A · Label`, with `(Recommended)` after the label of the recommended one. Under it, a line `└ trade-off · fit 88` (the fit is the agent's estimate), then **What happens** (`does`), **Pros** (`pros`) and **Cons** (`cons`), which show at once. The picked option is the filled button; the recommended one is bold until it is picked. The last one is **Other…**, shown with the letter after the last option (`C · Other…` with two options).
 7. **The nav row:** a separator, then **← Back** (dim on the first question), **Next →** (every question but the last), or on the last question **Submit all (N)** (see step 6 above).
 
-   The CLI requires `what`, `problem`, `analogy`, `context`, `why`, `how`, `gains`, `losses`, `urgency`, `undo` and `risk`, and each option's `tradeoff`, `does`, `pros` and `cons`, so every card filed through it carries them all. Names the agent wrote as slash commands or in backticks are drawn in bold. The accent colour is not used for text: the explanation sections sit on the card's own background, with no fill.
+The CLI requires `what`, `problem`, `analogy`, `context`, `why`, `how`, `gains`, `losses`, `urgency`, `undo` and `risk`, and each option's `tradeoff`, `does`, `pros` and `cons`, so every card filed through it carries them all. Names the agent wrote as slash commands or in backticks are drawn in bold. The accent colour is not used for text: the explanation sections sit on the card's own background, with no fill.
+
+</details>
 
 ### Risk label
 
@@ -222,7 +310,7 @@ The risk label is the risk of accepting the recommended option, as the agent jud
 
 - Each option button shows its key letter and answers to it in lower case: `a` picks A, `b` picks B, and so on, on the terminal and on the desktop.
 - **Other…** takes the letter after the last option (`c` with two options, drawn as `C · Other…`).
-- Back, Next and Submit all take `z`, `x` and `w` on the terminal, and `p`, `f` and `w` on the desktop. On the terminal the labels show the letter: `← Back (z)`, `Next → (x)` and `Submit all (N) (w)`.
+- Back, Next and Submit all take `z`, `x` and `w` on the terminal, and `p`, `f` and `w` on the desktop, where `z` and `x` are spares when an option already uses one of those letters. On the terminal the labels show the letter: `← Back (z)`, `Next → (x)` and `Submit all (N) (w)`.
 - There is no `e` key: the card always shows its details. A letter that one of the card's options uses is skipped, and the keys shift to the next free letters of the same list.
 - For dictation, say a nav key by its letter: `p` (Back), `f` (Next) or `w` (Submit all) on the desktop.
 - The band's **Answer** button keeps hotkey `1`.
@@ -367,54 +455,81 @@ The state folder belongs to one user, and every Claude Code session that runs as
 - **Prune:** at most once a day, `deliver` removes closed items (delivered or expired) settled more than `ASKAWAY_PRUNE_DAYS` days ago (default 30), and stale temporary files.
 - **The CLI and the hooks write only inside the state folder.** Each file is written to a temporary file first and then renamed. Nothing is sent over the network, and nothing is written to your projects or transcripts.
 
-## 🔒 Privacy
+## 🔒 Security and privacy
 
-- Questions, answers and delivery markers are plain JSON files in your state folder. The files never leave your machine. The answer text is injected into the asking session's prompt, so it reaches the model that session uses.
-- Askaway makes no network calls of its own.
-- Question text is whatever the agent wrote. Keep secrets out of it.
-- An answer that is still unread 7 days after you sent it is closed as expired. The check runs on demand in the hooks of any session, and it applies even if the asking session is still alive. An answer whose asking session Claude Desktop has released is closed at once, as soon as any session's hook runs.
+Report a vulnerability privately, not in a public issue. [SECURITY.md](SECURITY.md) has the reporting channel, the supported versions and the response time. The known limits of the single-user state folder are in the [Security](plugins/askaway/SPEC.md#security) and [Panel credential](plugins/askaway/SPEC.md#panel-credential) sections of the spec.
 
-
-## 🔒 Security
-
-Report a vulnerability privately, not in a public issue. [SECURITY.md](SECURITY.md) has the reporting channel, the supported versions and the response time.
-
-The known limits of the single-user state folder are in the [Security](plugins/askaway/SPEC.md#security) and [Panel credential](plugins/askaway/SPEC.md#panel-credential) sections of the spec. The Bash guard is a deterrent, not a guarantee (see [What it is](#-what-it-is)).
+- **What leaves the machine:** nothing. Questions, answers and delivery markers are plain JSON files in your state folder, and Askaway makes no network calls of its own. The answer text is injected into the asking session's prompt, so it reaches the model that session uses.
+- **Paid calls:** none. Askaway makes no network calls, so it makes no paid ones.
+- **Question text** is whatever the agent wrote. Keep secrets out of it.
+- **Expiry:** an answer that is still unread 7 days after you sent it is closed as expired. The check runs on demand in the hooks of any session, and it applies even if the asking session is still alive. An answer whose asking session Claude Desktop has released is closed at once, as soon as any session's hook runs.
+- **The Bash guard is a deterrent, not a guarantee** (see [Why it exists](#-why-it-exists)).
 
 ## 🩺 Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| No band button and no toast | No question is open, or this Claude Code version does not load mods | Run `/askaway`. If it is unavailable, check the Claude Code version (see Requirements). |
+| No band button and no toast | No question is open, or this Claude Code version does not load mods | Run `/askaway`. If it is unavailable, check the Claude Code version (see Prerequisites). |
 | The CLI prints `"action": "refile"` with an `error` | The entry is invalid or incomplete, for example a field is missing, `fit` is not an integer 0-100, or there are fewer than two options | Complete the fields named in `error` and file the question again. |
 | The CLI prints `"error": "internal error"` | An internal failure; nothing was filed | Continue on the recommended option and report the error text. |
 | The panel is in the wrong language | The locale variables say otherwise | Run `/askaway lang en` or `/askaway lang pt-BR`. |
 | An answer never reaches the session | The session has not read it yet, or the answer expired unread after 7 days | Check it with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" status <id>`; the status line in the panel shows the delivery state. |
 | The CLI prints `"error": "answer refused: ..."` | A `cli` answer to a question of another session, or from a shell with no session id | Answer from the Askaway panel, or from the session that asked. |
 
+## 🐞 Known issues
+
+No open issue carries the `bug` label as of 2026-10-21 (`gh issue list -R KeepGlide/askaway --state open --label bug`). These limitations come from the code, the CHANGELOG and this page:
+
+- **Windows is not handled.** The Claude Desktop session folder is `~/.config/Claude/claude-code-sessions` on every platform except macOS (`scripts/askaway.py:127-128`), so on Windows it points at a folder Claude Desktop does not use. It is not tested there. Workaround: none.
+- **Desktop Groups on macOS may need the config path set.** The default config path is `~/.config/Claude/claude_desktop_config.json` on every platform (`hooks/register.tsx:266`). If Desktop Groups are missing on macOS, set `ASKAWAY_DESKTOP_CONFIG` to the config file's path. Questions still group by family or project.
+- **Early access API.** The mod API moves between Claude Code releases, so a newer Claude Code can change the panel before Askaway follows. Workaround: stay on the tested Claude Code 2.1.296, or roll back to a tagged version ([Pin and roll back](#pin-and-roll-back)).
+- **A Codex run cannot be paused.** Nothing holds a Codex run, so its script must wait for the answer itself. Workaround: [From Codex](#-from-codex).
+- **The Bash guard is a deterrent.** It denies `askaway.py answer` in an agent's own Bash call, but the panel's CLI call is not a tool call and the hook does not see it. The CLI also trusts `CLAUDE_CODE_SESSION_ID`, and a process of the same user that can write the state folder can mint a panel token ([SECURITY.md](SECURITY.md#known-limits)). Workaround: one login per state folder.
+- **The `who` name is declared, not verified.** Anyone who can type a name can sign an answer with it ([Configuration](#%EF%B8%8F-configuration)). Workaround: give each person their own login.
+
+Found one? [Open an issue](https://github.com/KeepGlide/askaway/issues/new).
+
 ## 🧪 Tests
 
 | Category | Tests |
 |---|---|
 | Mod (TypeScript), `plugins/askaway/tests/` | 469 |
-| CLI and hooks (Python), `plugins/askaway/scripts/tests/` | 899 |
+| CLI and hooks (Python), `plugins/askaway/scripts/tests/` | 901 |
 
-Counts from `claude plugin test plugins/askaway` (469 pass, 0 fail) and `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts` (899 tests), on 2026-10-21.
+Python count from `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts`, at commit `f29c76d`, 2026-10-21. The mod count is from a fresh run of `claude plugin test plugins/askaway` at the same commit (the runner has no collection mode).
 
 ## 🔧 Development
 
-The tests and the layout of the repository are in [CONTRIBUTING.md](CONTRIBUTING.md). The mod tests run with `claude plugin test plugins/askaway`; the CLI tests with `pytest`.
+The tests and the layout of the repository are in [CONTRIBUTING.md](CONTRIBUTING.md). Run the mod tests from the repository root:
+
+```bash
+claude plugin test plugins/askaway
+```
+
+Run the CLI and hooks tests (they need `pytest`: `python3 -m pip install pytest`):
+
+```bash
+cd plugins/askaway/scripts && python3 -m pytest tests -q
+```
+
+Lint is the Biome 2.x gate, from the repository root:
+
+```bash
+biome lint plugins/askaway
+```
 
 ## 📝 Changelog
 
-The changes of each version are in [CHANGELOG.md](CHANGELOG.md), in the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
+The changes of each version are in [CHANGELOG.md](CHANGELOG.md), in the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. Askaway follows [Semantic Versioning](https://semver.org/).
 
 ## 🤝 Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for how to run the two test suites and where things live.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for how to run the two test suites and where things live. Pull requests are welcome: branch from `main` as `<type>/<scope>-<slug>`, keep one change per branch, and keep `README.md` and `README.pt-BR.md` in step. Report bugs as issues; report vulnerabilities privately ([SECURITY.md](SECURITY.md)).
+
+## 🧑‍🔧 Maintainer
+
+Made by [Sophia Phillipa](https://github.com/sophia-phillipa) at [KeepGlide](https://keepglide.com). Questions and bugs go to [GitHub issues](https://github.com/KeepGlide/askaway/issues); vulnerabilities go through [SECURITY.md](SECURITY.md).
 
 ## 📄 License
 
-Askaway is released under the [MIT License](LICENSE).
-
-Made by [Sophia Phillipa](https://github.com/sophia-phillipa) at [KeepGlide](https://keepglide.com).
+Askaway is released under the [MIT License](LICENSE) (SPDX `MIT`). Copyright (c) 2026 Sophia Phillipa (KeepGlide).

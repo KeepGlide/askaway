@@ -5,6 +5,11 @@ All notable changes to Askaway are recorded here, newest first. The format follo
 `plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.37, set by the beta.37 release commit.
 Commit hashes name the change in `git log`.
 
+## [Unreleased]
+
+### Changed
+- The README pair follows the KeepGlide README standard: banner, badges, contents, status, screenshots, known issues, uninstall and maintainer sections (`README.md`, `README.pt-BR.md`).
+
 ## [0.4.0-beta.37] - 2026-10-21
 
 On macOS, Claude Desktop keeps its sessions under `~/Library/Application Support`, so the tree and the History found no session there and grouped nothing.

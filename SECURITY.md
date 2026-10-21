@@ -6,7 +6,7 @@ Askaway is pre-stable (`0.y.z`). Fixes land on the latest `0.4.0` beta.
 
 | Version | Supported |
 | ------- | --------- |
-| `0.4.0-beta.36` (latest `0.4.0` beta) | ✅ |
+| `0.4.0-beta.37` (latest `0.4.0` beta) | ✅ |
 | Older `0.4.0` betas and earlier `0.x` releases | ❌ |
 
 ## Reporting a vulnerability
@@ -23,5 +23,5 @@ Askaway keeps its state in one folder for one user. These limits are known and d
 
 - The CLI trusts the `CLAUDE_CODE_SESSION_ID` environment variable to decide which session is the caller. A process that sets it can act as that session's agent on the state folder.
 - Any process of the same user that can write the state folder can mint a panel token. The panel credential is a second layer behind the Bash guard, not isolation ([spec](plugins/askaway/SPEC.md#panel-credential)).
-- The Bash guard is a deterrent, not a guarantee: the panel calls the CLI itself, which is not a tool call ([README](README.md#-what-it-is)).
+- The Bash guard is a deterrent, not a guarantee: the panel calls the CLI itself, which is not a tool call ([README](README.md#-why-it-exists)).
 - Askaway makes no network calls of its own.
