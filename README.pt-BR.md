@@ -21,7 +21,7 @@ Um cartão de pergunta aparece no painel do Askaway para cada decisão que um ag
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Acesso antecipado (0.4.0-beta.31):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável. As mudanças desta versão estão listadas no [CHANGELOG.md](CHANGELOG.md).
+> ⚠️ **Acesso antecipado (0.4.0-beta.32):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável. As mudanças desta versão estão listadas no [CHANGELOG.md](CHANGELOG.md).
 
 ## 💡 O que é
 
@@ -186,7 +186,7 @@ Enquanto há perguntas abertas, uma faixa fica acima do prompt: `2 perguntas agu
 1. Aperte `1` com o prompt vazio, ou clique em **Responder** na faixa, para abrir o painel. O cabeçalho mostra o logo do Askaway, o título **Perguntas aguardando** e o contador, como `2 pendentes · 1 grupo`.
 2. A árvore lista cada família de sessões com perguntas abertas, uma abaixo da outra, com o título da sessão raiz em negrito. As perguntas da própria sessão raiz ficam logo abaixo desse título (o título nunca se repete como linha de sessão); embaixo delas, as sessões derivadas da família (`├` ou `└`) guardam as suas perguntas. Uma marca mostra em que ponto está cada pergunta: `●` a que está na tela, `○` aguardando. Uma pergunta com opção escolhida mostra depois do texto `✓ - ▪ Enviar resposta`: esse **Enviar resposta** manda só a resposta dela, na hora, e o cartão fica na pergunta que está na tela; as demais escolhas esperam o **Enviar tudo**, que volta o cartão para a primeira pergunta do grupo. Nada é enviado antes de um dos dois. Os nomes de família e de sessão são texto, não botões; cada linha de pergunta é um link, desenhado pontilhado e sublinhado no Desktop, e apertar uma leva ao cartão dela.
 3. Clique numa opção para registrá-la. O painel avança para a próxima pergunta sem resposta, voltando ao início se preciso, ou para a última pergunta quando todas já têm resposta. Nada é enviado ainda.
-4. Para responder com as suas palavras, o campo embaixo de **Outra…** fica sempre aberto: clique nele e digite. Aperte Enter (o botão do campo diz **Guardar**) para registrar o texto como sua resposta; o cartão fica onde está, então aperte **Próxima** ou **Enviar tudo** quando quiser. O texto também é registrado quando o campo perde o foco e em **Enviar tudo**. Um campo em branco tira a resposta. O link **Outra…** só leva o foco ao campo.
+4. Para responder com as suas palavras, o campo embaixo de **Outra…** fica sempre aberto: clique nele e digite. Aperte Enter (o botão do campo diz **Aplicar**) para registrar o texto como sua resposta; o cartão fica onde está, então aperte **Próxima** ou **Enviar tudo** quando quiser. O texto também é registrado quando o campo perde o foco e em **Enviar tudo**. Um campo em branco tira a resposta. O link **Outra…** só leva o foco ao campo.
 5. **← Voltar** vai para a pergunta anterior. **Próxima →** vai para a seguinte, com ou sem resposta. Ele aparece em todas as perguntas, menos na última.
 6. Na última pergunta do grupo, o botão de avançar é **Enviar tudo (N)**, em que N é o número de perguntas do grupo na tela. Ele só fica disponível quando todas as perguntas têm resposta. Ao apertá-lo, todas as respostas do grupo vão para as sessões que perguntaram. Nada é enviado antes desse botão.
 
@@ -310,7 +310,7 @@ Todo comando imprime uma linha JSON, exceto `export`, que imprime o seu document
 | `list [--open ou --answered] [--since <quando>]` | Lista as perguntas com o estado. `--since` precisa de `--answered` e mantém as respostas dadas desde `<quando>`. |
 | `wait <id> [--timeout 300] [--strict]` | Consulta a cada 0,5 s até a resposta existir, e então imprime `"status": "answered"` com a chave, ou `"status": "timeout"` quando os segundos acabam. `--strict` sai com 0 quando respondida, 2 no timeout e 1 num erro; sem ele, um timeout sai com 0. Um id desconhecido sai com 1 de qualquer modo. |
 | `export [--since <quando>] [--format json, jsonl ou csv]` | Grava cada pergunta com a sua resposta, da mais nova para a mais antiga. `--since` mantém as perguntas feitas desde `<quando>`. |
-| `away on`, `away off` ou `away status` | Liga ou desliga o modo ausente, ou informa o estado. |
+| `away on`, `away off` ou `away status` | Liga ou desliga o modo ausente, ou informa o estado. O Bash do agente não consegue rodar `away on` nem `away off`: o guarda do Bash nega. Você liga ou desliga pelo painel ou por `/askaway away`. |
 | `prune [--days N] [--dry-run]` | Remove itens entregues e expirados mais antigos que N dias. O padrão é `ASKAWAY_PRUNE_DAYS`, senão 30. Com `--dry-run`, imprime os ids que removeria (`would_remove_ids`) e não remove nada. |
 
 O estado `damaged` quer dizer que o arquivo da pergunta não lê como objeto JSON; `damaged answer` quer dizer que o arquivo da resposta não lê, então a pergunta está respondida, mas a chave é desconhecida. As colunas do CSV de `export --format csv` são `asked_at`, `project`, `title`, `recommended`, `answered_key`, `label`, `who`, `by`, `answered_at`, `delivered` e `id`.
@@ -394,10 +394,10 @@ Os limites conhecidos da pasta de estado de um só usuário estão nas seções 
 
 | Categoria | Testes |
 |---|---|
-| Mod (TypeScript), `plugins/askaway/tests/` | 410 |
-| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 800 |
+| Mod (TypeScript), `plugins/askaway/tests/` | 424 |
+| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 842 |
 
-Contagens de `claude plugin test plugins/askaway` (410 passam, 0 falham) e `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts` (800 testes), em 2026-10-21.
+Contagens de `claude plugin test plugins/askaway` (424 passam, 0 falham) e `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts` (842 testes), em 2026-10-21.
 
 ## 🔧 Desenvolvimento
 

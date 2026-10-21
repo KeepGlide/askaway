@@ -21,7 +21,7 @@ A question card appears in the Askaway panel for each decision an agent filed wh
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Early access (0.4.0-beta.31):** the mod API moves between Claude Code releases, so expect changes until a stable release. The changes of this version are listed in [CHANGELOG.md](CHANGELOG.md).
+> ⚠️ **Early access (0.4.0-beta.32):** the mod API moves between Claude Code releases, so expect changes until a stable release. The changes of this version are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## 💡 What it is
 
@@ -186,7 +186,7 @@ While questions are open, a band sits above the prompt: `2 questions waiting · 
 1. Press `1` from an empty prompt, or click **Answer** on the band, to open the pane. The header shows the Askaway logo, the heading **Questions waiting** and the counter, such as `2 pending · 1 group`.
 2. The tree lists every session family with open questions, one under the other, each family's root title in bold. The questions of the root session itself sit right under that title (the title is never repeated as a session row); under them, the family's derived sessions (`├` or `└`) hold their questions. A mark shows where each question stands: `●` the one on screen, `○` waiting. A question with a picked option shows `✓ - ▪ Submit Answer` after its text: that **Submit Answer** sends only that question's answer, at once, and the card stays on the question on screen; the other picks wait for **Submit all**, which still returns the card to the group's first question. Nothing is sent until one of them is pressed. Family and session names are text, not buttons; each question row is a link, drawn dotted and underlined on the Desktop, and pressing one jumps to its card.
 3. Click an option to record it. The pane moves to the next question without an answer, wrapping to the start if needed, or to the last question once every question has one. Nothing is sent yet.
-4. For your own answer, the field under **Other…** is always open: click into it and type. Press Enter (the field's button reads **Keep**) to record the text as your answer; the card stays where it is, so press **Next** or **Submit all** when you are ready. The text is also recorded when the field loses focus and on **Submit all**. A blank field takes the answer away. The **Other…** link only moves the focus to the field.
+4. For your own answer, the field under **Other…** is always open: click into it and type. Press Enter (the field's button reads **Apply**) to record the text as your answer; the card stays where it is, so press **Next** or **Submit all** when you are ready. The text is also recorded when the field loses focus and on **Submit all**. A blank field takes the answer away. The **Other…** link only moves the focus to the field.
 5. **← Back** goes to the previous question. **Next →** goes to the next one, with or without an answer. It is on every question but the last.
 6. On the group's last question, the forward button is **Submit all (N)**, where N is the number of questions of the group on screen. It is pressable only once every question has an answer. Pressing it sends every answer of the group to the sessions that asked. Nothing is sent before this button.
 
@@ -310,7 +310,7 @@ Every command prints one JSON line, except `export`, which prints its document. 
 | `list [--open or --answered] [--since <when>]` | Lists the questions with their status. `--since` needs `--answered` and keeps the answers given since `<when>`. |
 | `wait <id> [--timeout 300] [--strict]` | Polls every 0.5 s until the answer exists, then prints `"status": "answered"` with its key, or `"status": "timeout"` when the seconds run out. `--strict` exits 0 when answered, 2 on timeout and 1 on an error; without it, a timeout exits 0. An unknown id exits 1 either way. |
 | `export [--since <when>] [--format json, jsonl or csv]` | Writes every question with its answer, newest first. `--since` keeps the questions asked since `<when>`. |
-| `away on`, `away off` or `away status` | Turns away mode on or off, or reports it. |
+| `away on`, `away off` or `away status` | Turns away mode on or off, or reports it. The agent's Bash cannot run `away on` or `away off`: the Bash guard denies them. You switch it from the panel or with `/askaway away`. |
 | `prune [--days N] [--dry-run]` | Removes delivered and expired items older than N days. The default is `ASKAWAY_PRUNE_DAYS`, else 30. With `--dry-run`, it prints the ids it would remove (`would_remove_ids`) and removes nothing. |
 
 The `damaged` status means the question file does not read as a JSON object; `damaged answer` means the answer file does not read, so the question is answered but its key is unknown. The CSV columns of `export --format csv` are `asked_at`, `project`, `title`, `recommended`, `answered_key`, `label`, `who`, `by`, `answered_at`, `delivered` and `id`.
@@ -394,10 +394,10 @@ The known limits of the single-user state folder are in the [Security](plugins/a
 
 | Category | Tests |
 |---|---|
-| Mod (TypeScript), `plugins/askaway/tests/` | 410 |
-| CLI and hooks (Python), `plugins/askaway/scripts/tests/` | 800 |
+| Mod (TypeScript), `plugins/askaway/tests/` | 424 |
+| CLI and hooks (Python), `plugins/askaway/scripts/tests/` | 842 |
 
-Counts from `claude plugin test plugins/askaway` (410 pass, 0 fail) and `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts` (800 tests), on 2026-10-21.
+Counts from `claude plugin test plugins/askaway` (424 pass, 0 fail) and `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts` (842 tests), on 2026-10-21.
 
 ## 🔧 Development
 
