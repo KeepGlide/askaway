@@ -52,7 +52,8 @@ export type HistoryEntry = { id: string; title: string; session?: string; line: 
 // session of the rows' question (desktop_session), the link its row carries where it is known.
 export type HistorySession = { key: string; label: string; isRoot: boolean; href?: string; entries: HistoryEntry[] }
 // A family (or the fallback group of answers whose question is gone) with its sessions, in the order of its newest answer.
-// `href`: the family root's Desktop session (family), the link the group's label carries where the group is a family.
+// `href`: the family root's Desktop session (family), the link the group's label carries where the group is a family and not
+// a Desktop group (a Desktop group is named by its name, never linked to one of its families).
 export type HistoryGroup = { key: string; label: string; href?: string; sessions: HistorySession[] }
 export type StatusContext = {
   cleared: readonly string[]
@@ -457,18 +458,57 @@ export const escapeMarkdown = (text: string): string =>
 
 // Whether the question's session is the root of its family: its Desktop session (`desktop_session`, local_<uuid>) is the
 // family root (`family`, the same kind of id). The CLI session id (`session`) is never compared: it is a plain uuid. A
-// record filed before `desktop_session` existed counts as the root when its session title is its family title.
+// record filed before `desktop_session` existed counts as the root when its session title is its family title. A question in a
+// Desktop group is never a root: its group is named by the group, not by the family title, so its session draws its own row.
 export function isRootSession(
-  question: Pick<Question, 'desktop_session' | 'family' | 'session_title' | 'family_title'> | undefined,
-  groupKey: string,
+  question: Pick<Question, 'desktop_session' | 'family' | 'session_title' | 'family_title' | 'desktop_group'> | undefined,
 ): boolean {
-  if (question?.family === undefined) return false
-  if (question.desktop_session !== undefined) return question.desktop_session === groupKey
+  if (question?.family === undefined || question.desktop_group !== undefined) return false
+  if (question.desktop_session !== undefined) return question.desktop_session === question.family
   return question.session_title !== undefined && question.session_title === question.family_title
 }
 
-export function groupKeyOf(question: Pick<Question, 'project' | 'family'>): string {
-  return question.family ?? question.project
+// The Desktop sidebar groups, read from the Desktop config (claude_desktop_config.json): each group's name by its id, and the
+// group each Desktop session (local_<id>) is filed under. A config of any other shape names none.
+export type DesktopGroups = { names: ReadonlyMap<string, string>; assignments: ReadonlyMap<string, string> }
+export const NO_DESKTOP_GROUPS: DesktopGroups = { names: new Map(), assignments: new Map() }
+const DESKTOP_CODE_PREFIX = 'code:'
+
+export function parseDesktopGroups(config: unknown): DesktopGroups {
+  const scopes =
+    isRecord(config) && isRecord(config.preferences) && isRecord(config.preferences.epitaxyPrefs)
+      ? config.preferences.epitaxyPrefs['dframe-group-scopes']
+      : undefined
+  if (!isRecord(scopes)) return NO_DESKTOP_GROUPS
+  const names = new Map<string, string>()
+  const assignments = new Map<string, string>()
+  for (const scope of Object.values(scopes)) {
+    if (!isRecord(scope)) continue
+    for (const group of Array.isArray(scope.groups) ? scope.groups : []) {
+      if (isRecord(group) && typeof group.id === 'string' && typeof group.name === 'string') names.set(group.id, group.name)
+    }
+    if (!isRecord(scope.assignments)) continue
+    for (const [key, groupId] of Object.entries(scope.assignments)) {
+      if (key.startsWith(DESKTOP_CODE_PREFIX) && typeof groupId === 'string') assignments.set(key.slice(DESKTOP_CODE_PREFIX.length), groupId)
+    }
+  }
+  return { names, assignments }
+}
+
+// The question with its Desktop group set: the group of its session, else of its family root, when the config names one. The
+// question file never holds the group, so the copy is made here; a question with no group is returned as it is.
+export function withDesktopGroup(question: Question, groups: DesktopGroups): Question {
+  const sessionGroup = question.desktop_session === undefined ? undefined : groups.assignments.get(question.desktop_session)
+  const familyGroup = question.family === undefined ? undefined : groups.assignments.get(question.family)
+  const groupId = sessionGroup ?? familyGroup
+  const name = groupId === undefined ? '' : singleLine(groups.names.get(groupId) ?? '')
+  return groupId === undefined || name === '' ? question : { ...question, desktop_group: { id: groupId, name } }
+}
+
+// The key of a question's group: its Desktop sidebar group when the config names one, else its session family (the Claude
+// Desktop root session), else its project. Old questions carry no family and keep the project grouping.
+export function groupKeyOf(question: Pick<Question, 'project' | 'family' | 'desktop_group'>): string {
+  return question.desktop_group?.id ?? question.family ?? question.project
 }
 
 // The name of a project: its folder name, title-cased from its slug ("my-sample_project" becomes "My Sample Project").
@@ -522,9 +562,11 @@ export function questionLabel(question: Question): string {
   return clipText(singleLine(question.question), TITLE_MAX)
 }
 
-// The name of a group: the title of its session family's root, title-cased, when its oldest question has one. Else the
-// project's name, or the words for "the session" when the project is unknown (questions with no family, or no question).
+// The name of a group: its Desktop sidebar group's name when the config names one; else the title of its session family's
+// root, title-cased, when its oldest question has one. Else the project's name, or the words for "the session" when the
+// project is unknown (questions with no family, or no question).
 export function groupLabelOf(question: Question | undefined, lang: Lang): string {
+  if (question?.desktop_group !== undefined) return question.desktop_group.name
   if (question?.family_title !== undefined) return titleCase(question.family_title, lang)
   return projectLabel(question?.project ?? '', lang) || t(lang, 'status.target.session')
 }
@@ -614,8 +656,9 @@ function placeEntry(groups: Map<string, HistoryBuild>, lang: Lang, question: Que
   const group = groups.get(groupKey) ?? {
     key: groupKey,
     label: groupLabelOf(question, lang),
-    // Only a well-formed Desktop id (local_<uuid>) becomes a link: `family` is stored as written.
-    href: desktopSessionOf(question?.family),
+    // Only a well-formed Desktop id (local_<uuid>) becomes a link, and only when the group is a family: a Desktop group is
+    // named by the group, so its header is never a link to one family root (`family` is stored as written).
+    href: question?.desktop_group === undefined ? desktopSessionOf(question?.family) : undefined,
     sessions: new Map(),
   }
   groups.set(groupKey, group)
@@ -623,7 +666,7 @@ function placeEntry(groups: Map<string, HistoryBuild>, lang: Lang, question: Que
   const session = group.sessions.get(sessionKey) ?? {
     key: sessionKey,
     label: sessionLabelOf({ session_title: question?.session_title }, lang),
-    isRoot: isRootSession(question, groupKey),
+    isRoot: isRootSession(question),
     href: question?.desktop_session,
     entries: [],
   }

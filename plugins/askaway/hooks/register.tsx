@@ -38,6 +38,10 @@ import {
   withAnswer,
   withLocalAnswers,
   damagedPauseOf,
+  NO_DESKTOP_GROUPS,
+  parseDesktopGroups,
+  withDesktopGroup,
+  type DesktopGroups,
 } from './model'
 import * as flow from './wizard'
 import type { Group, Pick, Wizard } from './wizard'
@@ -242,13 +246,65 @@ async function readCached<T>(
   return { found, ids }
 }
 
+// The Desktop config (claude_desktop_config.json) and its sidebar groups. It is read only when its mtime changes (the folder
+// listing gives it). ASKAWAY_DESKTOP_CONFIG overrides its path, as the tests use it. A file that is not there names no group,
+// and the tree draws as before. A file over DESKTOP_CONFIG_MAX_BYTES, one that cannot be read or parsed, or a folder whose
+// listing fails keeps the last good groups: the board never empties on one failed read, and nothing is reported (fail open).
+// The cache is written only on a successful read.
+const DESKTOP_CONFIG_MAX_BYTES = 4 * 1024 * 1024
+let desktopConfigCache: { path: string; mtimeMs: number; groups: DesktopGroups } | undefined
+
+// Forgets the cached config, so the next poll reads it again. The tests call it before each host starts.
+export function resetDesktopConfigCache(): void {
+  desktopConfigCache = undefined
+}
+
+async function desktopConfigPathOf($: EngineInterface): Promise<string | undefined> {
+  const custom = await $.env.get('ASKAWAY_DESKTOP_CONFIG')
+  if (custom) return custom
+  const home = await $.env.get('HOME')
+  return home ? `${home}/.config/Claude/claude_desktop_config.json` : undefined
+}
+
+// The listing entry of a file in its folder, undefined when the file is not there. A failed listing rejects: that is an error,
+// not an absent file.
+async function desktopConfigEntryOf($: EngineInterface, path: string): Promise<{ mtimeMs: number; size: number } | undefined> {
+  const slash = path.lastIndexOf('/')
+  const entries = await $.fs.list(path.slice(0, slash))
+  const entry = entries.find(one => one.kind === 'file' && one.name === path.slice(slash + 1))
+  return entry === undefined ? undefined : { mtimeMs: entry.mtimeMs, size: entry.size }
+}
+
+const lastDesktopGroups = (): DesktopGroups => desktopConfigCache?.groups ?? NO_DESKTOP_GROUPS
+
+async function readDesktopGroups($: EngineInterface): Promise<DesktopGroups> {
+  try {
+    const path = await desktopConfigPathOf($)
+    const entry = path === undefined ? undefined : await desktopConfigEntryOf($, path)
+    if (path === undefined || entry === undefined) {
+      desktopConfigCache = undefined
+      return NO_DESKTOP_GROUPS
+    }
+    if (desktopConfigCache?.path === path && desktopConfigCache.mtimeMs === entry.mtimeMs) return desktopConfigCache.groups
+    if (entry.size > DESKTOP_CONFIG_MAX_BYTES) return lastDesktopGroups()
+    const config = parseJsonText(await $.fs.read(path))
+    if (config === undefined) return lastDesktopGroups()
+    const groups = parseDesktopGroups(config)
+    desktopConfigCache = { path, mtimeMs: entry.mtimeMs, groups }
+    return groups
+  } catch {
+    return lastDesktopGroups()
+  }
+}
+
 // The board, and the ids of the reply files listed in a/ (an unreadable one included), so a poll lists that folder once.
 async function readBoard($: EngineInterface, home: string): Promise<{ board: Board; answerFileIds: string[]; damagedPauses: string[] }> {
   const questions = await readCached($, `${home}/q`, questionCache, parseQuestion)
   const answers = await readCached($, `${home}/a`, answerCache, parseAnswer)
   const delivered = await readCached($, `${home}/d`, deliveryCache, parseDelivery)
+  const groups = await readDesktopGroups($)
   return {
-    board: { questions: questions.found, answers: answers.found, delivered: delivered.found },
+    board: { questions: questions.found.map(question => withDesktopGroup(question, groups)), answers: answers.found, delivered: delivered.found },
     answerFileIds: answers.ids,
     damagedPauses: await damagedPausesOf($, home, questions, answers.ids, delivered.ids),
   }

@@ -219,7 +219,7 @@ function renderGroup(tree: TreeContext, group: Group): RenderElement {
         {
           key: `session-${first.id}`,
           label: sessionLabelOf(first, tree.lang),
-          isRoot: isRootSession(first, group.key),
+          isRoot: isRootSession(first),
           rows: questions.map(question => (place: RowPlace) => renderTreeQuestion(tree, question, place)),
         },
       ]

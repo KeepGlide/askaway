@@ -47,6 +47,9 @@ export type Question = {
   // questions filed before they existed; the tree then groups by project.
   family?: string
   family_title?: string
+  // The Desktop sidebar group of the asking session (its id and name), set by the pane from the Desktop config (withDesktopGroup);
+  // the question file never holds it. Absent when the config names no group for the session or its family.
+  desktop_group?: { id: string; name: string }
   options: QuestionOption[]
   recommended: string
   risk: string
