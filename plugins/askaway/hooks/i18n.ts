@@ -29,9 +29,6 @@ const EN = {
   'age.days': '{n} d ago',
   'status.target.session': 'the session',
   'history.heading': 'History',
-  'history.answer': 'Answer {key}',
-  'history.answerOther': 'Answer {key} (Other: "{text}")',
-  'history.answerOtherOnly': 'Answer (Other: "{text}")',
   'history.sent': 'sent {time}',
   'history.delivered': 'delivered {time}',
   'history.readBySession': 'read by the session',
@@ -101,7 +98,7 @@ const EN = {
   'footer.answered.none': 'none answered in the last 24 h',
   'footer.answered.one': '1 answered in the last 24 h',
   'footer.answered.many': '{n} answered in the last 24 h',
-  'footer.last': 'last: {title} → {key}, {age}',
+  'footer.last': 'last: {title} → {label}, {age}',
   'footer.unread.one': '1 not yet read',
   'footer.unread.many': '{n} not yet read',
   'footer.expired.one': '{n} expired',
@@ -114,7 +111,6 @@ const EN = {
   'urgency.grade.low': 'low',
   'urgency.grade.medium': 'medium',
   'urgency.grade.high': 'high',
-  'footer.otherKey': 'Other',
 } as const
 
 export type MessageKey = keyof typeof EN
@@ -139,9 +135,6 @@ const PT: Record<MessageKey, string> = {
   'age.days': 'há {n} d',
   'status.target.session': 'a sessão',
   'history.heading': 'Histórico',
-  'history.answer': 'Resposta {key}',
-  'history.answerOther': 'Resposta {key} (Outra: "{text}")',
-  'history.answerOtherOnly': 'Resposta (Outra: "{text}")',
   'history.sent': 'enviada {time}',
   'history.delivered': 'entregue {time}',
   'history.readBySession': 'lida pela sessão',
@@ -211,7 +204,7 @@ const PT: Record<MessageKey, string> = {
   'footer.answered.none': 'nenhuma respondida nas últimas 24 h',
   'footer.answered.one': '1 respondida nas últimas 24 h',
   'footer.answered.many': '{n} respondidas nas últimas 24 h',
-  'footer.last': 'última: {title} → {key}, {age}',
+  'footer.last': 'última: {title} → {label}, {age}',
   'footer.unread.one': '1 ainda não lida',
   'footer.unread.many': '{n} ainda não lidas',
   'footer.expired.one': '{n} expirada',
@@ -224,7 +217,6 @@ const PT: Record<MessageKey, string> = {
   'urgency.grade.low': 'baixa',
   'urgency.grade.medium': 'média',
   'urgency.grade.high': 'alta',
-  'footer.otherKey': 'Outra',
 }
 
 export const MESSAGES: Readonly<Record<Lang, Readonly<Record<MessageKey, string>>>> = { en: EN, pt: PT }

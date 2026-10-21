@@ -26,14 +26,13 @@ export const OTHER_KEY = 'other'
 export const PROMPT_DELAY_MS = 5_000
 // An answer nobody has read for this long expires for every session (SPEC.md, the `ttl` reason), measured from its ts.
 export const ANSWER_TTL_MS = 7 * 24 * 60 * 60 * 1000
-// The footer counts the answers given in the last RECENT_MS, and cuts the last answer's title to FOOTER_TITLE_MAX characters.
+// The footer counts the answers given in the last RECENT_MS.
 const RECENT_MS = 24 * 60 * 60 * 1000
-const FOOTER_TITLE_MAX = 40
-// The longest quote of an Other answer on its History row, in code points; the reply file keeps the whole text.
-const HISTORY_QUOTE_MAX = 80
 // The longest free text an Other answer keeps and quotes, in code points (askaway.py's OTHER_TEXT_MAX). wizard.ts caps the
 // typed text at it too, on write.
 export const OTHER_TEXT_MAX = 500
+// The longest title the CLI writes, in code points (askaway.py's TITLE_MAX): a longer one is clipped to 59 characters and "…".
+const CLI_TITLE_MAX = 60
 const RISK_KEYS: ReadonlyMap<string, MessageKey> = new Map<string, MessageKey>([
   ['low', 'risk.low'],
   ['medium', 'risk.medium'],
@@ -45,8 +44,7 @@ export type Section = { heading: string; body: string }
 export type Leaving = Readonly<Partial<Record<string, number>>>
 // One answer's row of the History tree: its question's title and the line that says how the answer stands. The pane draws
 // the ○ of a waiting question row before every row; the line carries the state.
-// `session` is the Desktop session of the question (desktop_session), where the question is still known and has one.
-export type HistoryEntry = { id: string; title: string; session?: string; line: string }
+export type HistoryEntry = { id: string; title: string; line: string }
 // The answers of one session of a family, newest first.
 // `isRoot`: the session is the root of its family (its `desktop_session` is the group's `family`). `href`: the Desktop
 // session of the rows' question (desktop_session), the link its row carries where it is known.
@@ -537,9 +535,6 @@ function answerStatusOf(answer: Answer, delivery: Delivery | undefined, now: num
 
 const padTwoDigits = (value: number): string => String(value).padStart(2, '0')
 
-// The title line names a question by its title; a question with no title is named by its text, cut short.
-const TITLE_MAX = 24
-
 // The question as the pane draws it in `lang` (beta.34): the current language's translated fields replace the main ones, per
 // field and per option, and a field the translation leaves out keeps its main text. A question with no translation for `lang`
 // is returned as it is. Every draw of question text uses it; the model-facing deliveryLine never does.
@@ -554,12 +549,16 @@ export function localizedQuestion(question: Question, lang: Lang): Question {
   }
 }
 
-// The title of a question for the card, the tree, the footer and the toast: its title, else its text cut to TITLE_MAX
-// characters. One line always (singleLine), and cut by code points (clipText), so no line break or lone surrogate is drawn.
+// The title of a question for the card, the tree, the History, the footer and the toast, whole and never cut. The CLI clips a
+// title it writes from the question's text to CLI_TITLE_MAX code points, its last one "…": such a title reads as the whole
+// question when that question starts with it. A question with no title reads as its text. One line always (singleLine); long
+// text wraps.
 export function questionLabel(question: Question): string {
   const title = singleLine(question.title)
-  if (title !== '') return title
-  return clipText(singleLine(question.question), TITLE_MAX)
+  const text = singleLine(question.question)
+  const isClipped = title.endsWith('…') && Array.from(title).length === CLI_TITLE_MAX && text.startsWith(title.slice(0, -1))
+  if (title === '' || isClipped) return text
+  return title
 }
 
 // The name of a group: its Desktop sidebar group's name when the config names one; else the title of its session family's
@@ -586,16 +585,16 @@ function timeOf(timestamp: number, now: number): string {
   return `${padTwoDigits(date.getDate())}/${padTwoDigits(date.getMonth() + 1)} ${clockOf(timestamp)}`
 }
 
-// The answer as its History line names it: its key (Other… by its letter, with its free text when it has one).
-function answerLabelOf(lang: Lang, answer: Answer, question: Question | undefined): string {
-  if (answer.key !== OTHER_KEY) return t(lang, 'history.answer', { key: answer.key })
-  const letter = question === undefined ? undefined : otherLetterOf(question.options)?.toUpperCase()
-  const full = otherTextOf(answer)
-  const text = full === undefined ? undefined : clipText(full, HISTORY_QUOTE_MAX)
-  if (letter === undefined) {
-    return text === undefined ? t(lang, 'history.answer', { key: OTHER_KEY }) : t(lang, 'history.answerOtherOnly', { text })
+// The answer as its History row and footer name it: the label of the option it chose, in the pane's language; an Other reply
+// its whole typed text, in typographic quotes so it is told apart from an option label, or the Other label when it has none.
+// A key the question no longer lists (its question is gone) is drawn as its letter.
+function answerNameOf(lang: Lang, answer: Answer, question: Question | undefined): string {
+  if (answer.key === OTHER_KEY) {
+    const text = otherTextOf(answer)
+    return text === undefined ? t(lang, 'option.other') : `“${text}”`
   }
-  return text === undefined ? t(lang, 'history.answer', { key: letter }) : t(lang, 'history.answerOther', { key: letter, text })
+  const option = question === undefined ? undefined : localizedQuestion(question, lang).options.find(one => one.key === answer.key)
+  return option === undefined ? answer.key.toUpperCase() : singleLine(option.label)
 }
 
 // Who answered, when it was not the person: the agent itself, or the name a CLI answer carries (ANSWER_WORDING).
@@ -634,7 +633,7 @@ function historyEntryOf(
   now: number,
 ): HistoryEntry {
   const parts = [
-    answerLabelOf(lang, answer, question),
+    answerNameOf(lang, answer, question),
     answeredByOf(lang, answer),
     t(lang, 'history.sent', { time: timeOf(answer.ts, now) }),
     noteOf(lang, answer, delivery, now),
@@ -642,7 +641,6 @@ function historyEntryOf(
   return {
     id: answer.id,
     title: question === undefined ? t(lang, 'history.questionClosed') : questionLabel(localizedQuestion(question, lang)),
-    session: question?.desktop_session,
     line: parts.filter((part): part is string => part !== undefined).join(' · '),
   }
 }
@@ -729,26 +727,15 @@ export function footerText(lang: Lang, board: Board, now: number, cleared: reado
   return parts.filter((part): part is string => part !== undefined).join(' · ')
 }
 
-// The key an Other answer is named by in the footer: its letter, as the options draw theirs ("C · Other…"), or the word for
-// Other when the question is gone and its letter with it. Never the raw key, which is an English word in the pt-BR footer.
-const otherKeyOf = (lang: Lang, question: Question | undefined): string => {
-  const letter = question === undefined ? undefined : otherLetterOf(question.options)
-  return letter === undefined ? t(lang, 'footer.otherKey') : letter.toUpperCase()
-}
-
-// The last answer as the footer names it: its question's label (questionLabel) cut to FOOTER_TITLE_MAX characters (its id
-// when the question is gone), its key (an Other answer by its letter), and its age.
+// The last answer as the footer names it: its question's title whole (its id when the question is gone), the label of the
+// option it chose (an Other reply its typed text), and its age.
 function lastAnswerText(lang: Lang, answer: Answer, question: Question | undefined, now: number): string {
   const label = question === undefined ? '' : questionLabel(localizedQuestion(question, lang))
-  const name = clipText(label === '' ? answer.id : label, FOOTER_TITLE_MAX)
-  const key = answer.key === OTHER_KEY ? otherKeyOf(lang, question) : answer.key
-  return t(lang, 'footer.last', { title: name, key, age: ageLabel(lang, answer.ts, now) })
-}
-
-// The text cut to max code points, its last one an ellipsis.
-function clipText(text: string, max: number): string {
-  const chars = Array.from(text)
-  return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : text
+  return t(lang, 'footer.last', {
+    title: label === '' ? answer.id : label,
+    label: answerNameOf(lang, answer, question),
+    age: ageLabel(lang, answer.ts, now),
+  })
 }
 
 export const riskLabel = (lang: Lang, risk: string): string => {
@@ -815,7 +802,7 @@ export function listText(lang: Lang, questions: readonly Question[], isAway: boo
   const head = plural(lang, questions.length, 'list.head.one', 'list.head.many')
   const away = isAway ? t(lang, 'list.awayOn') : ''
   const rows = questions.map(question =>
-    t(lang, 'list.row', { id: question.id, title: localizedQuestion(question, lang).title, rec: question.recommended }),
+    t(lang, 'list.row', { id: question.id, title: questionLabel(localizedQuestion(question, lang)), rec: question.recommended }),
   )
   return [`${head}${away}.`, ...rows].join('\n')
 }

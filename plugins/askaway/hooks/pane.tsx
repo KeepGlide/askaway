@@ -299,7 +299,7 @@ function renderHistory(tree: TreeContext, history: readonly HistoryGroup[]): Ren
               label: session.label,
               isRoot: session.isRoot,
               href: linked ? session.href : undefined,
-              rows: session.entries.map(entry => (place: RowPlace) => renderHistoryEntry(tree.ui, entry, place, linked)),
+              rows: session.entries.map(entry => (place: RowPlace) => renderHistoryEntry(tree.ui, entry, place)),
             })),
           }),
         )}
@@ -308,24 +308,13 @@ function renderHistory(tree: TreeContext, history: readonly HistoryGroup[]): Ren
   )
 }
 
-// One answer's row, one line shaped as a picked row of the open tree: the ○ every history row carries, the question's
-// title, " ✓ - " and the answer line. Where `linked` (the Desktop) and the question's Desktop session is known, the title is
-// a link to that session (`#<desktop_session>`), which the surface opens itself, as the card's See session does.
-function renderHistoryEntry(ui: Ui, entry: HistoryEntry, place: RowPlace, linked: boolean): RenderElement {
+// One answer's row, one line of plain text: the ○ every history row carries, the question's whole title, " ✓ " and the answer
+// line (the option's label, then the times). No session link: the group's header above carries it. The text wraps, never cut.
+function renderHistoryEntry(ui: Ui, entry: HistoryEntry, place: RowPlace): RenderElement {
   const { Box, Text } = ui
-  const tail = ` ✓ - ${entry.line}`
-  if (!linked || entry.session === undefined || !('Markdown' in ui)) {
-    return (
-      <Box key={`history-${entry.id}`} paddingLeft={place.indent}>
-        <Text>{`${place.lead}○ ${entry.title}${tail}`}</Text>
-      </Box>
-    )
-  }
-  const { Markdown } = ui
-  const text = `${place.lead}○ [${escapeMarkdown(entry.title)}](#${entry.session})${escapeMarkdown(tail)}`
   return (
     <Box key={`history-${entry.id}`} paddingLeft={place.indent}>
-      <Markdown text={text} />
+      <Text>{`${place.lead}○ ${entry.title} ✓ ${entry.line}`}</Text>
     </Box>
   )
 }
