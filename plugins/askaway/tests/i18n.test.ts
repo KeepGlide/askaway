@@ -77,9 +77,8 @@ test('a stored language wins; anything else falls back to the detected one', () 
 test('t fills the named placeholders and keeps a placeholder with no value', () => {
   expect(t('en', 'history.sent', { time: '14:32' })).toBe('sent 14:32')
   expect(t('pt', 'history.sent', { time: '14:32' })).toBe('enviada 14:32')
-  expect(t('en', 'history.answerOther', { key: 'C', text: 'lavanda' })).toBe('Answer C (Other: "lavanda")')
-  expect(t('pt', 'history.answerOther', { key: 'C', text: 'lavanda' })).toBe('Resposta C (Outra: "lavanda")')
-  expect(t('en', 'history.answer', {})).toBe('Answer {key}')
+  expect(t('en', 'footer.last', { title: 'Pick', label: 'Keep', age: '1 min ago' })).toBe('last: Pick → Keep, 1 min ago')
+  expect(t('pt', 'footer.last', { title: 'Escolha', label: 'Keep', age: 'há 1 min' })).toBe('última: Escolha → Keep, há 1 min')
 })
 
 test('t reads a numeric value as its text', () => {

@@ -29,11 +29,11 @@ import {
   historyOf,
   titleCase,
   urgencyGradeOf,
- desktopSessionOf } from '../hooks/model'
+ desktopSessionOf, groupKeyOf, groupLabelOf, isRootSession, parseDesktopGroups, withDesktopGroup } from '../hooks/model'
 import { heldButtons } from '../hooks/held'
 import { placeUnder, renderPane, renderTreeQuestion } from '../hooks/pane'
 import { t } from '../hooks/i18n'
-import { writeAtomic } from '../hooks/register'
+import { resetDesktopConfigCache, writeAtomic } from '../hooks/register'
 import { ACCENT_COLOR, LINK_MARK, TEXT_CONTRAST, URGENCY_COLOR } from '../hooks/look'
 import type { Answer, Board } from '../types'
 
@@ -137,6 +137,10 @@ type Holds = {
   pruneExit?: number
   refusedReplyId?: string
   listed?: string[]
+  // The modification time (ms) of each file, as the listing of its folder reports it (mtimeMs); 0 when a file has none set.
+  mtimes?: Map<string, number>
+  // The size (bytes) of each file, as the listing reports it (size); 0 when a file has none set.
+  sizes?: Map<string, number>
   // A failing `install -m <mode>` (the panel token file), so the exit code the pane gets is this one.
   installExit?: number
   // The next prompt.submit fails. A hook that throws counts as skipped, so the host's own answer stands: with none, the
@@ -176,6 +180,8 @@ function stubHost(
   const tokenCalls: string[][] = []
   // The /askaway registrations in order: the description each one carries (M69).
   const registrations: { name: string; description: string }[] = []
+  // The Desktop config cache belongs to one host: a test starts with none, so no test reads another test's config.
+  resetDesktopConfigCache()
   const clock = mock.clock(on)
   mock.env(on, { HOME, LANG: 'pt_BR.UTF-8', ...env })
   mock.store(on, stored)
@@ -218,7 +224,7 @@ function stubHost(
     }
     const prefix = `${e.path}/`
     const names = [...files.keys()].filter(file => file.startsWith(prefix) && !file.slice(prefix.length).includes('/'))
-    const listing = names.map(file => ({ name: file.slice(prefix.length), kind: 'file' as const, size: 0, mtimeMs: 0, isLink: false }))
+    const listing = names.map(file => ({ name: file.slice(prefix.length), kind: 'file' as const, size: holds.sizes?.get(file) ?? 0, mtimeMs: holds.mtimes?.get(file) ?? 0, isLink: false }))
     if (e.path === `${STATE}/a`) await holds.listAnswers
     return { value: listing }
   })
@@ -470,7 +476,7 @@ test('model: the Other text and the who keep no raw control character, so the Hi
   }, { ...NO_STATUS, now: SAME_DAY_NOW }).flatMap(group => group.sessions.flatMap(session => session.entries.map(entry => entry.line)))
   expect(lines).toHaveLength(2)
   for (const line of lines) expect(line).not.toMatch(/\p{Cc}/u)
-  expect(lines).toContainEqual(expect.stringContaining('Answer C (Other: "x [31m y z")'))
+  expect(lines).toContainEqual(expect.stringContaining('“x [31m y z” · '))
   expect(lines).toContainEqual(expect.stringContaining('answered by Ana'))
 })
 
@@ -592,10 +598,10 @@ test('model: the History tree groups answers by family, then session, newest fir
   const tree = historyOf('en', board, { ...NO_STATUS, now: SAME_DAY_NOW })
   expect(tree.map(group => group.label)).toEqual(['App Family', 'the session'])
   expect(tree[0]?.sessions.map(session => session.label)).toEqual(['the session', 'Build App'])
-  expect(tree[0]?.sessions[0]?.entries.map(entry => entry.line)).toEqual(['Answer B · sent 14:35'])
+  expect(tree[0]?.sessions[0]?.entries.map(entry => entry.line)).toEqual(['Rewrite · sent 14:35'])
   expect(tree[0]?.sessions[1]?.entries.map(entry => entry.title)).toEqual(['Title q-h-000001'])
   expect(tree[1]?.sessions[0]?.entries).toEqual([
-    { id: 'q-h-000009', title: 'Question closed', session: undefined, line: 'Answer A · sent 13:58' },
+    { id: 'q-h-000009', title: 'Question closed', line: 'A · sent 13:58' },
   ])
 })
 
@@ -607,24 +613,64 @@ test('model: a delivered line reads its delivered time and "read by the session"
   }
   const lineOf = (lang: 'en' | 'pt', now: number, board: Board = delivered): string | undefined =>
     historyOf(lang, board, { ...NO_STATUS, now })[0]?.sessions[0]?.entries[0]?.line
-  expect(lineOf('en', SAME_DAY_NOW)).toBe('Answer A · sent 14:32 · delivered 14:33 (read by the session)')
-  expect(lineOf('pt', SAME_DAY_NOW)).toBe('Resposta A · enviada 14:32 · entregue 14:33 (lida pela sessão)')
-  expect(lineOf('en', localMs(10, 18, 9, 0))).toBe('Answer A · sent 17/10 14:32 · delivered 17/10 14:33 (read by the session)')
+  expect(lineOf('en', SAME_DAY_NOW)).toBe('Keep · sent 14:32 · delivered 14:33 (read by the session)')
+  expect(lineOf('pt', SAME_DAY_NOW)).toBe('Keep · enviada 14:32 · entregue 14:33 (lida pela sessão)')
+  expect(lineOf('en', localMs(10, 18, 9, 0))).toBe('Keep · sent 17/10 14:32 · delivered 17/10 14:33 (read by the session)')
   const withoutTime: Board = { ...delivered, delivered: [{ id: 'q-h-000001', expired: false }] }
-  expect(lineOf('en', SAME_DAY_NOW, withoutTime)).toBe('Answer A · sent 14:32 · (read by the session)')
+  expect(lineOf('en', SAME_DAY_NOW, withoutTime)).toBe('Keep · sent 14:32 · (read by the session)')
 })
 
-test('model: the Other answer names its letter and its text; an agent or a named CLI answer names who answered, a panel answer names no one', () => {
+test('model: the Other answer names its typed text; an agent or a named CLI answer names who answered, a panel answer names no one', () => {
   const at = localMs(10, 17, 14, 32)
   const lineOf = (extra: Partial<Answer>): string | undefined =>
     historyOf('en', { questions: [parsedQuestion('q-h-000001', 10)], answers: [{ ...answerOf('q-h-000001', 'other', at, '  lavanda  '), ...extra }], delivered: [] }, {
       ...NO_STATUS,
       now: SAME_DAY_NOW,
     })[0]?.sessions[0]?.entries[0]?.line
-  expect(lineOf({})).toBe('Answer C (Other: "lavanda") · sent 14:32')
-  expect(lineOf({ key: 'A', by: 'agent' })).toBe('Answer A · answered by agent · sent 14:32')
-  expect(lineOf({ key: 'A', by: 'cli', who: 'Ana' })).toBe('Answer A · answered by Ana · sent 14:32')
-  expect(lineOf({ key: 'A', by: 'panel', who: 'Ana' })).toBe('Answer A · sent 14:32')
+  expect(lineOf({})).toBe('“lavanda” · sent 14:32')
+  expect(lineOf({ key: 'A', by: 'agent' })).toBe('Keep · answered by agent · sent 14:32')
+  expect(lineOf({ key: 'A', by: 'cli', who: 'Ana' })).toBe('Keep · answered by Ana · sent 14:32')
+  expect(lineOf({ key: 'A', by: 'panel', who: 'Ana' })).toBe('Keep · sent 14:32')
+})
+
+// beta.35, item 2: a History row names the chosen option by its label (in the language of the pane) and an Other reply by its
+// whole typed text; the letter is never drawn, and a question that is gone draws its key letter.
+test('model: a History row names the option label in English and Portuguese, an Other reply its whole text, and a reply with no text the Other label', () => {
+  const typed = 'Use a fork of the sync client, keep the offline cache, and tell the team in the weekly standup before merging it'
+  const board: Board = {
+    questions: [parsedQuestion('q-h2-000001', 10, { title: 'Pick the queue' }), parsedQuestion('q-h2-000002', 20, { title: 'Second' })],
+    answers: [answerOf('q-h2-000001', 'B', localMs(10, 17, 14, 32)), answerOf('q-h2-000002', 'other', localMs(10, 17, 14, 33), typed)],
+    delivered: [{ id: 'q-h2-000001', expired: false, ts: localMs(10, 17, 14, 33) }],
+  }
+  const entriesOf = (lang: 'en' | 'pt', of: Board): Record<string, { title: string; line: string }> =>
+    Object.fromEntries(
+      historyOf(lang, of, { ...NO_STATUS, now: SAME_DAY_NOW })
+        .flatMap(group => group.sessions.flatMap(session => session.entries))
+        .map(entry => [entry.id, entry]),
+    )
+  const en = entriesOf('en', board)
+  expect(en['q-h2-000001']).toEqual({ id: 'q-h2-000001', title: 'Pick the queue', line: 'Rewrite · sent 14:32 · delivered 14:33 (read by the session)' })
+  expect(en['q-h2-000002']?.line).toBe(`“${typed}” · sent 14:33`)
+  expect(entriesOf('pt', board)['q-h2-000001']?.line).toBe('Rewrite · enviada 14:32 · entregue 14:33 (lida pela sessão)')
+  const blank: Board = { questions: board.questions, answers: [answerOf('q-h2-000002', 'other', localMs(10, 17, 14, 33))], delivered: [] }
+  expect(entriesOf('en', blank)['q-h2-000002']?.line).toBe('Other… · sent 14:33')
+  expect(entriesOf('pt', blank)['q-h2-000002']?.line).toBe('Outra… · enviada 14:33')
+  const gone: Board = { questions: [], answers: [answerOf('q-h2-000003', 'B', localMs(10, 17, 14, 34))], delivered: [] }
+  expect(historyOf('en', gone, { ...NO_STATUS, now: SAME_DAY_NOW })[0]?.sessions[0]?.entries[0]?.line).toBe('B · sent 14:34')
+})
+
+// beta.35, item 1: a stored title the CLI clipped to 60 characters (its last one "…") reads as the whole question; a
+// title-less question reads whole, however long; a title that is not a clip reads as it is.
+const CLIPPED_TEXT = 'Como o bloqueio de licença do sync deve se comportar enquanto a licença é validada offline pelo cliente?'
+const CLIPPED_TITLE = `${Array.from(CLIPPED_TEXT).slice(0, 59).join('')}…`
+
+test('model: a title the CLI clipped reads as the whole question, a title-less question reads whole, and any other title reads as it is', () => {
+  expect(Array.from(CLIPPED_TITLE)).toHaveLength(60)
+  expect(questionLabel(parsedQuestion('q-t1-000001', 1, { title: CLIPPED_TITLE, question: CLIPPED_TEXT }))).toBe(CLIPPED_TEXT)
+  expect(questionLabel(parsedQuestion('q-t1-000002', 1, { title: '', question: CLIPPED_TEXT }))).toBe(CLIPPED_TEXT)
+  expect(questionLabel(parsedQuestion('q-t1-000003', 1, { title: 'Pick the queue', question: CLIPPED_TEXT }))).toBe('Pick the queue')
+  expect(questionLabel(parsedQuestion('q-t1-000004', 1, { title: 'Ends with… a word', question: CLIPPED_TEXT }))).toBe('Ends with… a word')
+  expect(questionLabel(parsedQuestion('q-t1-000005', 1, { title: '', question: '🚀'.repeat(30) }))).toBe('🚀'.repeat(30))
 })
 
 test('model: Clear all removes every row drawn, pending ones included, and a cleared id hides its row', () => {
@@ -652,14 +698,14 @@ test('model: a session that ended keeps its line under the family of its project
   expect(group?.sessions[0]?.entries[0]?.line).toContain('the session ended before reading it')
   const orphan: Board = { questions: [], answers: [answerOf('q-m-000001', 'B', 1)], delivered: [] }
   expect(historyOf('pt', orphan, NO_STATUS)[0]?.label).toBe('a sessão')
-  expect(historyOf('pt', orphan, NO_STATUS)[0]?.sessions[0]?.entries[0]?.line).toContain('Resposta B · enviada ')
+  expect(historyOf('pt', orphan, NO_STATUS)[0]?.sessions[0]?.entries[0]?.line).toContain('B · enviada ')
 })
 
 test('model: an answer unread past the 7-day TTL reads as expired, and one inside the TTL still reads as pending', () => {
   const board: Board = { questions: [parsedQuestion('q-m-000001', 10)], answers: [answerOf('q-m-000001', 'B', 1000)], delivered: [] }
   const entriesAt = (now: number) =>
     historyOf('en', board, { ...NO_STATUS, now }).flatMap(group => group.sessions.flatMap(session => session.entries))
-  expect(entriesAt(1000 + ANSWER_TTL_MS)[0]?.line).toMatch(/^Answer B · sent [\d/ :]+$/)
+  expect(entriesAt(1000 + ANSWER_TTL_MS)[0]?.line).toMatch(/^Rewrite · sent [\d/ :]+$/)
   expect(entriesAt(1000 + ANSWER_TTL_MS + 1)).toMatchObject([{ id: 'q-m-000001' }])
   expect(entriesAt(1000 + ANSWER_TTL_MS + 1)[0]?.line).toContain('expired unread')
 })
@@ -704,10 +750,10 @@ test('model: the footer reads the counts and the last answer in English and Port
     ],
   }
   expect(footerText('en', board, now)).toBe(
-    '3 answered in the last 24 h · last: Pick the queue → A, 12 min ago · 1 not yet read · 2 expired',
+    '3 answered in the last 24 h · last: Pick the queue → Keep, 12 min ago · 1 not yet read · 2 expired',
   )
   expect(footerText('pt', board, now)).toBe(
-    '3 respondidas nas últimas 24 h · última: Pick the queue → A, há 12 min · 1 ainda não lida · 2 expiradas',
+    '3 respondidas nas últimas 24 h · última: Pick the queue → Keep, há 12 min · 1 ainda não lida · 2 expiradas',
   )
   const withOpen: Board = { ...board, questions: [...board.questions, parsedQuestion('q-f-000006', 6)] }
   expect(footerText('en', withOpen, now)).toBeUndefined()
@@ -719,8 +765,8 @@ test('model: the footer names the last answer by its title in each language, the
     answers: [answerOf('q-f-000001', 'A', FOOT_DAY - 12 * FOOT_MIN)],
     delivered: [{ id: 'q-f-000001', expired: false }],
   }
-  expect(footerText('en', board, FOOT_DAY)).toBe('1 answered in the last 24 h · last: Pick the queue → A, 12 min ago')
-  expect(footerText('pt', board, FOOT_DAY)).toBe('1 respondida nas últimas 24 h · última: Escolha a fila → A, há 12 min')
+  expect(footerText('en', board, FOOT_DAY)).toBe('1 answered in the last 24 h · last: Pick the queue → Keep, 12 min ago')
+  expect(footerText('pt', board, FOOT_DAY)).toBe('1 respondida nas últimas 24 h · última: Escolha a fila → Keep, há 12 min')
 })
 
 test('model: the footer reads the zero and the singular forms in both languages', () => {
@@ -733,21 +779,29 @@ test('model: the footer reads the zero and the singular forms in both languages'
     answers: [answerOf('q-f-000001', 'A', FOOT_DAY - FOOT_HOUR)],
     delivered: [{ id: 'q-f-000001', expired: false }],
   }
-  expect(footerText('en', one, FOOT_DAY)).toBe('1 answered in the last 24 h · last: Title q-f-000001 → A, 1 h ago')
+  expect(footerText('en', one, FOOT_DAY)).toBe('1 answered in the last 24 h · last: Title q-f-000001 → Keep, 1 h ago')
   expect(footerText('pt', one, FOOT_DAY)).toBe(
-    '1 respondida nas últimas 24 h · última: Title q-f-000001 → A, há 1 h',
+    '1 respondida nas últimas 24 h · última: Title q-f-000001 → Keep, há 1 h',
   )
   const expiredOne: Board = { questions: [], answers: [answerOf('q-f-000002', 'B', 1)], delivered: [] }
   expect(footerText('pt', expiredOne, 8 * FOOT_DAY)).toContain('1 expirada')
 })
 
-test('model: the footer cuts a long title of the last answer, and names a question that is gone by its id', () => {
+// beta.35, item 1 and 2: the footer names the last answer's title whole (a clipped one as its whole question) and its option
+// label, never its letter.
+test('model: the footer names a long or clipped title of the last answer whole, and a question that is gone by its id and its letter', () => {
   const long: Board = {
     questions: [parsedQuestion('q-f-000001', 1, { title: 'a'.repeat(60) })],
     answers: [answerOf('q-f-000001', 'A', FOOT_DAY - FOOT_MIN)],
     delivered: [{ id: 'q-f-000001', expired: false }],
   }
-  expect(footerText('en', long, FOOT_DAY)).toContain(`last: ${'a'.repeat(39)}… → A, 1 min ago`)
+  expect(footerText('en', long, FOOT_DAY)).toContain(`last: ${'a'.repeat(60)} → Keep, 1 min ago`)
+  const clipped: Board = {
+    questions: [parsedQuestion('q-f-000002', 1, { title: CLIPPED_TITLE, question: CLIPPED_TEXT })],
+    answers: [answerOf('q-f-000002', 'A', FOOT_DAY - FOOT_MIN)],
+    delivered: [{ id: 'q-f-000002', expired: false }],
+  }
+  expect(footerText('en', clipped, FOOT_DAY)).toContain(`last: ${CLIPPED_TEXT} → Keep, 1 min ago`)
   const gone: Board = { questions: [], answers: [answerOf('q-f-000009', 'B', FOOT_DAY - FOOT_MIN)], delivered: [] }
   expect(footerText('en', gone, FOOT_DAY)).toContain('last: q-f-000009 → B, 1 min ago')
 })
@@ -957,7 +1011,7 @@ test('the card is the oldest open question; the other open ones are tree rows; a
     expect(await pane.find({ type: 'Markdown', key: 'tree-jump-q-l4-dddddd' })).toBeUndefined()
     const historyRow = nodesOf(await pane.drawn()).find(node => keyOfNode(node) === 'history-q-l3-cccccc')
     // The history row is one line: the same ○ a waiting question row does, the title, " ✓ - " and the answer line.
-    expect(nodesOf(historyRow).some(node => node.type === 'Text' && textOfNode(node).startsWith('○ Title q-l3-cccccc ✓ - '))).toBe(true)
+    expect(nodesOf(historyRow).some(node => node.type === 'Text' && textOfNode(node).startsWith('○ Title q-l3-cccccc ✓ '))).toBe(true)
     // The broken file draws nothing.
     expect(texts.some(text => text.includes('q-l9'))).toBe(false)
     await pane.unmount()
@@ -1445,7 +1499,7 @@ test('a status row has no fill and no border: it takes no colour of its own, and
   await $.session.start(SESSION)
   const pane = await mountPane($)
   const expired = 'expirou sem ser lida'
-  const pending = 'Resposta B · enviada'
+  const pending = 'Rewrite · enviada'
   expect(await textNodeWith(pane, expired)).toBeDefined()
   expect((await textNodeWith(pane, expired))?.props?.dimColor).toBeUndefined()
   expect(await textNodeWith(pane, pending)).toBeDefined()
@@ -1867,7 +1921,7 @@ test('Owner replies Q10: a pending answer shows "enviada", then "lida pela sess�
   const { clock } = stubHost(on, files)
   await $.session.start(SESSION)
   let pane = await mountPane($)
-  expect(await textNodeWith(pane, 'Resposta B · enviada')).toBeDefined()
+  expect(await textNodeWith(pane, 'Rewrite · enviada')).toBeDefined()
   await pane.unmount()
   files.set(path('d', 'q-l1-aaaaaa'), delivery('q-l1-aaaaaa'))
   await clock.advance(5000)
@@ -2098,7 +2152,7 @@ test('a legacy answer written by accept_recommended reads as a normal status lin
   stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
-  expect(await textNodeWith(pane, 'Resposta A · enviada')).toBeDefined()
+  expect(await textNodeWith(pane, 'Keep · enviada')).toBeDefined()
   expect(await pane.find({ type: 'Text', text: 'Which way for q-l1-aaaaaa?' })).toBeUndefined()
   await pane.unmount()
 })
@@ -2198,7 +2252,7 @@ test('a legacy answer with key other and its free text still gives a status line
   stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
-  expect(await textNodeWith(pane, 'Resposta C (Outra: "Use a fork")')).toBeDefined()
+  expect(await textNodeWith(pane, 'Title q-l1-aaaaaa ✓ “Use a fork” · enviada')).toBeDefined()
   expect(await pane.find({ type: 'Text', text: 'Which way for q-l1-aaaaaa?' })).toBeUndefined()
   await pane.unmount()
 })
@@ -2596,7 +2650,7 @@ test('a poll that read the answer folder before a press keeps the press answer',
   await clock.advance(1000)
   const texts = await textsOf(pane)
   expect(texts).not.toContain('Which way for q-l1-aaaaaa?')
-  expect(texts).toContainEqual(expect.stringContaining('Resposta B · enviada'))
+  expect(texts).toContainEqual(expect.stringContaining('Rewrite · enviada'))
   await pane.unmount()
 })
 
@@ -2612,7 +2666,7 @@ test('Submit all on a question another writer already answered takes that answer
   await clock.advance(250)
   const texts = await textsOf(pane)
   expect(texts).not.toContain('Which way for q-l1-aaaaaa?')
-  expect(texts).toContainEqual(expect.stringContaining('Resposta A · enviada'))
+  expect(texts).toContainEqual(expect.stringContaining('Keep · enviada'))
   await pane.unmount()
 })
 
@@ -3283,8 +3337,8 @@ test('a question with no title is named in the tree and on the card by its text,
   await $.session.start(SESSION)
   const pane = await mountPane($)
   // 25 characters: the first 23 and an ellipsis, 24 in all. The tree row carries the mark in front of it.
-  expect(await textsOf(pane)).toContain('Cache it on the disk no…')
-  expect(await textsOf(pane)).toContain('● Cache it on the disk no…')
+  expect(await textsOf(pane)).toContain('Cache it on the disk now!')
+  expect(await textsOf(pane)).toContain('● Cache it on the disk now!')
   await pane.press({ key: 'nav-next' })
   // 24 characters and a blank title: the text is whole.
   expect(await textsOf(pane)).toContain('Cache it on the disk now')
@@ -4103,7 +4157,7 @@ test('the root session of a family (desktop_session equal to family) draws no se
   await pane.unmount()
 })
 
-test('History: a row whose question has a Desktop session is one Markdown line, its title a link to that session, then the answer line', async ($, on) => {
+test('beta.35 item 2: a History row on the desktop is plain text: the whole title, the option label and the times, with no session link', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { desktop_session: 'local_abc', title: 'Cache [it] now' })],
     [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'A')],
@@ -4112,11 +4166,8 @@ test('History: a row whose question has a Desktop session is one Markdown line, 
   stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($, 'desktop')
-  const row = await pane.find({ type: 'Markdown', text: /\[Cache \\\[it\\\] now\]\(#local_abc\)/ })
-  expect(row).toBeDefined()
-  const text = String(row?.props.text)
-  expect(text.startsWith('○ [Cache \\[it\\] now](#local_abc) ✓ - Resposta A · enviada ')).toBe(true)
-  expect(row?.props.onLinkPress).toBeUndefined()
+  expect(await pane.find({ type: 'Markdown', text: /^○ .*\(#local_abc\)/ })).toBeUndefined()
+  expect((await textsOf(pane)).some(text => text.startsWith('○ Cache [it] now ✓ Keep · enviada '))).toBe(true)
   // The History heading carries the logo, as the pane heading does, and the whole block gaps its rows from the heading.
   const history = nodesOf(await pane.drawn()).find(node => keyOfNode(node) === 'history')
   expect(history).toBeDefined()
@@ -4133,11 +4184,9 @@ test('History: an Other text with Markdown in it never makes a link or a style; 
   stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($, 'desktop')
-  const row = await pane.find({ type: 'Markdown', text: /^○ .*\(#local_abc\)/ })
-  const text = String(row?.props.text)
-  expect(text).not.toContain('](#local_evil)')
-  expect(text).not.toContain('*x*')
-  expect(text).toContain('\\*x\\* \\]\\(#local\\_evil\\)')
+  // beta.35: a History row is plain text, so the typed text reads as it was typed and makes no link.
+  expect(await pane.find({ type: 'Markdown', text: /\(#local_evil\)/ })).toBeUndefined()
+  expect((await textsOf(pane)).some(text => text.startsWith('○ Title q-l1-aaaaaa ✓ “*x* ](#local_evil)” · '))).toBe(true)
   // The group of a question with no project and no family is keyed ''; its session row (null session, key '') still draws, as "└ a sessão".
   const texts = await textsOf(pane)
   expect(texts).toContain('└ a sessão')
@@ -4161,8 +4210,8 @@ test('History: the family label and a derived session row link to their Desktop 
   expect(await pane.find({ type: 'Markdown', text: '**[Release Checklist Review](#local_root)**' })).toBeDefined()
   expect(await pane.find({ type: 'Markdown', text: '└ [Child Session](#local_child)' })).toBeDefined()
   // The root's row sits under the family label with no lead; the child's row under its session row.
-  expect(await pane.find({ type: 'Markdown', text: /^○ \[Title q-l1-aaaaaa\]\(#local_root\) ✓ - / })).toBeDefined()
-  expect(await pane.find({ type: 'Markdown', text: /^○ \[Title q-l2-bbbbbb\]\(#local_child\) ✓ - / })).toBeDefined()
+  expect((await textsOf(pane)).some(text => text.startsWith('○ Title q-l1-aaaaaa ✓ Keep · '))).toBe(true)
+  expect((await textsOf(pane)).some(text => text.startsWith('○ Title q-l2-bbbbbb ✓ '))).toBe(true)
   expect(await pane.find({ type: 'Text', text: '├ Release Checklist Review' })).toBeUndefined()
   await pane.unmount()
 })
@@ -4179,7 +4228,7 @@ test('History: a record filed before desktop_session existed counts as the root 
   const texts = await textsOf(pane)
   expect(texts.some(text => /^[├└] (\[)?Old Root/.test(text))).toBe(false)
   expect(await pane.find({ type: 'Markdown', text: '**[Old Root](#local_old)**' })).toBeDefined()
-  expect(texts.some(text => text.startsWith('○ Title q-l1-aaaaaa ✓ - '))).toBe(true)
+  expect(texts.some(text => text.startsWith('○ Title q-l1-aaaaaa ✓ Keep · '))).toBe(true)
   await pane.unmount()
 })
 
@@ -4645,7 +4694,7 @@ test('a minute turning while only an answered question is open writes only the c
   await clock.advance(60_000)
   // The footer draws while no question is open, and its age label ("now", then "1 min") turns with the minute.
   expect(stateWrites.slice(writesBefore)).toEqual(['tick'])
-  expect(await textNodeWith(pane, 'Resposta A · enviada')).toBeDefined()
+  expect(await textNodeWith(pane, 'Keep · enviada')).toBeDefined()
   await pane.unmount()
 })
 
@@ -4697,7 +4746,7 @@ test('the poll right after the last answer writes no atom the pane draws from, s
   const writesBefore = stateWrites.length
   await clock.advance(5000)
   expect(stateWrites.slice(writesBefore)).toEqual([])
-  expect(await textsOf(pane)).toContainEqual(expect.stringContaining('Resposta B · enviada'))
+  expect(await textsOf(pane)).toContainEqual(expect.stringContaining('Rewrite · enviada'))
   await pane.unmount()
 })
 
@@ -4920,7 +4969,7 @@ test('History: a Clear all of another session hides its rows at the next poll', 
   expect(String((await pane.find({ type: 'Button', key: 'history-clear' }))?.props.label)).toBe('Limpar tudo (1)')
   const texts = await textsOf(pane)
   expect(texts.some(text => text.includes('○ Title q-l1-aaaaaa'))).toBe(false)
-  expect(texts.some(text => text.startsWith('○ Title q-l2-bbbbbb ✓ - '))).toBe(true)
+  expect(texts.some(text => text.startsWith('○ Title q-l2-bbbbbb ✓ '))).toBe(true)
   await pane.unmount()
 })
 
@@ -5003,7 +5052,7 @@ test('History: Clear drops a cleared id whose answer is gone from the board, and
   await $.session.start(SESSION)
   const restarted = await mountPane($)
   const restartedTexts = await textsOf(restarted)
-  expect(restartedTexts.some(text => text.startsWith('○ Title q-gone-eeeeee ✓ - '))).toBe(true)
+  expect(restartedTexts.some(text => text.startsWith('○ Title q-gone-eeeeee ✓ Keep · '))).toBe(true)
   expect(restartedTexts.some(text => text.includes('○ Title q-l1-aaaaaa'))).toBe(false)
   await restarted.unmount()
 })
@@ -5014,7 +5063,7 @@ test('model: "multimedia" does not grade medium urgency; an Other answer whose q
   expect(grade({ urgency: 'multimedia assets' })).toBe('low')
   expect(grade({ urgency: 'media team' })).toBe('medium')
   const orphan: Board = { questions: [], answers: [answerOf('q-m-000001', 'other', 1, 'lavanda')], delivered: [] }
-  expect(historyOf('en', orphan, NO_STATUS)[0]?.sessions[0]?.entries[0]?.line).toContain('Answer (Other: "lavanda")')
+  expect(historyOf('en', orphan, NO_STATUS)[0]?.sessions[0]?.entries[0]?.line).toContain('“lavanda” · sent ')
 })
 
 // Gauntlet 3 package C
@@ -5056,12 +5105,12 @@ test('the terminal submit link draws the ▪ link mark before "Enviar resposta",
   await pane.unmount()
 })
 
-test('a long Other text is quoted on its History row up to 80 code points with an ellipsis, while the delivery line keeps the full text', () => {
+test('a long Other text is drawn whole in typographic quotes on its History row, while the delivery line keeps the full text', () => {
   const long = 'x'.repeat(200)
   const board: Board = { questions: [parsedQuestion('q-m-000001', 10)], answers: [answerOf('q-m-000001', 'other', 1, long)], delivered: [] }
   const [entry] = historyOf('en', board, NO_STATUS).flatMap(group => group.sessions.flatMap(session => session.entries))
-  expect(entry?.line).toContain(`(Other: "${'x'.repeat(79)}…")`)
-  expect(entry?.line).not.toContain('x'.repeat(80))
+  expect(entry?.line).toMatch(/^“x{200}” · sent [\d/ :]+$/)
+  expect(entry?.line.startsWith(`“${long}”`)).toBe(true)
   expect(deliveryLine(parsedQuestion('q-m-000001', 10), answerOf('q-m-000001', 'other', 1, long))).toContain(long)
 })
 
@@ -5691,11 +5740,12 @@ test('History labels are links on the desktop only: the terminal draws the famil
   stubHost(on, files)
   await $.session.start(SESSION)
   const desk = await mountPane($, 'desktop')
-  expect(await desk.find({ type: 'Markdown', text: /\[Cache it\]\(#local_abc\)/ })).toBeDefined()
+  // beta.35: the History row is plain text and names no session.
+  expect(await desk.find({ type: 'Markdown', text: /^○ .*\(#local_abc\)/ })).toBeUndefined()
   await desk.unmount()
   const terminal = await mountPane($)
   expect(await terminal.find({ type: 'Markdown', text: /#local_abc/ })).toBeUndefined()
-  expect(await textNodeWith(terminal, '○ Cache it ✓ - Resposta A')).toBeDefined()
+  expect(await textNodeWith(terminal, '○ Cache it ✓ Keep · ')).toBeDefined()
   await terminal.unmount()
 })
 
@@ -5773,7 +5823,7 @@ test('Owner replies P2a Q29: a cleared id with no reply file leaves the atom at 
   const pane = await mountPane($)
   expect(String((await pane.find({ type: 'Button', key: 'history-clear' }))?.props.label)).toBe('Limpar tudo (1)')
   const texts = await textsOf(pane)
-  expect(texts.some(text => text.startsWith('○ Title q-l2-bbbbbb ✓ - '))).toBe(true)
+  expect(texts.some(text => text.startsWith('○ Title q-l2-bbbbbb ✓ '))).toBe(true)
   expect(texts.some(text => text.includes('○ Title q-l1-aaaaaa'))).toBe(false)
   await pane.unmount()
 })
@@ -5808,10 +5858,10 @@ test('the footer leaves the rows Clear all hid out of the not-yet-read and the e
     delivered: [{ id: 'q-f-000004', expired: true, reason: 'session-ended' }],
   }
   expect(footerText('en', board, now)).toBe(
-    '1 answered in the last 24 h · last: Pick the queue → A, 12 min ago · 1 not yet read · 2 expired',
+    '1 answered in the last 24 h · last: Pick the queue → Keep, 12 min ago · 1 not yet read · 2 expired',
   )
   expect(footerText('en', board, now, ['q-f-000001', 'q-f-000005'])).toBe(
-    '1 answered in the last 24 h · last: Pick the queue → A, 12 min ago · 1 expired',
+    '1 answered in the last 24 h · last: Pick the queue → Keep, 12 min ago · 1 expired',
   )
 })
 
@@ -6153,27 +6203,168 @@ test('Gauntlet 4 B1 M47: a poll drops a draft pick for a question already replie
 })
 
 // gauntlet 4, package B2
-test('gauntlet 4, B2 M12: an untitled question of emoji is cut by code points, so no lone surrogate precedes the ellipsis', () => {
+test('gauntlet 4, B2 M12: an untitled question of emoji is drawn whole, its code points intact, so no lone surrogate is drawn', () => {
   const label = questionLabel(parsedQuestion('q-b2-aaaaaa', 1, { title: '', question: '🚀'.repeat(30) }))
-  expect(Array.from(label)).toHaveLength(24)
-  expect(label.endsWith('…')).toBe(true)
+  expect(label).toBe('🚀'.repeat(30))
   expect(label).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u)
 })
 
-test('gauntlet 4, B2 M13: the footer names an Other answer by its letter in English and Portuguese, and by a word when its question is gone', () => {
+test('gauntlet 4, B2 M13: the footer names an Other answer by its typed text, and by the Other label when it has none', () => {
   const now = 10 * FOOT_DAY
   const board: Board = {
     questions: [parsedQuestion('q-b2-000001', 1, { title: 'Pick the queue' })],
     answers: [answerOf('q-b2-000001', 'other', now - 12 * FOOT_MIN, 'lavanda')],
     delivered: [],
   }
-  expect(footerText('en', board, now)).toContain('last: Pick the queue → C, 12 min ago')
-  expect(footerText('pt', board, now)).toContain('última: Pick the queue → C, há 12 min')
+  expect(footerText('en', board, now)).toContain('last: Pick the queue → “lavanda”, 12 min ago')
+  expect(footerText('pt', board, now)).toContain('última: Pick the queue → “lavanda”, há 12 min')
   expect(footerText('en', board, now)).not.toContain('other')
-  expect(footerText('pt', board, now)).not.toContain('other')
   const gone: Board = { questions: [], answers: board.answers, delivered: [] }
-  expect(footerText('en', gone, now)).toContain('last: q-b2-000001 → Other, 12 min ago')
-  expect(footerText('pt', gone, now)).toContain('última: q-b2-000001 → Outra, há 12 min')
+  expect(footerText('en', gone, now)).toContain('last: q-b2-000001 → “lavanda”, 12 min ago')
+  const blank: Board = { questions: [], answers: [answerOf('q-b2-000001', 'other', now - 12 * FOOT_MIN)], delivered: [] }
+  expect(footerText('pt', blank, now)).toContain('última: q-b2-000001 → Outra…, há 12 min')
+})
+
+// beta.35, item 1: a clipped title (the CLI's 60 characters, its last one "…") is drawn whole in the tree row, the card title row,
+// the History row and the footer. The footer and the card show the answer as the option label, never its letter.
+test('beta.35 item 1: a clipped title is drawn whole in the tree row, the card title row and the History row', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-t1-aaaaaa'), question('q-t1-aaaaaa', 1000, { title: CLIPPED_TITLE, question: CLIPPED_TEXT })],
+    [path('q', 'q-t2-bbbbbb'), question('q-t2-bbbbbb', 500, { title: CLIPPED_TITLE, question: CLIPPED_TEXT })],
+    [path('a', 'q-t2-bbbbbb'), answer('q-t2-bbbbbb', 'A', 400)],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  const texts = await textsOf(pane)
+  expect(texts.some(text => text.includes(CLIPPED_TEXT))).toBe(true)
+  expect(texts.some(text => text.startsWith(`○ ${CLIPPED_TEXT} ✓ Keep · enviada `))).toBe(true)
+  await pane.unmount()
+})
+
+test('beta.35 item 2: a History row on the desktop is plain text with the whole title and the option label, and names no session', async ($, on) => {
+  const family = { family: 'local_root', family_title: 'release checklist review' }
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'cli-1', desktop_session: 'local_root', session_title: 'release checklist review', ...family })],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B')],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  stubHost(on, files, true, {}, {}, { LANG: 'en_US.UTF-8' })
+  await $.session.start(SESSION)
+  const pane = await mountPane($, 'desktop')
+  const texts = await textsOf(pane)
+  expect(texts.some(text => text.startsWith('○ Title q-l1-aaaaaa ✓ Rewrite · sent '))).toBe(true)
+  expect(texts.some(text => text.startsWith('○ ') && /Release Checklist|Resposta|Answer/.test(text))).toBe(false)
+  await pane.unmount()
+})
+
+// beta.35, item 3: the Desktop sidebar groups (claude_desktop_config.json, preferences.epitaxyPrefs) name the tree and the History.
+const DESKTOP_CONFIG = '/test-home/.config/Claude/claude_desktop_config.json'
+const desktopConfig = (groups: unknown[], assignments: Record<string, string>): string =>
+  JSON.stringify({ preferences: { epitaxyPrefs: { 'dframe-group-scopes': { 'acc/org': { groups, assignments } } } } })
+const sessionQuestion = (id: string, ts: number, session: string, family: string, familyTitle: string): string =>
+  question(id, ts, { desktop_session: session, family, family_title: familyTitle, session: `cli-${id}`, session_title: `Session ${session}` })
+
+test('beta.35 item 3: two questions from sessions in the group "Claude Global" draw under one "Claude Global" header, not under their family titles', async ($, on) => {
+  const files = new Map([
+    [DESKTOP_CONFIG, desktopConfig([{ id: 'cg-1', name: 'Claude Global' }], { 'code:local_s1': 'cg-1', 'code:local_s2': 'cg-1' })],
+    [path('q', 'q-g1-aaaaaa'), sessionQuestion('q-g1-aaaaaa', 1000, 'local_s1', 'local_root1', 'Family One')],
+    [path('q', 'q-g2-bbbbbb'), sessionQuestion('q-g2-bbbbbb', 2000, 'local_s2', 'local_root2', 'Family Two')],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  const texts = await textsOf(pane)
+  expect(texts.filter(text => text === 'Claude Global')).toHaveLength(1)
+  expect(texts).not.toContain('Family One')
+  expect(texts).not.toContain('Family Two')
+  await pane.unmount()
+})
+
+test('beta.35 item 3: a session filed in a group moves on the next poll after the config mtime changes; a rewrite with the same mtime is not read', async ($, on) => {
+  const mtimes = new Map([[DESKTOP_CONFIG, 1000]])
+  const files = new Map([
+    [DESKTOP_CONFIG, desktopConfig([{ id: 'cg-1', name: 'Claude Global' }], {})],
+    [path('q', 'q-g1-aaaaaa'), sessionQuestion('q-g1-aaaaaa', 1000, 'local_s1', 'local_root1', 'Family One')],
+  ])
+  const { clock } = stubHost(on, files, true, {}, { mtimes })
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  expect(await textsOf(pane)).toContain('Family One')
+  files.set(DESKTOP_CONFIG, desktopConfig([{ id: 'cg-1', name: 'Claude Global' }], { 'code:local_s1': 'cg-1' }))
+  await clock.advance(5000)
+  expect(await textsOf(pane)).toContain('Family One')
+  mtimes.set(DESKTOP_CONFIG, 2000)
+  await clock.advance(5000)
+  expect(await textsOf(pane)).toContain('Claude Global')
+  expect(await textsOf(pane)).not.toContain('Family One')
+  await pane.unmount()
+})
+
+test('beta.35 item 3: a malformed config, or one of another shape, draws the tree as before and logs and toasts nothing', async ($, on) => {
+  const mtimes = new Map([[DESKTOP_CONFIG, 1000]])
+  const files = new Map([
+    [DESKTOP_CONFIG, '{"preferences": '],
+    [path('q', 'q-g1-aaaaaa'), sessionQuestion('q-g1-aaaaaa', 1000, 'local_s1', 'local_root1', 'Family One')],
+  ])
+  const { clock, logs, toasts } = stubHost(on, files, true, {}, { mtimes })
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  expect(await textsOf(pane)).toContain('Family One')
+  files.set(DESKTOP_CONFIG, JSON.stringify({ preferences: { epitaxyPrefs: { 'dframe-group-scopes': ['not', 'a', 'scope'] } } }))
+  mtimes.set(DESKTOP_CONFIG, 2000)
+  await clock.advance(5000)
+  expect(await textsOf(pane)).toContain('Family One')
+  expect(logs).toEqual([])
+  expect(toasts).toEqual([])
+  await pane.unmount()
+})
+
+test("beta.35 item 3: a session in no group falls back to its family title, and a session with no group of its own takes its family root's group", async ($, on) => {
+  const override = '/test-desktop/claude_desktop_config.json'
+  const files = new Map([
+    [override, desktopConfig([{ id: 'cg-1', name: 'Claude Global' }], { 'code:local_root1': 'cg-1' })],
+    [path('q', 'q-g1-aaaaaa'), sessionQuestion('q-g1-aaaaaa', 1000, 'local_s9', 'local_root1', 'Family One')],
+    [path('q', 'q-g2-bbbbbb'), sessionQuestion('q-g2-bbbbbb', 2000, 'local_s8', 'local_root2', 'Family Two')],
+  ])
+  stubHost(on, files, true, {}, {}, { ASKAWAY_DESKTOP_CONFIG: override })
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  const texts = await textsOf(pane)
+  expect(texts.filter(text => text === 'Claude Global')).toHaveLength(1)
+  expect(texts).toContain('Family Two')
+  expect(texts).not.toContain('Family One')
+  await pane.unmount()
+})
+
+test('beta.35 item 3: a question in a Desktop group is grouped, labelled and ordered by that group; only a family root outside a group draws no session row', () => {
+  const grouped = { ...parsedQuestion('q-dg-000004', 10, { family: 'local_root1', family_title: 'Family One', desktop_session: 'local_root1' }), desktop_group: { id: 'cg-1', name: 'Claude Global' } }
+  expect(groupKeyOf(grouped)).toBe('cg-1')
+  expect(groupLabelOf(grouped, 'en')).toBe('Claude Global')
+  expect(isRootSession(grouped)).toBe(false)
+  expect(isRootSession(parsedQuestion('q-dg-000005', 10, { family: 'local_root1', family_title: 'Family One', desktop_session: 'local_root1' }))).toBe(true)
+})
+
+test('beta.35 item 3: parseDesktopGroups reads the groups of every scope and fails open to none; withDesktopGroup takes the session group, else its family root group', () => {
+  const groups = parseDesktopGroups({
+    preferences: {
+      epitaxyPrefs: {
+        'dframe-group-scopes': {
+          'acc/org': { groups: [{ id: 'cg-1', name: 'Claude Global' }], assignments: { 'code:local_s1': 'cg-1', 'other:local_s3': 'cg-1' } },
+          'acc2/org': { groups: [{ id: 'cg-2', name: 'Other' }], assignments: { 'code:local_root2': 'cg-2' } },
+        },
+      },
+    },
+  })
+  const inGroup = parsedQuestion('q-dg-000001', 1, { desktop_session: 'local_s1', family: 'local_root1' })
+  expect(withDesktopGroup(inGroup, groups).desktop_group).toEqual({ id: 'cg-1', name: 'Claude Global' })
+  const byFamily = parsedQuestion('q-dg-000002', 2, { desktop_session: 'local_s9', family: 'local_root2' })
+  expect(withDesktopGroup(byFamily, groups).desktop_group).toEqual({ id: 'cg-2', name: 'Other' })
+  const none = parsedQuestion('q-dg-000003', 3, { desktop_session: 'local_s9', family: 'local_none' })
+  expect(withDesktopGroup(none, groups).desktop_group).toBeUndefined()
+  expect(groups.assignments.has('local_s3')).toBe(false)
+  expect(parseDesktopGroups({ preferences: 'x' }).names.size).toBe(0)
+  expect(parseDesktopGroups({ preferences: { epitaxyPrefs: { 'dframe-group-scopes': { a: { groups: 'x', assignments: [] } } } } }).names.size).toBe(0)
 })
 
 test('gauntlet 4, B2 M21: a title with a line break draws one footer line', () => {
@@ -6184,7 +6375,7 @@ test('gauntlet 4, B2 M21: a title with a line break draws one footer line', () =
     delivered: [],
   }
   const text = footerText('en', board, now)
-  expect(text).toContain('last: Pick this → A, 12 min ago')
+  expect(text).toContain('last: Pick this → Keep, 12 min ago')
   expect(text).not.toContain('\n')
 })
 
@@ -6337,4 +6528,299 @@ test('Gauntlet 5 F4 Should-5 c: a damaged q/ file whose session name fails the s
   const pane = await mountPane($)
   expect(await pane.find({ type: 'Button', key: 'dismiss-damaged-q-l1-aaaaaa' })).toBeUndefined()
   await pane.unmount()
+})
+
+// beta.35 review fixes: a failed read keeps the last good Desktop groups, a History group of a Desktop group is plain text, and
+// the title and answer rules of the History and the footer hold on their edge cases.
+const DESKTOP_FOLDER = '/test-home/.config/Claude'
+const WINDOW_STATE = `${DESKTOP_FOLDER}/window-state.json`
+const GOOD_GROUPS = [{ id: 'cg-1', name: 'Claude Global' }]
+const RENAMED_GROUPS = [{ id: 'cg-1', name: 'Renamed' }]
+const markdownOf = async (pane: Awaited<ReturnType<typeof mountPane>>): Promise<string[]> =>
+  nodesOf(await pane.drawn())
+    .filter(node => node.type === 'Markdown')
+    .map(node => String((node.props as Record<string, unknown>).text))
+
+test('beta.35 review fix 1: two sessions of one Desktop group draw the group name as plain text, never a link to one family root', async ($, on) => {
+  const files = new Map([
+    [DESKTOP_CONFIG, desktopConfig(GOOD_GROUPS, { 'code:local_s1': 'cg-1', 'code:local_s2': 'cg-1' })],
+    [path('q', 'q-g1-aaaaaa'), sessionQuestion('q-g1-aaaaaa', 1000, 'local_s1', 'local_root1', 'Family One')],
+    [path('a', 'q-g1-aaaaaa'), answer('q-g1-aaaaaa', 'A')],
+    [path('q', 'q-g2-bbbbbb'), sessionQuestion('q-g2-bbbbbb', 2000, 'local_s2', 'local_root2', 'Family Two')],
+    [path('a', 'q-g2-bbbbbb'), answer('q-g2-bbbbbb', 'B')],
+    [path('q', 'q-g3-cccccc'), question('q-g3-cccccc', 3000)],
+  ])
+  stubHost(on, files, true, {}, {}, { LANG: 'en_US.UTF-8' })
+  await $.session.start(SESSION)
+  const pane = await mountPane($, 'desktop')
+  expect((await textsOf(pane)).filter(text => text === 'Claude Global')).toHaveLength(1)
+  expect((await markdownOf(pane)).some(text => text.includes('Claude Global') && text.includes('(#local_'))).toBe(false)
+  await pane.unmount()
+})
+
+test('beta.35 review fix 2: a failed listing of the config folder keeps the last good groups; the poll neither throws nor logs', async ($, on) => {
+  const mtimes = new Map([[DESKTOP_CONFIG, 1000]])
+  const holds: Holds = { mtimes }
+  const files = new Map([
+    [DESKTOP_CONFIG, desktopConfig(GOOD_GROUPS, { 'code:local_s1': 'cg-1' })],
+    [path('q', 'q-g1-aaaaaa'), sessionQuestion('q-g1-aaaaaa', 1000, 'local_s1', 'local_root1', 'Family One')],
+  ])
+  const { clock, logs, toasts } = stubHost(on, files, true, {}, holds)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  expect(await textsOf(pane)).toContain('Claude Global')
+  holds.failListOf = DESKTOP_FOLDER
+  files.set(DESKTOP_CONFIG, desktopConfig(RENAMED_GROUPS, { 'code:local_s1': 'cg-1' }))
+  mtimes.set(DESKTOP_CONFIG, 2000)
+  await clock.advance(5000)
+  expect(await textsOf(pane)).toContain('Claude Global')
+  expect(await textsOf(pane)).not.toContain('Renamed')
+  expect(logs).toEqual([])
+  expect(toasts).toEqual([])
+  await pane.unmount()
+})
+
+test('beta.35 review fix 2: an unreadable config keeps the last good groups, and the cache is not written on the failed read', async ($, on) => {
+  const mtimes = new Map([[DESKTOP_CONFIG, 1000]])
+  const holds: Holds = { mtimes }
+  const files = new Map([
+    [DESKTOP_CONFIG, desktopConfig(GOOD_GROUPS, { 'code:local_s1': 'cg-1' })],
+    [path('q', 'q-g1-aaaaaa'), sessionQuestion('q-g1-aaaaaa', 1000, 'local_s1', 'local_root1', 'Family One')],
+  ])
+  const { clock, logs } = stubHost(on, files, true, {}, holds)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  expect(await textsOf(pane)).toContain('Claude Global')
+  holds.failReadOf = DESKTOP_CONFIG
+  files.set(DESKTOP_CONFIG, desktopConfig(RENAMED_GROUPS, { 'code:local_s1': 'cg-1' }))
+  mtimes.set(DESKTOP_CONFIG, 2000)
+  await clock.advance(5000)
+  expect(await textsOf(pane)).toContain('Claude Global')
+  expect(logs).toEqual([])
+  await clock.advance(5000)
+  expect(await textsOf(pane)).toContain('Renamed')
+  expect(await textsOf(pane)).not.toContain('Claude Global')
+  await pane.unmount()
+})
+
+test('beta.35 review fix 2: a config that stops parsing keeps the last good groups; a config that is gone names none', async ($, on) => {
+  const mtimes = new Map([[DESKTOP_CONFIG, 1000]])
+  const files = new Map([
+    [DESKTOP_CONFIG, desktopConfig(GOOD_GROUPS, { 'code:local_s1': 'cg-1' })],
+    [path('q', 'q-g1-aaaaaa'), sessionQuestion('q-g1-aaaaaa', 1000, 'local_s1', 'local_root1', 'Family One')],
+  ])
+  const { clock, logs } = stubHost(on, files, true, {}, { mtimes })
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  expect(await textsOf(pane)).toContain('Claude Global')
+  files.set(DESKTOP_CONFIG, '{"preferences": ')
+  mtimes.set(DESKTOP_CONFIG, 2000)
+  await clock.advance(5000)
+  expect(await textsOf(pane)).toContain('Claude Global')
+  files.delete(DESKTOP_CONFIG)
+  await clock.advance(5000)
+  expect(await textsOf(pane)).not.toContain('Claude Global')
+  expect(await textsOf(pane)).toContain('Family One')
+  expect(logs).toEqual([])
+  await pane.unmount()
+})
+
+test('beta.35 review fix 5: a config over 4 MiB is skipped and keeps the last good groups; one over the limit from the start names none', async ($, on) => {
+  const mtimes = new Map([[DESKTOP_CONFIG, 1000]])
+  const sizes = new Map([[DESKTOP_CONFIG, 1024]])
+  const holds: Holds = { mtimes, sizes }
+  const files = new Map([
+    [DESKTOP_CONFIG, desktopConfig(GOOD_GROUPS, { 'code:local_s1': 'cg-1' })],
+    [path('q', 'q-g1-aaaaaa'), sessionQuestion('q-g1-aaaaaa', 1000, 'local_s1', 'local_root1', 'Family One')],
+  ])
+  const { clock } = stubHost(on, files, true, {}, holds)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  expect(await textsOf(pane)).toContain('Claude Global')
+  sizes.set(DESKTOP_CONFIG, 4 * 1024 * 1024 + 1)
+  files.set(DESKTOP_CONFIG, desktopConfig(RENAMED_GROUPS, { 'code:local_s1': 'cg-1' }))
+  mtimes.set(DESKTOP_CONFIG, 2000)
+  await clock.advance(5000)
+  expect(await textsOf(pane)).toContain('Claude Global')
+  expect(await textsOf(pane)).not.toContain('Renamed')
+  await pane.unmount()
+})
+
+test('beta.35 review fix 5: a config over 4 MiB from the start names no group, and the tree draws as before', async ($, on) => {
+  const holds: Holds = { sizes: new Map([[DESKTOP_CONFIG, 4 * 1024 * 1024 + 1]]) }
+  const files = new Map([
+    [DESKTOP_CONFIG, desktopConfig(GOOD_GROUPS, { 'code:local_s1': 'cg-1' })],
+    [path('q', 'q-g1-aaaaaa'), sessionQuestion('q-g1-aaaaaa', 1000, 'local_s1', 'local_root1', 'Family One')],
+  ])
+  stubHost(on, files, true, {}, holds)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  const texts = await textsOf(pane)
+  expect(texts).toContain('Family One')
+  expect(texts).not.toContain('Claude Global')
+  await pane.unmount()
+})
+
+test('beta.35 review M21: the config reloads on its own mtime change; a sibling file in its folder, listed first, changes nothing', async ($, on) => {
+  const mtimes = new Map([
+    [WINDOW_STATE, 500],
+    [DESKTOP_CONFIG, 1000],
+  ])
+  const files = new Map([
+    [WINDOW_STATE, '{}'],
+    [DESKTOP_CONFIG, desktopConfig(GOOD_GROUPS, { 'code:local_s1': 'cg-1' })],
+    [path('q', 'q-g1-aaaaaa'), sessionQuestion('q-g1-aaaaaa', 1000, 'local_s1', 'local_root1', 'Family One')],
+  ])
+  const { clock } = stubHost(on, files, true, {}, { mtimes })
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  expect(await textsOf(pane)).toContain('Claude Global')
+  mtimes.set(WINDOW_STATE, 9000)
+  files.set(DESKTOP_CONFIG, desktopConfig(RENAMED_GROUPS, { 'code:local_s1': 'cg-1' }))
+  await clock.advance(5000)
+  expect(await textsOf(pane)).toContain('Claude Global')
+  expect(await textsOf(pane)).not.toContain('Renamed')
+  mtimes.set(DESKTOP_CONFIG, 2000)
+  await clock.advance(5000)
+  expect(await textsOf(pane)).toContain('Renamed')
+  await pane.unmount()
+})
+
+test('beta.35 review M32: a Desktop group whose name is not text is skipped, and the poll still draws the tree', async ($, on) => {
+  const files = new Map([
+    [DESKTOP_CONFIG, desktopConfig([{ id: 'cg-1', name: 123 }], { 'code:local_s1': 'cg-1' })],
+    [path('q', 'q-g1-aaaaaa'), sessionQuestion('q-g1-aaaaaa', 1000, 'local_s1', 'local_root1', 'Family One')],
+  ])
+  const { logs } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  expect(await textsOf(pane)).toContain('Family One')
+  expect(logs).toEqual([])
+  await pane.unmount()
+})
+
+test('beta.35 review M24: a session filed in group A keeps group A when its family root is filed in group B', () => {
+  const groups = parseDesktopGroups({
+    preferences: {
+      epitaxyPrefs: {
+        'dframe-group-scopes': {
+          'acc/org': {
+            groups: [{ id: 'cg-1', name: 'Group A' }, { id: 'cg-2', name: 'Group B' }],
+            assignments: { 'code:local_s1': 'cg-1', 'code:local_root2': 'cg-2' },
+          },
+        },
+      },
+    },
+  })
+  const session = parsedQuestion('q-n4-000001', 1, { desktop_session: 'local_s1', family: 'local_root2' })
+  expect(withDesktopGroup(session, groups).desktop_group).toEqual({ id: 'cg-1', name: 'Group A' })
+})
+
+test('beta.35 review M30: an assignment under a prefix other than code: names no group', () => {
+  const groups = parseDesktopGroups({
+    preferences: {
+      epitaxyPrefs: {
+        'dframe-group-scopes': { 'acc/org': { groups: [{ id: 'cg-1', name: 'Claude Global' }], assignments: { 'chat:local_x': 'cg-1' } } },
+      },
+    },
+  })
+  expect(groups.assignments.has('local_x')).toBe(false)
+  expect(withDesktopGroup(parsedQuestion('q-n4-000002', 1, { desktop_session: 'local_x' }), groups).desktop_group).toBeUndefined()
+})
+
+test('beta.35 review M34: a Desktop group with an empty or blank name is skipped, and its sessions keep their family', () => {
+  const session = parsedQuestion('q-n4-000003', 1, { desktop_session: 'local_s1', family: 'local_root1', family_title: 'Family One' })
+  for (const name of ['', '   ']) {
+    const groups = parseDesktopGroups({
+      preferences: {
+        epitaxyPrefs: { 'dframe-group-scopes': { 'acc/org': { groups: [{ id: 'cg-1', name }], assignments: { 'code:local_s1': 'cg-1' } } } },
+      },
+    })
+    expect(withDesktopGroup(session, groups).desktop_group).toBeUndefined()
+  }
+})
+
+test('beta.35 review M35: a Desktop group name is drawn on one line, its control and format characters gone', () => {
+  const groups = parseDesktopGroups({
+    preferences: {
+      epitaxyPrefs: {
+        'dframe-group-scopes': {
+          'acc/org': { groups: [{ id: 'cg-1', name: 'Claude\nGlobal‮\u0007X' }], assignments: { 'code:local_s1': 'cg-1' } },
+        },
+      },
+    },
+  })
+  const grouped = withDesktopGroup(parsedQuestion('q-n4-000004', 1, { desktop_session: 'local_s1' }), groups)
+  expect(grouped.desktop_group).toEqual({ id: 'cg-1', name: 'Claude Global X' })
+})
+
+test('beta.35 review M37: a scope with no assignments, or assignments that are not an object, is skipped; the other scopes still apply', () => {
+  const groups = parseDesktopGroups({
+    preferences: {
+      epitaxyPrefs: {
+        'dframe-group-scopes': {
+          'acc/none': { groups: [{ id: 'cg-2', name: 'Second' }] },
+          'acc/num': { groups: [{ id: 'cg-3', name: 'Third' }], assignments: 5 },
+          'acc/org': { groups: [{ id: 'cg-1', name: 'Claude Global' }], assignments: { 'code:local_s1': 'cg-1' } },
+        },
+      },
+    },
+  })
+  expect(groups.names.get('cg-2')).toBe('Second')
+  expect(groups.names.get('cg-3')).toBe('Third')
+  expect(groups.assignments.get('local_s1')).toBe('cg-1')
+})
+
+test('beta.35 review M01: a title ending in "…" that does not start the question stays the title', () => {
+  const title = `${'X'.repeat(59)}…`
+  expect(questionLabel(parsedQuestion('q-n4-000005', 1, { title, question: CLIPPED_TEXT }))).toBe(title)
+})
+
+test('beta.35 review M02: a 60-character title with no "…" that starts the question stays the title', () => {
+  const title = Array.from(CLIPPED_TEXT).slice(0, 60).join('')
+  expect(questionLabel(parsedQuestion('q-n4-000006', 1, { title, question: CLIPPED_TEXT }))).toBe(title)
+})
+
+test('beta.35 review fix 6: a 20-character title ending in "…" that starts the question stays the title', () => {
+  const title = `${Array.from(CLIPPED_TEXT).slice(0, 19).join('')}…`
+  expect(Array.from(title)).toHaveLength(20)
+  expect(questionLabel(parsedQuestion('q-n4-000007', 1, { title, question: CLIPPED_TEXT }))).toBe(title)
+})
+
+test('beta.35 review M36: the tree list names a clipped question by its whole question, not by its clipped title', () => {
+  const clipped = parsedQuestion('q-n4-000008', 1, { title: CLIPPED_TITLE, question: CLIPPED_TEXT })
+  const text = listText('en', [clipped], false)
+  expect(text).toContain(CLIPPED_TEXT)
+  expect(text).not.toContain(CLIPPED_TITLE)
+})
+
+test('beta.35 review M39: an answer whose key the question does not list is drawn as its key in capitals', () => {
+  const at = localMs(10, 17, 14, 32)
+  const board: Board = { questions: [parsedQuestion('q-n4-000009', 10)], answers: [answerOf('q-n4-000009', 'c', at)], delivered: [] }
+  expect(historyOf('en', board, { ...NO_STATUS, now: SAME_DAY_NOW })[0]?.sessions[0]?.entries[0]?.line).toBe('C · sent 14:32')
+})
+
+test('beta.35 review M40: an option label with a line break is drawn on one line in the History row', () => {
+  const question = parsedQuestion('q-n4-000010', 10, {
+    options: [
+      { key: 'A', label: 'Keep\nthis', tradeoff: 'cheap', fit: 80 },
+      { key: 'B', label: 'Rewrite', tradeoff: 'slow', fit: 40 },
+    ],
+  })
+  const board: Board = { questions: [question], answers: [answerOf('q-n4-000010', 'A', localMs(10, 17, 14, 32))], delivered: [] }
+  expect(historyOf('en', board, { ...NO_STATUS, now: SAME_DAY_NOW })[0]?.sessions[0]?.entries[0]?.line).toBe('Keep this · sent 14:32')
+})
+
+test('beta.35 review M07: a History row and the footer name the option label of the pane language, from its translation', () => {
+  const translated = parsedQuestion('q-n4-000011', 10, {
+    title: 'Pick the queue',
+    translations: { 'pt-BR': { options: { A: { label: 'Manter' } } } },
+  })
+  const at = localMs(10, 17, 14, 32)
+  const board: Board = { questions: [translated], answers: [answerOf('q-n4-000011', 'A', at)], delivered: [] }
+  expect(historyOf('pt', board, { ...NO_STATUS, now: SAME_DAY_NOW })[0]?.sessions[0]?.entries[0]?.line).toBe('Manter · enviada 14:32')
+  expect(historyOf('en', board, { ...NO_STATUS, now: SAME_DAY_NOW })[0]?.sessions[0]?.entries[0]?.line).toBe('Keep · sent 14:32')
+  const now = 10 * FOOT_DAY
+  const footer: Board = { questions: [translated], answers: [answerOf('q-n4-000011', 'A', now - 12 * FOOT_MIN)], delivered: [] }
+  expect(footerText('pt', footer, now)).toContain('última: Pick the queue → Manter, há 12 min')
 })

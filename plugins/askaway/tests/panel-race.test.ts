@@ -135,8 +135,8 @@ test('a CLI answer that lands while the panel call is in flight is never overwri
   expect(writes).toEqual([])
   expect(readJson(files, path('a', QUESTION))).toMatchObject({ id: QUESTION, key: 'A', by: 'cli' })
   await clock.advance(250)
-  expect(await ui.find({ type: 'Text', text: /Answer A · / })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /Answer B · / })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Keep · / })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Rewrite · / })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -156,6 +156,6 @@ test('a won race writes the pane answer through the CLI and the pane shows its o
   expect(writes).toEqual([path('a', QUESTION)])
   expect(readJson(files, path('a', QUESTION))).toMatchObject({ id: QUESTION, key: 'B', by: 'panel' })
   await clock.advance(250)
-  expect(await ui.find({ type: 'Text', text: /Answer B · / })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Rewrite · / })).toBeDefined()
   await ui.unmount()
 })
