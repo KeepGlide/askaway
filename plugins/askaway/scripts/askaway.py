@@ -10,7 +10,7 @@ import os
 import sys
 
 if sys.version_info < (3, 12):  # runs before any statement that could fail on an older Python
-    print('{"error": "askaway needs Python 3.12 or newer"}')
+    print('{"error": "askaway needs Python 3.12 or newer"}', file=sys.stderr)
     sys.exit(0)
 
 
@@ -146,6 +146,8 @@ UNDELIVERED_TTL_MS: Final = 7 * DAY_MS
 PRUNE_INTERVAL_S: Final = 86_400
 PRUNE_STAMP: Final = "last_prune"  # the daily cleanup's stamp file, in the state folder
 CLOCK_JUMP_S: Final = 7 * 86_400  # a daily stamp older than this means the wall clock moved, not a missed day
+CLOCK_MARK: Final = "clock_mark"  # the newest wall-clock time the unread-reply TTL has read; its mtime, moved forward only
+CLOCK_MARK_WRITE_MS: Final = 60_000  # the mark is rewritten only once it trails the clock by this much
 RELEASED_SUFFIX: Final = ".desktop-released.json"
 TEMP_STALE_S: Final = 86_400
 STATE_FOLDER_MODE: Final = 0o700  # the state folder and its folders: other local users see no ids, names or sizes
@@ -203,6 +205,9 @@ HOME_VAR: Final = "ASKAWAY_HOME"
 ASK_LOCK: Final = ".ask.lock"  # the state folder's lock file: held by each ask from its duplicate check to its write
 ANSWER_DENIED: Final = ("Denied: an Askaway question is answered only by the user, in the Askaway panel, never "
                         "from a shell command. Keep working on the recommended option or end the turn.")
+AWAY_DENIED: Final = ("Denied: the Askaway away mode is switched only by the user, in the Askaway panel or the user's "
+                      "own shell, never by a shell command of the agent. Questions keep going to the inbox meanwhile.")
+AWAY_SWITCHES: Final = frozenset({"on", "off"})
 STATE_DENIED: Final = ("Denied: the Askaway state folder is written only by askaway.py itself. The user answers "
                        "in the Askaway panel, so a shell command or a file edit must not write into that folder.")
 FORCE_PRUNE_DENIED: Final = ("Denied: prune --force is for the user's own terminal only. It removes an open question "
@@ -244,8 +249,11 @@ WRITE_CODE: Final = re.compile(r"open\(.*?(?:['\"][wax+]|>)|write|unlink|remove|
                                r"|os\.(?:symlink|link)\(|symlink_to|hardlink_to"
                                r"|touch|truncate|\b(?:rm|mv|cp|tee)\b")
 ANSWER_CODE: Final = re.compile(r"cmd_answer|answer\(|['\"]answer['\"]")
+AWAY_CODE: Final = re.compile(r"['\"]away['\"]|\baway\w*")  # the away switch as a string or as an identifier such as away_path
+AWAY_SWITCH_TEXT: Final = re.compile(r"\baway\s+(?:on|off)\b")
 ASKAWAY_CODE: Final = re.compile(r"import\s+askaway|from\s+askaway\s+import|askaway\.py")
-RUNS_CODE: Final = re.compile(r"subprocess|os\.(?:system|popen|exec\w*|spawn\w*)|\bpty\b|\.main\(|cmd_\w+")
+RUNS_CODE: Final = re.compile(r"subprocess|os\.(?:system|popen|exec\w*|spawn\w*)|\bpty\b|\.main\(|cmd_\w+"
+                              r"|\brunpy\b|\bexec\(")
 
 
 class Origin(NamedTuple):
@@ -302,7 +310,7 @@ def _write_temp(target: Path, data: Mapping[str, Any]) -> Path:
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(data, handle)
+            json.dump(data, handle, allow_nan=False)  # the pane's JSON.parse reads no NaN or Infinity
             handle.flush()
             os.fsync(handle.fileno())
         if target.exists():
@@ -414,13 +422,45 @@ def load_questions() -> tuple[list[dict[str, Any]], list[str]]:
     return sorted(loaded, key=lambda entry: (entry["ts"], entry["id"]), reverse=True), sorted(damaged)
 
 
+def _pruned_since(mark_ms: int) -> bool:
+    """Did a daily prune run after the mark? Then a cleanup cycle ran under the new clock, the acceptance _clock_jumped takes."""
+    try:
+        return (state_home() / PRUNE_STAMP).stat().st_mtime_ns // 1_000_000 > mark_ms
+    except OSError:  # no prune has run yet
+        return False
+
+
+def _clock_reading_ms() -> int:
+    """The time the TTL reads: now, or the newest time seen before when the clock stepped back, so a backward step
+    never extends an unread reply. The mark only moves forward: its mtime is the newest reading. A forward jump of a
+    whole TTL is returned but kept only once a daily prune has run after the mark (_pruned_since): until then a jump
+    that no prune cycle confirms does not move the mark. The mark is rewritten at most once a minute."""
+    now = now_ms()
+    marker = state_home() / CLOCK_MARK
+    try:
+        newest = marker.stat().st_mtime_ns // 1_000_000
+    except OSError:  # no mark yet
+        newest = 0
+    if now <= newest:
+        return newest
+    if newest and now - newest >= UNDELIVERED_TTL_MS and not _pruned_since(newest):
+        return now  # a clock jump of a whole TTL no prune cycle has confirmed: the mark stays where it was
+    if not newest or now - newest > CLOCK_MARK_WRITE_MS:
+        with contextlib.suppress(OSError):  # a state folder that cannot take the mark still reads the clock
+            marker.touch()
+            os.utime(marker, ns=(now * 1_000_000, now * 1_000_000))
+    return now
+
+
 def answer_lapsed(answer: Mapping[str, Any]) -> bool:
     """Is the answer older than the TTL, so it expires unread instead of waiting for a session?
 
-    Never while the daily stamp is older than CLOCK_JUMP_S: that is a clock jump, and the expiry waits one cycle."""
+    Never while the daily stamp is older than CLOCK_JUMP_S: that is a clock jump, and the expiry waits one cycle.
+    A backward clock step reads the newest time seen (_clock_reading_ms), so it does not extend the TTL."""
     ts = answer.get("ts")
-    return (isinstance(ts, int) and ts < now_ms() - UNDELIVERED_TTL_MS
-            and not _clock_jumped(state_home() / PRUNE_STAMP))
+    if not isinstance(ts, int) or _clock_jumped(state_home() / PRUNE_STAMP):
+        return False
+    return ts < _clock_reading_ms() - UNDELIVERED_TTL_MS
 
 
 def item_status(item_id: str) -> tuple[str, str | None]:
@@ -670,6 +710,22 @@ def _options(raw_options: object, gaps: Gaps) -> list[dict[str, Any]]:
     return [_option(raw, key, gaps) for raw, key in objects]
 
 
+ENTRY_FIELDS: Final = frozenset({"question", "title", "risk", "urgency_level", "run_kind", "pause", "options",
+                                 "recommended", *REQUIRED_TEXT})
+
+
+UNKNOWN_KEYS_MAX_BYTES: Final = 4096  # the unknown keys as JSON: a little over the largest text field (600 code points)
+
+
+def _unknown_keys(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """The top-level keys the CLI does not read, kept with the question as the agent sent them (SPEC: unknown keys).
+    Over UNKNOWN_KEYS_MAX_BYTES as JSON the entry is refiled: a blob is not a field the pane can show."""
+    unknown = {key: value for key, value in raw.items() if key not in ENTRY_FIELDS}
+    if len(json.dumps(unknown)) > UNKNOWN_KEYS_MAX_BYTES:  # ASCII by default, so the length is the byte count
+        raise ValueError(f"the unknown keys are over {UNKNOWN_KEYS_MAX_BYTES} bytes as JSON: keep them short or drop them")
+    return unknown
+
+
 def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
     gaps = Gaps()
     risk = _risk(raw, gaps)
@@ -692,6 +748,7 @@ def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
     now = now_ms()
     desktop = desktop_session(origin.session)  # one Desktop scan serves both the title and the family
     return {
+        **_unknown_keys(raw),  # first, so every field below wins over a key of the same name the agent sent
         "v": 1, "id": new_id(now), "ts": now,
         "project": origin.project, "session": origin.session, "run_kind": run_kind,
         "session_title": session_title(origin.session, origin.project, desktop),
@@ -1039,6 +1096,14 @@ def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def _finite_number(text: str) -> float:
+    """A JSON number as a float. NaN, Infinity and a literal that overflows are refused: the pane's JSON.parse cannot read them."""
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError(f"the entry holds {text}, which is not a finite number: write a number or null")
+    return value
+
+
 def _entry_json(json_text: str | None) -> object:
     """The entry as JSON, from --json or stdin; a usage error says what to fix when there is none or it is not JSON."""
     try:
@@ -1049,7 +1114,8 @@ def _entry_json(json_text: str | None) -> object:
     if not text.strip():
         raise ValueError("no entry: pass --json or pipe it on stdin")
     try:
-        return json.loads(text, object_pairs_hook=_unique_keys)
+        return json.loads(text, object_pairs_hook=_unique_keys, parse_float=_finite_number,
+                          parse_constant=_finite_number)
     except (json.JSONDecodeError, RecursionError) as exc:  # the parser's own words do not tell the agent what to fix
         raise ValueError("the entry is not valid JSON: check the quotes and escapes") from exc
 
@@ -1579,7 +1645,9 @@ def render_export(rows: list[dict[str, Any]], fmt: str) -> str:
 
 
 TABLE_HEADERS: Final = ("id", "status", "title", "risk", "age")
-TABLE_TITLE_MAX: Final = 40  # code points, the title column of list --table and status --table
+TABLE_TITLE_COLUMN: Final = TABLE_HEADERS.index("title")
+TABLE_WIDTH: Final = 80  # columns: list --table and status --table fit a default terminal
+TABLE_GAP: Final = 2  # spaces between two columns
 TABLE_BLANK: Final = "-"
 
 
@@ -1594,19 +1662,34 @@ def _age_text(timestamp: object) -> str:
     return "0m"
 
 
+def _column_widths(lines: Sequence[Sequence[str]]) -> list[int]:
+    return [max(len(cell) for cell in column) for column in zip(*lines, strict=True)]
+
+
+def _table_row(item: Mapping[str, Any], entry: Mapping[str, Any]) -> list[str]:
+    return [item["id"], item["status"], str(entry.get("title") or TABLE_BLANK),
+            str(entry.get("risk") or TABLE_BLANK), _age_text(entry.get("ts"))]
+
+
+def _fit_title(lines: list[list[str]]) -> None:
+    """Cut the title cells, in place, to the room the other columns leave in TABLE_WIDTH."""
+    widths = _column_widths(lines)
+    others = sum(widths) - widths[TABLE_TITLE_COLUMN]
+    room = TABLE_WIDTH - others - TABLE_GAP * (len(widths) - 1)
+    for line in lines[1:]:
+        line[TABLE_TITLE_COLUMN] = _clip(line[TABLE_TITLE_COLUMN], room)
+
+
 def _table_text(items: Sequence[Mapping[str, Any]]) -> str:
-    """The items as an aligned text table (id, status, title, risk, age): a header line, then one line per item."""
+    """The items as an aligned text table (id, status, title, risk, age): a header line, then one line per item.
+
+    The title is cut with an ellipsis to the room the other columns leave in TABLE_WIDTH; the other cells stay whole."""
     entries = {entry["id"]: entry for entry in load_questions()[0]}
-    rows = []
-    for item in items:
-        entry = entries.get(item["id"], {})
-        title = _clip(str(entry.get("title") or ""), TABLE_TITLE_MAX)
-        rows.append([item["id"], item["status"], title or TABLE_BLANK, str(entry.get("risk") or TABLE_BLANK),
-                     _age_text(entry.get("ts"))])
-    lines = [list(TABLE_HEADERS), *rows]
-    widths = [max(len(cell) for cell in column) for column in zip(*lines, strict=True)]
-    return "".join("  ".join(cell.ljust(width) for cell, width in zip(line, widths, strict=True)).rstrip() + "\n"
-                   for line in lines)
+    lines = [list(TABLE_HEADERS), *(_table_row(item, entries.get(item["id"], {})) for item in items)]
+    _fit_title(lines)
+    widths = _column_widths(lines)
+    return "".join((" " * TABLE_GAP).join(cell.ljust(width) for cell, width in zip(line, widths, strict=True)).rstrip()
+                   + "\n" for line in lines)
 
 
 def _list_command(args: argparse.Namespace) -> dict[str, Any] | str:
@@ -1963,6 +2046,17 @@ def _answer_reason(argv: Sequence[str], sandboxed: bool) -> str | None:
     return None
 
 
+def _away_reason(argv: Sequence[str], sandboxed: bool) -> str | None:
+    """An away switch typed in a shell, or one a variable could make: the user switches away mode, not the agent."""
+    args = _askaway_args(argv)
+    if args is None or sandboxed:
+        return None
+    words = [word for word in args if not _unquote(word).startswith("-")]
+    if len(words) < 2 or _unquote(words[0]) != "away":
+        return None
+    return AWAY_DENIED if _unquote(words[1]) in AWAY_SWITCHES or _has_expansion(words[1]) else None
+
+
 def _forced_prune_reason(argv: Sequence[str]) -> str | None:
     """A prune with --force, which removes a question whose session has not ended: the user's own terminal only."""
     words = [_unquote(word) for word in _askaway_args(argv) or []]
@@ -1985,6 +2079,13 @@ def _directory_operand(operand: str) -> str | None:
     return None if target == "-" or DIRECTORY_STACK_INDEX.fullmatch(target) or EXPANSION.search(target) else target
 
 
+def _askaway_code_reason(code: str) -> str | None:
+    """Code that names the askaway module or script and either answers a question or switches away mode."""
+    if ANSWER_CODE.search(code):
+        return ANSWER_DENIED
+    return AWAY_DENIED if AWAY_CODE.search(code) else None  # the away switch is the user's, as _away_reason holds it
+
+
 def _code_reason(code: str, *, sandboxed: bool) -> str | None:
     """Code that writes the state folder, or that answers a question (an answer into a sandbox home is fine).
 
@@ -1994,8 +2095,8 @@ def _code_reason(code: str, *, sandboxed: bool) -> str | None:
     """
     if any(STATE_MENTION.search(line) and WRITE_CODE.search(line) for line in code.splitlines()):
         return STATE_DENIED
-    if not sandboxed and ASKAWAY_CODE.search(code) and ANSWER_CODE.search(code):
-        return ANSWER_DENIED
+    if not sandboxed and ASKAWAY_CODE.search(code) and (reason := _askaway_code_reason(code)) is not None:
+        return reason
     if not sandboxed and "askaway" in code and RUNS_CODE.search(code):
         return ANSWER_DENIED  # the answer word may be built at run time; running the CLI from code is the route
     return None
@@ -2070,10 +2171,12 @@ def _sandbox_value(value: str, cwd: str) -> bool:
 
 
 def _unreadable_reason(command: str) -> str | None:
-    """A command that does not read (an open quote): refused when it names the state folder or an answer."""
+    """A command that does not read (an open quote): refused when it names the state folder, an answer or an away switch."""
     if STATE_MENTION.search(command):
         return STATE_DENIED
-    return ANSWER_DENIED if "askaway" in command and "answer" in command else None
+    if "askaway" in command and "answer" in command:
+        return ANSWER_DENIED
+    return AWAY_DENIED if "askaway" in command and AWAY_SWITCH_TEXT.search(command) else None
 
 
 class _ShellScan:
@@ -2122,7 +2225,7 @@ class _ShellScan:
     def _checks(self, simple: _Simple, argv: Sequence[str], env: Mapping[str, str], home: str) -> str | None:
         sandboxed = bool(home) and (self.cwd_known or os.path.isabs(home)) and _sandbox_value(home, self.cwd)
         askaway_home = home if sandboxed else str(DEFAULT_HOME)
-        checks = [_answer_reason(argv, sandboxed), _forced_prune_reason(argv),
+        checks = [_answer_reason(argv, sandboxed), _away_reason(argv, sandboxed), _forced_prune_reason(argv),
                   self._write_reason(simple, argv, askaway_home), self._nested(simple, env, argv)]
         code = _inline_code(argv)
         if code is not None:
