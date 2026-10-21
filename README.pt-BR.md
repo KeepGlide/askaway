@@ -21,7 +21,7 @@ Um cartão de pergunta aparece no painel do Askaway para cada decisão que um ag
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Acesso antecipado (0.4.0-beta.33):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável. As mudanças desta versão estão listadas no [CHANGELOG.md](CHANGELOG.md).
+> ⚠️ **Acesso antecipado (0.4.0-beta.34):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável. As mudanças desta versão estão listadas no [CHANGELOG.md](CHANGELOG.md).
 
 ## 💡 O que é
 
@@ -53,7 +53,7 @@ O Askaway não:
 - **Uma opção recomendada.** Cada pergunta traz a opção que o agente escolheria, então a sessão segue trabalhando em vez de esperar por você.
 - **Primeiro clique no desktop.** Cada botão mantém o seu identificador de clique entre as redesenhas (`hooks/held.ts`), que era a causa do primeiro clique que o desktop perdia.
 - **Pausa conforme o risco.** Uma pergunta com `risk` alto pausa a sessão cujo id ela traz, até a resposta ser entregue a essa sessão. Uma pergunta do Codex não tem id de sessão: ela responde `"action": "pause"`, mas nada segura uma execução do Codex, então o script dela espera a resposta sozinho ([Pelo Codex](#-pelo-codex)). Perguntas de risco baixo e médio nunca pausam.
-- **Dois idiomas.** Inglês e português do Brasil, pelo seu locale ou com `/askaway lang`.
+- **Dois idiomas.** Inglês e português do Brasil, pelo seu locale ou com `/askaway lang`. Uma pergunta pode trazer as próprias `translations`, e `/askaway lang` troca o painel inteiro.
 
 ## ⚙️ Como funciona
 
@@ -394,10 +394,10 @@ Os limites conhecidos da pasta de estado de um só usuário estão nas seções 
 
 | Categoria | Testes |
 |---|---|
-| Mod (TypeScript), `plugins/askaway/tests/` | 425 |
-| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 842 |
+| Mod (TypeScript), `plugins/askaway/tests/` | 439 |
+| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 867 |
 
-Contagens de `claude plugin test plugins/askaway` (425 passam, 0 falham) e `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts` (842 testes), em 2026-10-21.
+Contagens de `claude plugin test plugins/askaway` (439 passam, 0 falham) e `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts` (867 testes), em 2026-10-21.
 
 ## 🔧 Desenvolvimento
 
