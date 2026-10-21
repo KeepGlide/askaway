@@ -63,6 +63,7 @@ The CLI refuses longer text as `too long (n/limit)` and names the field, so keep
 | `undo` | yes | 300 | For example `changing later ≈ 10 min`. |
 | `recommended` | yes | | One of the option keys. Absent or null is listed in `missing`. |
 | `risk` | yes | | `low`, `medium` or `high`. |
+| `translations` | no | as the main field | The same text in the panel's other language, so `/askaway lang` switches the whole card at once. An object keyed by `en` and `pt-BR` only; each language holds any of `title`, `question`, `context`, `what`, `problem`, `analogy`, `why`, `how`, `gains`, `losses`, `urgency`, `undo`, plus `options` keyed by the main option keys with any of `label`, `does`, `pros`, `cons`, `tradeoff`. Each string is checked like its main field; a refusal names its path, such as `translations.pt-BR.options.Z: not a key of the main options`. A missing field shows the main text. A translation with `question` and no `title` gets its title from that question, cut to 60, as the main title does. `"translations": null` counts as absent; inside a language, a null or blank string is refused as `missing`. |
 | `options` | yes | | At least 2. Keys are consecutive uppercase letters from A, in order (A, B, C). Each has `key`, `label` (300), `does`, `pros`, `cons` (300 each, all required; `does`, `pros` and `cons` need at least 3 words each), `tradeoff` (300, required; one line by guidance, as the CLI joins line breaks) and `fit` (integer 0 to 100, or `null` for no estimate; required). An option whose `key` is absent, blank or not a string is still checked: its other gaps are listed under `#<n>` (its position) in `by_option`, so one refile lists every gap. |
 
 The CLI refuses a long text under 3 words as `placeholder`, as it does text made only of `TBD`, `todo`, `n/a` or `lorem`. Dots and the ellipsis character `…` are not words, so text made only of them, such as `...` or `…`, is refused too. For an unspaced script (CJK), the short-text rule counts letters and digits instead of words, and fewer than 6 is refused. Do not pass `session` or `project`: the CLI fills them from the environment and the working directory. A subagent sends `"run_kind":"subagent"`.
@@ -140,6 +141,11 @@ The CLI prints one JSON line: `{"id":"q-...","recommended":"A","title":"...","ac
 ## Rules
 
 - One question per decision. Do not file the same question twice.
+- Write the main text in the language the user speaks with you (the conversation's
+  language; for a Portuguese-speaking user, Brazilian Portuguese), and put the same
+  text in the panel's other language under `translations` (`en` or `pt-BR`), so the
+  card follows `/askaway lang` at once. Option keys, `risk`, `recommended` and
+  `fit` are never translated.
 - Never invent an answer, never file to hand over routine work, and never call
   `answer` yourself: only the user answers.
 - Set `risk` to `high` for real files, credentials and irreversible actions
@@ -181,4 +187,23 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask <<'JSON'
   "recommended": "A"
 }
 JSON
+```
+
+The same entry with a Brazilian Portuguese translation, so `/askaway lang pt-BR` turns the
+whole card at once, adds one top-level key (also run through `ask` and accepted). A field
+left out of the translation shows the main text:
+
+```json
+"translations": {
+  "pt-BR": {
+    "title": "Local de instalação no Windows",
+    "question": "Onde o build do Windows deve instalar para cada usuário?",
+    "what": "O instalador do Windows decide onde o app fica no disco. A spec diz que o app instala na pasta do usuário atual, sem precisar de admin. O código hoje grava em `Program Files`, que exige admin.",
+    "options": {
+      "A": {"label": "Pasta do usuário", "tradeoff": "Seguro de aceitar e fácil de mudar depois."},
+      "B": {"label": "Program Files para todos"},
+      "C": {"label": "Pasta que o usuário escolhe"}
+    }
+  }
+}
 ```

@@ -2,8 +2,25 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.33, set by the beta.33 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.34, set by the beta.34 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.34] - 2026-10-21
+
+Owner report on beta.33: after `/askaway lang` the pane's labels switched, but the question's text stayed in the
+language the filing agent wrote it in. The pane never translates agent text, so a question can now carry its own
+translation (JEV B, 0.95).
+
+### Added
+- `ask` accepts an optional `translations` object keyed by `en` and `pt-BR` (`_translations` and `_translated_text`, `scripts/askaway.py`): each language holds any of the question's text fields and, per main option key, any of `label`, `does`, `pros`, `cons`, `tradeoff`; every string is checked, capped and cleaned like its main field, a refusal names its path, and the object is not counted in the 4096-byte unknown-keys cap. A translation with `question` and no `title` gets the translated question, cut to 60, as its title (`_translated_language`), so the title rows switch language with the question (review, JEV A 0.93).
+- `localizedQuestion` and `translationsOf` (`hooks/model.ts`) draw a question's translation for the language `/askaway lang` chose, field by field with the main text as fallback, in the card, tree rows, history rows, footer, new-question toast and `/askaway` text list (`hooks/pane.tsx`, `hooks/register.tsx`); new types in `types/index.d.ts`.
+- `askaway-question-playbook`: write the main text in the user's language and the panel's other language under `translations`, with a worked example accepted by `ask`.
+
+### Tests
+- `scripts/tests/test_askaway.py`: a pt-BR translation stored as sent and cleaned; 18 refile cases each naming its path (with `pt` as a language and a 61-character translated title); the derived translated title; translations outside the unknown-keys cap; the delivery line unchanged, also through a shared `tests/delivery-lines.ts` case.
+- `tests/askaway.test.ts`: parse, malformed and non-object translations; the overlay with per-field fallback; list, history and tree rows, the footer and the new-question toast in both languages; a `pt-BR` translation drawn after `/askaway lang pt-BR`; `/askaway lang en` and back redraw a translated card at once; the delivery line unchanged.
+
+Gates: plugin tests 439 pass; pytest 867 passed; `claude plugin validate` passed; `biome lint` clean.
 
 ## [0.4.0-beta.33] - 2026-10-21
 
