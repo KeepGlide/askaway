@@ -609,10 +609,10 @@ function renderFirstBlock(ui: Ui, question: Question, isLeaving: boolean): Rende
 // The key and the label are one line each (singleLine), so a line break in a label cannot draw a fake option row.
 function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, option: QuestionOption): RenderElement {
   const { Box, Button, Text } = ui
-  const { question, isLeaving, isMoveLocked, wizard, held, surface } = card
+  const { question, isLeaving, isMoveLocked, wizard, held } = card
   const isDisabled = isLeaving || isMoveLocked
-  // The Desktop dims an option's sub-rows and the terminal draws them plain (look.ts, M58); a leaving card dims everything.
-  const isSubRowDim = isLeaving || surface === 'desktop'
+  // The sub-rows are plain on both surfaces; a leaving card dims them with the rest of it (M58 reverted, 2026-10-21).
+  const isSubRowDim = isLeaving
   const isPicked = wizard.picks[question.id]?.key === option.key
   const isRecommended = option.key === question.recommended
   const pickMark = isPicked ? '✓ ' : ''

@@ -1066,6 +1066,9 @@ async function setLang($: EngineInterface, value: string): Promise<string> {
   const chosen = resolveLang(choice, await detectedLang($))
   await update($, langAtom, () => chosen)
   await registerCommand($, chosen)
+  // The engine keeps the pane's last draw until something asks for a new one (the poll does so in mergeBoard):
+  // ask now, so the open card changes language with the labels instead of at the next question.
+  $.ui.invalidate('ui.render')
   return t(chosen, 'command.langSet', { lang: choice === 'auto' ? choice : LANG_NAMES[chosen] })
 }
 
