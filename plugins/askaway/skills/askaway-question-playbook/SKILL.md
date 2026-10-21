@@ -46,7 +46,7 @@ Write each question in this order. The reader has not seen the conversation.
 
 ## Fields
 
-The CLI refuses longer text as `too long (n/limit)` and names the field, so keep each field within its limit. An absent, null or blank title falls back to the question, cut to 60.
+The CLI refuses longer text as `too long (n/limit)` and names the field, so keep each field within its limit. An absent, null or blank title falls back to the question, cut to 60. The CLI stores any top-level key it does not read with the question as sent; the fields it writes win over a key of the same name.
 
 | Field | Required | Limit | Rule |
 |---|---|---|---|

@@ -2,8 +2,43 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.31, set by the beta.31 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.32, set by the beta.32 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.32] - 2026-10-21
+
+Owner replies to the gauntlet-5 questions.
+
+### Fixed
+
+- M42: `_table_text` and `_fit_title` (`scripts/askaway.py`) cut the title with an ellipsis so `list --table` and `status --table` fit 80 columns; id, status, risk and age stay whole.
+- M43: the module version guard (`scripts/askaway.py`) prints the JSON error to stderr instead of stdout below Python 3.12, and still exits 0.
+- M44: `answer_lapsed` and `_clock_reading_ms` (`scripts/askaway.py`) measure the unread-reply TTL against the newest clock time seen (`clock_mark`), so a backward clock step no longer extends it.
+- M48: `_away_reason` (`scripts/askaway.py`) denies `away on` and `away off` from the agent's Bash; the panel's toggle (`toggleAway`, `hooks/register.tsx`) is unchanged.
+- M45: `renderQuestion` (`hooks/pane.tsx`) draws the `option.fitHint` line (`hooks/i18n.ts`) once per question when an option has a fit, so "fit N" is explained on the 0 to 100 scale.
+- M51: `listText` (`hooks/model.ts`) reads the English `list.head.one`, `list.head.many` and `list.row` strings (`hooks/i18n.ts`), which now say "pending" as the pane does.
+- M46: `submittedOther` (`hooks/wizard.ts`): while a label is kept, blank text on blur or Enter is a no-op and the label stays picked.
+- M58: `TEXT_CONTRAST` (`hooks/look.ts`) records the measured Desktop dim (opacity .6: 5.17:1 light, 7.26:1 dark) and the engine's inactive token (5.74:1, 6.23:1) in place of the 50% blend; `renderOption` (`hooks/pane.tsx`) draws option sub-rows dim on the Desktop and, on the terminal, only while the card fades.
+- M15: `renderDamagedPause` (`hooks/pane.tsx`) draws a notice naming a damaged q/ file that pauses its session, with a Dismiss; `damagedPauseOf` (`hooks/model.ts`) and `damagedPausesOf` (`hooks/register.tsx`) find those files; Dismiss runs `prune --id <id> --strict` (no `--force`) through `dismissOrSay` (`hooks/register.tsx`); new state key `damagedPauses` (`types/index.d.ts`).
+- M46b: `submittedTypedOther` (`hooks/wizard.ts`) keeps a kept label when Submit all carries blank Other text.
+- Review: `dismissQuestion` and `dismissOrSay` (`hooks/register.tsx`) run the damaged-pause Dismiss without `--force`, so a question the CLI reads is refused and kept with a toast; the ended-card Dismiss keeps `--force`.
+- M48: `_unreadable_reason` (`scripts/askaway.py`) denies an unreadable Bash command that names the askaway script with `away on|off`, as `_away_reason` does.
+- M48: `_askaway_code_reason` and `RUNS_CODE` (`scripts/askaway.py`) deny `away` next to the askaway literal and count `runpy` and `exec(` as running the script.
+- M44: `_clock_reading_ms` (`scripts/askaway.py`) persists a reading a TTL or more ahead of the clock mark only once the daily prune stamp is newer than the mark, and rewrites the mark only when it trails the clock by over a minute.
+- Review: `_entry_json` and `_finite_number` (`scripts/askaway.py`) refile NaN, Infinity and overflowing numbers; `_write_temp` writes with `allow_nan=False`; `_unknown_keys` refiles an entry whose unknown keys exceed 4096 bytes as JSON (`UNKNOWN_KEYS_MAX_BYTES`).
+
+### Changed
+
+- M41: `build_entry` and `_unknown_keys` (`scripts/askaway.py`) store unknown top-level keys of an ask entry with the question instead of dropping them; known keys keep their validation.
+- M29b: `renderOther` (`hooks/pane.tsx`) draws a chosen kept label as the primary button with a "✓ " mark; `input.send` (`hooks/i18n.ts`) renames the field's button to Apply / Aplicar.
+
+### Tests
+
+- M12b: test-only pins in the CLI, the TTL edge and two consecutive runs (`scripts/tests/test_askaway.py`).
+- Review: `scripts/tests/test_askaway.py` asserts the away denial reason exactly and pins the sandboxed, quoted, `bash -c` and variable forms; `tests/askaway.test.ts` pins the damaged-pause guards (a readable question, a delivered id, a bad session name) and a refused prune.
+- M12b: pane pins in `tests/race.test.ts` (a marker written between the read and the link) and `tests/askaway.test.ts` (the hand-off once only, B3 M18; the TTL, B2 M32).
+
+Gates: plugin tests 424 pass; pytest 842 passed; `claude plugin validate` passed; `biome lint` clean.
 
 ## [0.4.0-beta.31] - 2026-10-21
 
