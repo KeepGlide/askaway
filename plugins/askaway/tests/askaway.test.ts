@@ -15,6 +15,7 @@ import {
   leadOf,
   leavesOtherField,
   listText,
+  localizedQuestion,
   parseAnswer,
   parseDelivery,
   parseQuestion,
@@ -712,6 +713,16 @@ test('model: the footer reads the counts and the last answer in English and Port
   expect(footerText('en', withOpen, now)).toBeUndefined()
 })
 
+test('model: the footer names the last answer by its title in each language, the pt-BR title in Portuguese and the main one in English', () => {
+  const board: Board = {
+    questions: [parsedQuestion('q-f-000001', 1, { title: 'Pick the queue', translations: { 'pt-BR': { title: 'Escolha a fila' } } })],
+    answers: [answerOf('q-f-000001', 'A', FOOT_DAY - 12 * FOOT_MIN)],
+    delivered: [{ id: 'q-f-000001', expired: false }],
+  }
+  expect(footerText('en', board, FOOT_DAY)).toBe('1 answered in the last 24 h · last: Pick the queue → A, 12 min ago')
+  expect(footerText('pt', board, FOOT_DAY)).toBe('1 respondida nas últimas 24 h · última: Escolha a fila → A, há 12 min')
+})
+
 test('model: the footer reads the zero and the singular forms in both languages', () => {
   expect(footerText('en', EMPTY_BOARD, FOOT_DAY)).toBe('none answered in the last 24 h')
   expect(footerText('pt', EMPTY_BOARD, FOOT_DAY)).toBe(
@@ -838,6 +849,59 @@ test('model: the list header and rows read in each language, with away mode when
     'Askaway: 1 pendente, modo ausente ligado.\npendente · q-m-000001 · Title q-m-000001 (recomendada A)',
   )
   expect(listText('pt', [], false)).toBe('Askaway: 0 pendentes.')
+})
+
+// beta.34: the optional `translations` of a question (per language, per field and per option) and the overlay the pane draws.
+test('model: parseQuestion keeps each language of translations, and drops every malformed part without damaging the question', () => {
+  const parsed = parsedQuestion('q-t-000001', 10, {
+    translations: {
+      en: { title: 'Cache', question: 'Where?', what: '', analogy: 42, options: { A: { label: 'Disk', does: 'Writes', fit: 9 }, Z: { label: 'Ghost' } } },
+      fr: { title: 'Cache FR' },
+      'pt-BR': 'not an object',
+    },
+  })
+  expect(parsed.translations).toEqual({ en: { title: 'Cache', question: 'Where?', options: { A: { label: 'Disk', does: 'Writes' } } } })
+})
+
+test('model: a translations value that is not an object reads as none, and the question still parses', () => {
+  expect(parsedQuestion('q-t-000002', 10, { translations: ['en'] }).translations).toBeUndefined()
+  expect(parsedQuestion('q-t-000003', 10, { translations: 'oops' }).translations).toBeUndefined()
+  expect(parsedQuestion('q-t-000004', 10, { translations: { en: 'oops' } }).translations).toEqual({})
+})
+
+test('model: localizedQuestion overlays the language per field and per option, and a question with no translation for it is returned as it is', () => {
+  const translated = parsedQuestion('q-t-000005', 10, {
+    question: 'Onde?',
+    translations: { en: { title: 'Cache', question: 'Where?', options: { A: { label: 'Disk' } } } },
+  })
+  const english = localizedQuestion(translated, 'en')
+  expect(english.title).toBe('Cache')
+  expect(english.question).toBe('Where?')
+  expect(english.options.map(option => option.label)).toEqual(['Disk', 'Rewrite'])
+  expect(english.options[0]?.tradeoff).toBe('cheap')
+  expect(english.recommended).toBe('A')
+  expect(localizedQuestion(translated, 'pt')).toBe(translated)
+  const plain = parsedQuestion('q-t-000006', 10)
+  expect(localizedQuestion(plain, 'en')).toBe(plain)
+})
+
+test('model: the delivery line of a translated question is the untranslated one, in every language', () => {
+  const translated = parsedQuestion('q-t-000007', 10, { translations: { en: { title: 'Cache', options: { A: { label: 'Disk' } } } } })
+  const plain = parsedQuestion('q-t-000007', 10)
+  const answer = answerOf('q-t-000007', 'B', 5)
+  expect(deliveryLine(translated, answer)).toBe(deliveryLine(plain, answer))
+  expect(deliveryLine(translated, answer)).toContain('"Keep"')
+  expect(deliveryLine(translated, answer)).toContain('"Title q-t-000007"')
+})
+
+test('model: the text list and the history rows draw the translated title in the language that is open', () => {
+  const translatedQuestion = parsedQuestion('q-t-000008', 10, { translations: { en: { title: 'Cache' } } })
+  expect(listText('en', [translatedQuestion], false)).toContain('Cache')
+  expect(listText('pt', [translatedQuestion], false)).toContain('Title q-t-000008')
+  const board = { ...EMPTY_BOARD, questions: [translatedQuestion], answers: [answerOf(translatedQuestion.id, 'A', 5)] }
+  const rows = JSON.stringify(historyOf('en', board, NO_STATUS))
+  expect(rows).toContain('"title":"Cache"')
+  expect(rows).not.toContain('Title q-t-000008')
 })
 
 test('model: the due answers group by asking session, and a question with no session is never grouped', () => {
@@ -2179,6 +2243,26 @@ test('a new open entry raises one toast, and the entries already waiting at star
   expect(toasts).toHaveLength(1)
 })
 
+test('the new-question toast reads the title in the current language: the pt-BR title in Portuguese, the en title in English', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { toasts, clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  await clock.advance(5000)
+  files.set(path('q', 'q-l5-eeeeee'), question('q-l5-eeeeee', 3000, {
+    title: 'Pick a parser',
+    translations: { 'pt-BR': { title: 'Escolha um parser' } },
+  }))
+  await clock.advance(5000)
+  expect(toasts).toEqual(['Nova pergunta: Escolha um parser'])
+  await run($, 'lang en')
+  files.set(path('q', 'q-l6-ffffff'), question('q-l6-ffffff', 5000, {
+    title: 'Escolha uma fila',
+    translations: { en: { title: 'Pick a queue' } },
+  }))
+  await clock.advance(5000)
+  expect(toasts).toEqual(['Nova pergunta: Escolha um parser', 'New question: Pick a queue'])
+})
+
 test('/askaway away toggles away.json and reports the new state', async ($, on) => {
   const files = new Map<string, string>()
   stubHost(on, files)
@@ -2278,6 +2362,124 @@ test('/askaway lang en draws the open card in English on the very next draw, wit
   expect(drawn).toContain('Analogy: ')
   expect(drawn).toContain('See session')
   expect(await labelOf(pane, 'nav-back')).toBe('← Back')
+  await pane.unmount()
+})
+
+// beta.34: a pt-BR card whose question carries an en translation (the agent wrote the main text in Portuguese).
+const TRANSLATED_CACHE = {
+  title: 'Cache',
+  question: 'Onde guardar o cache?',
+  what: 'O cache guarda as respostas.',
+  analogy: 'Um atalho',
+  options: [
+    { key: 'A', label: 'JSONL', tradeoff: 'simples', does: 'Guarda num arquivo', pros: 'Fácil', cons: 'Lento', fit: 88 },
+    { key: 'B', label: 'SQLite', tradeoff: 'pesado', fit: 55 },
+  ],
+  translations: {
+    en: {
+      title: 'Cache',
+      question: 'Where should the cache live?',
+      what: 'The cache keeps the answers.',
+      analogy: 'A shortcut',
+      options: {
+        A: { label: 'JSONL file', tradeoff: 'simple', does: 'Keeps it in a file', pros: 'Easy', cons: 'Slow' },
+        B: { label: 'SQLite file', tradeoff: 'heavy' },
+      },
+    },
+  },
+}
+
+test('/askaway lang en draws a translated card in English on the very next draw, and lang pt-BR draws it in Portuguese again', async ($, on) => {
+  const files = new Map([[path('q', 'q-t-000010'), question('q-t-000010', 1000, TRANSLATED_CACHE)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($, 'desktop')
+  expect(JSON.stringify(await pane.drawn())).toContain('Onde guardar o cache?')
+  await run($, 'lang en')
+  const english = JSON.stringify(await pane.drawn())
+  expect(english).toContain('Where should the cache live?')
+  expect(english).toContain('The cache keeps the answers.')
+  expect(english).toContain('A shortcut')
+  expect(english).toContain('JSONL file')
+  expect(english).toContain('Keeps it in a file')
+  expect(english).not.toContain('Onde guardar')
+  expect(english).not.toContain('JSONL"')
+  await run($, 'lang pt-BR')
+  const portuguese = JSON.stringify(await pane.drawn())
+  expect(portuguese).toContain('Onde guardar o cache?')
+  expect(portuguese).toContain('Guarda num arquivo')
+  expect(portuguese).not.toContain('Where should the cache live?')
+  await pane.unmount()
+})
+
+test('a pt-BR translation is read and drawn: the main text is English, and /askaway lang pt-BR draws the Portuguese card', async ($, on) => {
+  const files = new Map([[path('q', 'q-t-000014'), question('q-t-000014', 1000, {
+    translations: {
+      'pt-BR': { title: 'Cache em disco', question: 'Onde guardar o cache?', options: { A: { label: 'Manter', does: 'Mantém como está' } } },
+    },
+  })]])
+  stubHost(on, files, true, {}, {}, { LANG: 'en_US.UTF-8' })
+  await $.session.start(SESSION)
+  const pane = await mountPane($, 'desktop')
+  expect(JSON.stringify(await pane.drawn())).toContain('Which way for q-t-000014?')
+  await run($, 'lang pt-BR')
+  const portuguese = JSON.stringify(await pane.drawn())
+  expect(portuguese).toContain('Cache em disco')
+  expect(portuguese).toContain('Onde guardar o cache?')
+  expect(portuguese).toContain('Mantém como está')
+  expect(portuguese).not.toContain('Which way for q-t-000014?')
+  await pane.unmount()
+})
+
+test('a question with no translations draws its own text in every language', async ($, on) => {
+  const files = new Map([[path('q', 'q-t-000011'), question('q-t-000011', 1000)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($, 'terminal')
+  await run($, 'lang en')
+  expect(JSON.stringify(await pane.drawn())).toContain('Which way for q-t-000011?')
+  await run($, 'lang pt-BR')
+  expect(JSON.stringify(await pane.drawn())).toContain('Which way for q-t-000011?')
+  await pane.unmount()
+})
+
+test('a partial translation falls back per field and per option to the main text', async ($, on) => {
+  const files = new Map([[path('q', 'q-t-000012'), question('q-t-000012', 1000, {
+    title: 'Cache',
+    question: 'Onde?',
+    what: 'Texto principal.',
+    options: [
+      { key: 'A', label: 'Manter', tradeoff: 'simples', fit: 80 },
+      { key: 'B', label: 'Reescrever', tradeoff: 'lento', fit: 40 },
+    ],
+    translations: { en: { question: 'Where?', options: { B: { label: 'Rewrite it' } } } },
+  })]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($, 'terminal')
+  await run($, 'lang en')
+  const drawn = JSON.stringify(await pane.drawn())
+  expect(drawn).toContain('Where?')
+  expect(drawn).toContain('Texto principal.')
+  expect(drawn).toContain('Manter')
+  expect(drawn).toContain('Rewrite it')
+  expect(drawn).not.toContain('Onde?')
+  expect(drawn).not.toContain('Reescrever')
+  await pane.unmount()
+})
+
+test('a malformed translations value is ignored and the card still draws in its main language', async ($, on) => {
+  const files = new Map([[path('q', 'q-t-000013'), question('q-t-000013', 1000, {
+    question: 'Onde?',
+    translations: { en: { title: 42, question: '', options: 'x' } },
+  })]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($, 'terminal')
+  await run($, 'lang en')
+  const drawn = JSON.stringify(await pane.drawn())
+  expect(drawn).toContain('Onde?')
+  expect(drawn).toContain('Keep')
   await pane.unmount()
 })
 
@@ -3541,6 +3743,27 @@ const treeFiles = (): Map<string, string> =>
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 3000, { session: 's1', session_title: 'monta a consulta' })],
     [path('q', 'q-l3-cccccc'), question('q-l3-cccccc', 2000, { session: 's2' })],
   ])
+
+test('a tree row reads its title in the current language: the pt-BR title in Portuguese, the main title in English', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 's1', session_title: 'monta a consulta' })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 3000, {
+      session: 's1',
+      session_title: 'monta a consulta',
+      title: 'Store cache',
+      translations: { 'pt-BR': { title: 'Cache em disco' } },
+    })],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  expect(await textsOf(pane)).toContain('○ Cache em disco')
+  await run($, 'lang en')
+  const english = await textsOf(pane)
+  expect(english).toContain('○ Store cache')
+  expect(english).not.toContain('○ Cache em disco')
+  await pane.unmount()
+})
 
 test('the tree draws the group row in bold, each session with ├ or └, and one mark per question', async ($, on) => {
   stubHost(on, treeFiles())
