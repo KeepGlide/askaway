@@ -519,6 +519,12 @@ LONG_TEXT: Final = frozenset({"question", "what", "problem", "analogy", "why", "
                               "does", "pros", "cons"})
 
 
+TOP_TEXT_LIMITS: Final = {"question": QUESTION_MAX, **{name: TEXT_CAPS.get(name, TEXT_MAX) for name in REQUIRED_TEXT}}
+TRANSLATION_LANGUAGES: Final = frozenset({"en", "pt-BR"})  # the pane's two languages (SPEC: translations)
+TRANSLATION_TOP_LIMITS: Final = {**TOP_TEXT_LIMITS, "title": TITLE_MAX}
+TRANSLATION_OPTION_LIMITS: Final = dict(OPTION_TEXT)
+
+
 def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
@@ -619,8 +625,7 @@ class EntryError(ValueError):
 
 def _top_texts(raw: Mapping[str, Any], gaps: Gaps) -> dict[str, str | None]:
     texts: dict[str, str | None] = {}
-    for name, limit in (("question", QUESTION_MAX), *((name, TEXT_CAPS.get(name, TEXT_MAX))
-                                                     for name in REQUIRED_TEXT)):
+    for name, limit in TOP_TEXT_LIMITS.items():
         texts[name] = _checked(gaps.top, name, raw.get(name), limit)
     return texts
 
@@ -710,8 +715,76 @@ def _options(raw_options: object, gaps: Gaps) -> list[dict[str, Any]]:
     return [_option(raw, key, gaps) for raw, key in objects]
 
 
+def _translated_text(path: str, name: str, raw: object, limit: int, gaps: Gaps) -> str | None:
+    """One translated string, checked like the main field of its name; a refused one is a note that names its path."""
+    text, reason = _read_text(name, raw, limit)
+    if text is not None and name == "what" and _sentence_count(text) < MIN_SENTENCES:
+        reason = f"needs at least {MIN_SENTENCES} sentences"
+    if reason is not None:
+        gaps.notes.append(f"{path}: {reason}")
+    return text if reason is None else None
+
+
+def _translated_fields(path: str, fields: Mapping[str, object], limits: Mapping[str, int],
+                       gaps: Gaps) -> dict[str, str]:
+    cleaned: dict[str, str] = {}
+    for name, raw in fields.items():
+        if name not in limits:
+            gaps.notes.append(f"{path}.{name}: not a translatable field")
+            continue
+        text = _translated_text(f"{path}.{name}", name, raw, limits[name], gaps)
+        if text is not None:
+            cleaned[name] = text
+    return cleaned
+
+
+def _translated_options(path: str, raw: object, option_keys: list[str], gaps: Gaps) -> dict[str, dict[str, str]]:
+    if not isinstance(raw, dict) or not raw:
+        gaps.notes.append(f"{path}: must be a non-empty object keyed by option key")
+        return {}
+    cleaned: dict[str, dict[str, str]] = {}
+    for key, fields in raw.items():
+        option_path = f"{path}.{key}"
+        if key not in option_keys:
+            gaps.notes.append(f"{option_path}: not a key of the main options")
+        elif not isinstance(fields, dict) or not fields:
+            gaps.notes.append(f"{option_path}: must be a non-empty object")
+        else:
+            cleaned[key] = _translated_fields(option_path, fields, TRANSLATION_OPTION_LIMITS, gaps)
+    return cleaned
+
+
+def _translated_language(path: str, raw: object, option_keys: list[str], gaps: Gaps) -> dict[str, Any]:
+    if not isinstance(raw, dict) or not raw:
+        gaps.notes.append(f"{path}: must be a non-empty object")
+        return {}
+    texts = {name: value for name, value in raw.items() if name != "options"}
+    language: dict[str, Any] = _translated_fields(path, texts, TRANSLATION_TOP_LIMITS, gaps)
+    if "title" not in texts and "question" in language:  # the main title's rule when absent: the question, clipped
+        language["title"] = _clip(language["question"], TITLE_MAX)
+    if "options" in raw:
+        language["options"] = _translated_options(f"{path}.options", raw["options"], option_keys, gaps)
+    return language
+
+
+def _translations(raw: object, option_keys: list[str], gaps: Gaps) -> dict[str, Any]:
+    """The optional translations object (SPEC: translations), each language checked; {} when the entry has none."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or not raw:
+        gaps.notes.append("translations: must be a non-empty object keyed by language (en or pt-BR)")
+        return {}
+    cleaned: dict[str, Any] = {}
+    for language, fields in raw.items():
+        if language not in TRANSLATION_LANGUAGES:
+            gaps.notes.append(f"translations.{language}: not a language; use en or pt-BR")
+        else:
+            cleaned[language] = _translated_language(f"translations.{language}", fields, option_keys, gaps)
+    return cleaned
+
+
 ENTRY_FIELDS: Final = frozenset({"question", "title", "risk", "urgency_level", "run_kind", "pause", "options",
-                                 "recommended", *REQUIRED_TEXT})
+                                 "recommended", "translations", *REQUIRED_TEXT})
 
 
 UNKNOWN_KEYS_MAX_BYTES: Final = 4096  # the unknown keys as JSON: a little over the largest text field (600 code points)
@@ -735,6 +808,7 @@ def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
     texts = _top_texts(raw, gaps)
     title = _title(raw, texts["question"], gaps)
     options = _options(raw.get("options"), gaps)
+    translations = _translations(raw.get("translations"), [option["key"] for option in options], gaps)
     recommended = raw.get("recommended")
     if recommended is None:
         gaps.top["recommended"] = MISSING
@@ -758,6 +832,7 @@ def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
         **texts,
         "risk": risk, "pause": risk == "high", **urgency,
         "source": origin.source,
+        **({"translations": translations} if translations else {}),
     }
 
 
