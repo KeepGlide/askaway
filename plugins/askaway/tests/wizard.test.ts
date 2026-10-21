@@ -3,6 +3,7 @@ import type { Question } from '../types'
 import {
   EMPTY_WIZARD,
   activeGroup,
+  alignOtherToLabels,
   back,
   choose,
   groupsOf,
@@ -12,6 +13,7 @@ import {
   screenOf,
   submittable,
   submittedOther,
+  submittedTypedOther,
   type Group,
   type Pick,
   type Wizard,
@@ -298,6 +300,29 @@ test('submittedOther keeps at most 500 code points of the trimmed text, so 600 t
   const emoji = submittedOther(EMPTY_WIZARD, 'q-a-000001', '😀'.repeat(600)).picks['q-a-000001']
   expect([...(emoji?.text ?? '')]).toHaveLength(500)
   expect(submittedOther(EMPTY_WIZARD, 'q-a-000001', 'y'.repeat(500)).picks['q-a-000001']?.text).toBe('y'.repeat(500))
+})
+
+test('submittedTypedOther records the typed text as the answer even while a label is kept (Submit all), and blank text takes the pick away', () => {
+  const kept: Wizard = { ...EMPTY_WIZARD, picks: { 'q-a-000001': { key: 'other', text: 'First text' } }, labels: { 'q-a-000001': 'First text' } }
+  expect(submittedTypedOther(kept, 'q-a-000001', '  Second text ').picks).toEqual({ 'q-a-000001': { key: 'other', text: 'Second text' } })
+  expect(submittedTypedOther(kept, 'q-a-000001', 'Second text').labels).toEqual({ 'q-a-000001': 'First text' })
+  expect(submittedTypedOther(kept, 'q-a-000001', '   ').picks).toEqual({})
+})
+
+test('alignOtherToLabels gives a draft Other pick the kept label as its text when the two differ, and leaves the rest alone', () => {
+  const picks = {
+    'q-a-000001': { key: 'other', text: 'Stale text' },
+    'q-b-000002': A,
+    'q-c-000003': { key: 'other', text: 'Same' },
+    'q-d-000004': { key: 'other', text: 'Unlabelled' },
+  }
+  const labels = { 'q-a-000001': 'First text', 'q-c-000003': 'Same' }
+  expect(alignOtherToLabels(picks, labels)).toEqual({
+    'q-a-000001': { key: 'other', text: 'First text' },
+    'q-b-000002': A,
+    'q-c-000003': { key: 'other', text: 'Same' },
+    'q-d-000004': { key: 'other', text: 'Unlabelled' },
+  })
 })
 
 test('keptOther keeps the trimmed text as the label, at most 500 code points, and moves the field round on', () => {

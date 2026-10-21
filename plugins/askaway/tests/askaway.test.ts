@@ -130,11 +130,19 @@ type Holds = {
   failListOf?: string
   failReadOf?: string
   tornWriteTo?: string
+  // Every write whose path holds this text throws (no space left) until the test clears it; the draft and cleared files
+  // are written through a temp file, so their faults name `draft.json` or `cleared.json`, which the temp file's name holds.
+  failingWriteTo?: string
   pruneExit?: number
   refusedReplyId?: string
   listed?: string[]
   // A failing `install -m <mode>` (the panel token file), so the exit code the pane gets is this one.
   installExit?: number
+  // The next prompt.submit fails. A hook that throws counts as skipped, so the host's own answer stands: with none, the
+  // submit rejects and the pane logs the failure. The fault then clears.
+  failSubmitOnce?: boolean
+  // Runs when a link is made, with the target it names: a test writes another window's marker at that moment (Gauntlet 5 review R12).
+  onLink?: (marker: string) => void
 }
 
 // The engine's file calls, answered from an in-memory folder. A read of a missing file rejects, as the host does.
@@ -159,6 +167,8 @@ function stubHost(
   // The shared Clear all (cleared.json) of each press, kept apart from `writes` for the same reason.
   const clearings: string[] = []
   const submits: string[] = []
+  // The argv of each `ln` the pane makes (a delivery marker's no-clobber publish), in order (Gauntlet 5 review R4).
+  const links: string[][] = []
   const calls: { argv: string[]; env?: Record<string, string> }[] = []
   const ended = new Set<string>()
   // The panel token calls in order (`install`, `write`, `chmod`).
@@ -179,6 +189,10 @@ function stubHost(
   on('config.set', (_$, e) => ({ value: e.value }))
   on('prompt.submit', (_$, e) => {
     submits.push(e.text)
+    if (holds.failSubmitOnce) {
+      holds.failSubmitOnce = undefined
+      throw new Error('prompt refused: the session is closing')
+    }
     return { text: e.text }
   })
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
@@ -227,6 +241,9 @@ function stubHost(
       holds.tornWriteTo = undefined
       throw new Error(`ENOSPC: no space left on device: ${e.path}`)
     }
+    if (holds.failingWriteTo !== undefined && e.path.includes(holds.failingWriteTo)) {
+      throw new Error(`ENOSPC: no space left on device: ${e.path}`)
+    }
     if (e.path.endsWith('.tmp')) {
       files.set(e.path, e.text)
       return { value: undefined }
@@ -234,16 +251,6 @@ function stubHost(
     if (e.path.includes('/panel-tokens/')) {
       tokenCalls.push(['write', e.path])
       files.set(e.path, e.text) // the panel's one-shot credential: never held, never counted as an answer
-      return { value: undefined }
-    }
-    if (e.path === `${STATE}/draft.json`) {
-      drafts.push(e.text)
-      files.set(e.path, e.text)
-      return { value: undefined }
-    }
-    if (e.path === `${STATE}/cleared.json`) {
-      clearings.push(e.text)
-      files.set(e.path, e.text)
       return { value: undefined }
     }
     await holds.write
@@ -257,17 +264,33 @@ function stubHost(
   on('process.run', async (_$, e) => {
     // The token folder and mode are set by two plain commands; only the calls to askaway.py are the pane's CLI calls.
     if (e.argv[0] !== 'python3') {
-      tokenCalls.push([...e.argv])
-      if (e.argv[0] === 'install' && e.argv[1] === '-m' && holds.installExit !== undefined) return cliReply('', holds.installExit)
+      if (e.argv[0] === 'install' || e.argv[0] === 'chmod') tokenCalls.push([...e.argv])
+      // A failing `install` says which file it could not make, as the host's install does.
+      if (e.argv[0] === 'install' && e.argv[1] === '-m' && holds.installExit !== undefined) {
+        return { value: { exitCode: holds.installExit, stdout: '', stderr: `install: cannot create regular file '${e.argv[4] ?? ''}': No such file or directory`, isStdoutTruncated: false, isStderrTruncated: false } }
+      }
       // gauntlet 4, B1: `mv -f from to` renames in the stub's folder; the target is recorded as the write it stands for.
+      // The draft and cleared files are recorded apart, as the writes they are.
       if (e.argv[0] === 'mv') {
         const [from = '', to = ''] = e.argv.slice(2)
         const text = files.get(from)
         if (text === undefined) return cliReply('', 1)
         files.delete(from)
         files.set(to, text)
+        if (to === `${STATE}/draft.json`) drafts.push(text)
+        else if (to === `${STATE}/cleared.json`) clearings.push(text)
+        else writes.push(to)
+      }
+      // `ln temp target` is the no-clobber publish (the CLI's create_once): it fails when the target is there.
+      if (e.argv[0] === 'ln') {
+        const [from = '', to = ''] = e.argv.slice(1)
+        links.push([...e.argv])
+        holds.onLink?.(to)
+        if (files.has(to)) return cliReply('', 1)
+        files.set(to, files.get(from) ?? '')
         writes.push(to)
       }
+      if (e.argv[0] === 'rm') files.delete(e.argv[2] ?? '')
       return cliReply('')
     }
     calls.push({ argv: [...e.argv], env: e.init?.env })
@@ -295,7 +318,7 @@ function stubHost(
     writes.push(path('a', id))
     return cliReply(JSON.stringify({ id, key, written: true }))
   })
-  return { toasts, writes, drafts, clearings, submits, clock, calls, ended, tokenCalls, registrations, logs }
+  return { toasts, writes, drafts, clearings, submits, clock, calls, ended, tokenCalls, registrations, logs, links }
 }
 
 // The hook's reply with the result `$.process.run` gives for a child that exited (the fields the pane reads).
@@ -2142,9 +2165,13 @@ test('/askaway away toggles away.json and reports the new state', async ($, on) 
   expect(readJson(files, `${STATE}/away.json`)).toMatchObject({ on: false })
 })
 
-// The file calls writeAtomic makes, on an in-memory folder: a write records its path, and `mv -f|-fT from to` renames
-// within the folder and fails when `from` is gone, as the host does. The test engine has no $.fs of its own.
-function folderEngine(files: Map<string, string>, temps: string[]): EngineInterface {
+// One `mv` the folder engine ran: its argv and the exit code it gave.
+type MoveCall = { argv: string[]; exitCode: number }
+
+// The file calls writeAtomic makes, on an in-memory folder: a write records its path, and `mv from to` renames within the
+// folder and fails when `from` is gone, as the host does. As GNU mv does, `mv -T` refuses a folder at `to`, and a plain `mv`
+// moves `from` into that folder. Each `mv` is recorded in `moves`. The test engine has no $.fs of its own.
+function folderEngine(files: Map<string, string>, temps: string[], moves: MoveCall[] = [], folders = new Set<string>()): EngineInterface {
   return {
     fs: {
       write: async (file: string, text: string) => {
@@ -2156,9 +2183,13 @@ function folderEngine(files: Map<string, string>, temps: string[]): EngineInterf
       run: async (argv: string[]) => {
         const [from = '', to = ''] = argv.slice(2)
         const text = files.get(from)
-        if (text === undefined) return { exitCode: 1, stdout: '', stderr: `mv: no such file ${from}` }
+        // The flags are one word (`-fT`): the T letter is the -T option.
+        const refused = folders.has(to) && (argv[1] ?? '').includes('T')
+        const exitCode = text === undefined || refused ? 1 : 0
+        moves.push({ argv: [...argv], exitCode })
+        if (exitCode !== 0) return { exitCode, stdout: '', stderr: `mv: cannot move ${from} to ${to}` }
         files.delete(from)
-        files.set(to, text)
+        files.set(folders.has(to) ? `${to}/${from.slice(from.lastIndexOf('/') + 1)}` : to, text ?? '')
         return { exitCode: 0, stdout: '', stderr: '' }
       },
     },
@@ -2168,7 +2199,8 @@ function folderEngine(files: Map<string, string>, temps: string[]): EngineInterf
 test('two windows write one target at once: both writes land, and each temp file is dot-prefixed and ends in .tmp', async () => {
   const files = new Map<string, string>()
   const temps: string[] = []
-  const engine = folderEngine(files, temps)
+  const moves: MoveCall[] = []
+  const engine = folderEngine(files, temps, moves)
   const target = `${STATE}/away.json`
   await Promise.all([writeAtomic(engine, target, 'first\n'), writeAtomic(engine, target, 'second\n')])
   expect(['first\n', 'second\n']).toContain(files.get(target))
@@ -2177,6 +2209,25 @@ test('two windows write one target at once: both writes land, and each temp file
     expect.stringMatching(/\/\.away\.json\.[0-9a-f]+\.tmp$/),
   ])
   expect(temps[0]).not.toBe(temps[1])
+  // Both moves run as `mv -fT temp target` and exit 0, so each write lands.
+  expect(moves.map(move => move.argv)).toEqual(temps.map(temp => ['mv', '-fT', temp, target]))
+  expect(moves.map(move => move.exitCode)).toEqual([0, 0])
+})
+
+test('an atomic write refuses a folder at its target: mv -T fails, the folder stays, and writeAtomic throws', async () => {
+  const files = new Map<string, string>()
+  const temps: string[] = []
+  const moves: MoveCall[] = []
+  const target = `${STATE}/away.json`
+  const folders = new Set([target])
+  const outcome = await writeAtomic(folderEngine(files, temps, moves, folders), target, 'text\n').then(
+    () => 'written',
+    (error: unknown) => (error instanceof Error ? error.message : 'not an Error'),
+  )
+  expect(outcome).toContain('could not move')
+  expect(moves.map(move => move.exitCode)).toEqual([1])
+  expect(folders.has(target)).toBe(true)
+  expect([...files.keys()]).toEqual(temps)
 })
 
 test('/askaway opens the pane, or answers the text list when the pane waits undrawn', async ($, on) => {
@@ -2550,6 +2601,47 @@ test('Submit all records the Other text typed after the picks, before it writes'
   await pane.unmount()
 })
 
+test('Submit all with a kept label sends the text typed after it: the typed text is the answer, as SPEC says', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { writes } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'other-q-l1-aaaaaa' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'First text' })
+  await pane.press({ key: 'other-q-l1-aaaaaa' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa-1', text: 'Use a fork', kind: 'change' })
+  await pane.press({ key: 'submit-all' })
+  expect(writes).toEqual([path('a', 'q-l1-aaaaaa')])
+  expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ key: 'other', text: 'Use a fork' })
+  await pane.unmount()
+})
+
+test('a pick changed on the last card while an earlier answer is written is the answer sent, not dropped', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  const holds: Holds = {}
+  const { writes, clock } = stubHost(on, files, true, {}, holds)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  await clock.advance(350)
+  await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
+  await clock.advance(350)
+  const write = gate()
+  holds.write = write.promise
+  const pressed = pane.press({ key: 'submit-all' })
+  await clock.settle()
+  await pane.press({ key: 'opt-q-l2-bbbbbb-B' })
+  write.open()
+  await clock.settle()
+  await pressed
+  expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb')])
+  expect(readJson(files, path('a', 'q-l2-bbbbbb'))).toMatchObject({ key: 'B' })
+  await pane.unmount()
+})
+
 test('Submit all drawn off takes the press when the only answer is an Other text typed but not recorded: it records, then writes', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   const { writes } = stubHost(on, files)
@@ -2722,15 +2814,17 @@ test('Keep, click, type without Keep, Next, Back: the pick stays the kept label,
   await pane.unmount()
 })
 
-test('a draft pick whose text is not the kept label is not drawn as chosen: the Other link is bold only for the kept text', async ($, on) => {
+test('a draft pick whose text is not the kept label is drawn as the label, and Submit all sends the label drawn', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   const { clock } = stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
   files.set(`${STATE}/draft.json`, JSON.stringify({ ts: 100, picks: { 'q-l1-aaaaaa': { key: 'other', text: 'Stale text' } }, labels: { 'q-l1-aaaaaa': 'First text' } }))
   await clock.advance(5000)
-  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(false)
+  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
   expect(JSON.stringify(await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).toContain('C · First text')
+  await pane.press({ key: 'submit-all' })
+  expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ key: 'other', text: 'First text' })
   await pane.unmount()
 })
 
@@ -4420,7 +4514,7 @@ test('/askaway quiet on|off stores the flag, reports it in both languages, and r
   expect((await run($, 'quiet')).text).toBe('Modo silencioso do Askaway desligado.')
   expect((await run($, 'quiet on')).text).toBe('Modo silencioso do Askaway ligado: sem aviso para pergunta nova e sem esmaecer depois de uma resposta.')
   expect((await run($, 'quiet')).text).toContain('ligado')
-  expect((await run($, 'quiet maybe')).text).toBe('Use /askaway quiet on ou off.')
+  expect((await run($, 'quiet maybe')).text).toBe('Digite /askaway quiet on ou off.')
   expect((await run($, 'quiet off')).text).toBe('Modo silencioso do Askaway desligado.')
 })
 
@@ -4749,12 +4843,8 @@ test('Gauntlet B1 H1: a draft.json that exists but does not parse is not written
 
 test('Gauntlet B1 H2: a pick whose draft write failed is retried at the next poll, and the person is told once', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
-  let isFailing = true
-  on('fs.write', { path: `${STATE}/draft.json` }, (_$, e, next) => {
-    if (isFailing) throw new Error('disk full')
-    return next(e)
-  })
-  const { drafts, toasts, clock } = stubHost(on, files, true, {}, {}, { LANG: '' })
+  const holds: Holds = { failingWriteTo: 'draft.json' }
+  const { drafts, toasts, clock } = stubHost(on, files, true, {}, holds, { LANG: '' })
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
@@ -4763,7 +4853,7 @@ test('Gauntlet B1 H2: a pick whose draft write failed is retried at the next pol
   expect(drafts).toEqual([])
   expect(toasts.filter(text => text === 'Could not save your pick; retrying.')).toHaveLength(1)
   expect((await pane.find({ type: 'Button', key: 'opt-q-l1-aaaaaa-B' }))?.props.variant).toBe('primary')
-  isFailing = false
+  holds.failingWriteTo = undefined
   await clock.advance(5000)
   expect(drafts).toHaveLength(1)
   expect(JSON.parse(drafts[0] ?? '{}')).toEqual({ ts: expect.any(Number), picks: { 'q-l1-aaaaaa': { key: 'B' } } })
@@ -4808,7 +4898,11 @@ test('Gauntlet M64: a second option press inside the move lock is ignored, and t
   await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
   expect(readJson(files, `${STATE}/draft.json`)).toMatchObject({ picks: { 'q-l1-aaaaaa': { key: 'A' } } })
-  await clock.advance(350)
+  // The lock lower bound (Gauntlet 5 B3 M54): at 349 ms the lock still holds, and the press at 350 ms is taken.
+  await clock.advance(349)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
+  expect(readJson(files, `${STATE}/draft.json`)).toMatchObject({ picks: { 'q-l1-aaaaaa': { key: 'A' } } })
+  await clock.advance(1)
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
   expect(readJson(files, `${STATE}/draft.json`)).toMatchObject({ picks: { 'q-l1-aaaaaa': { key: 'B' } } })
   await pane.unmount()
@@ -4920,10 +5014,7 @@ test('Gauntlet B1 H10: a failed cleared.json write is logged, and the clear hold
     [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B')],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
   ])
-  on('fs.write', { path: `${STATE}/cleared.json` }, () => {
-    throw new Error('read-only folder')
-  })
-  stubHost(on, files)
+  stubHost(on, files, true, {}, { failingWriteTo: 'cleared.json' })
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'history-clear' })
@@ -4973,6 +5064,38 @@ test('Gauntlet B1 H19: a second session start keeps the card on screen and its s
   }
 })
 
+// Gauntlet 5 B3 M16 (probe, part 1 of 2): the hook module keeps moveLocked and pendingOther between presses. This test ends
+// with a move lock still running (its timer never fires) and an Other text typed on the second card but not recorded.
+test('Gauntlet 5 B3 M16 probe: a pick, then an Other text typed on the next card, and the test ends with both open', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  const { drafts } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  expect(drafts).toHaveLength(1)
+  await pane.press({ key: 'other-q-l2-bbbbbb' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l2-bbbbbb', text: 'Stale text' })
+  await pane.unmount()
+})
+
+// Gauntlet 5 B3 M16 (probe, part 2 of 2): the test right after the one above starts clean. A leaked move lock would ignore
+// its first pick; a leaked pending Other text would be recorded as a pick by it. Its draft is then exactly the one pick.
+test('Gauntlet 5 B3 M16 probe: the next test starts with no move lock and no pending Other text', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  const { drafts } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  expect(JSON.parse(drafts.at(-1) ?? '{}')).toEqual({ ts: expect.any(Number), picks: { 'q-l1-aaaaaa': { key: 'A' } } })
+  await pane.unmount()
+})
+
 test('Gauntlet B1 F11: Dismiss runs prune with --strict, so a refused prune exits non-zero and is reported', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone' })]])
   const { calls, ended } = stubHost(on, files)
@@ -4980,7 +5103,46 @@ test('Gauntlet B1 F11: Dismiss runs prune with --strict, so a refused prune exit
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'dismiss-ended' })
-  expect(calls.map(call => call.argv.slice(2).join(' '))).toContain('prune --id q-l1-aaaaaa --strict')
+  expect(calls.map(call => call.argv.slice(2).join(' '))).toContain('prune --id q-l1-aaaaaa --strict --force')
+  await pane.unmount()
+})
+
+test('Gauntlet 5 B3 M4b: Dismiss of an open high-risk ended card runs prune with --force, which lifts its pause', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone', risk: 'high', pause: true })]])
+  const { calls, ended } = stubHost(on, files)
+  ended.add('q-l1-aaaaaa')
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'dismiss-ended' })
+  expect(calls.map(call => call.argv.slice(2).join(' '))).toContain('prune --id q-l1-aaaaaa --strict --force')
+  await pane.unmount()
+})
+
+// Gauntlet 5 review R3: an ended card's pause is over and the person pressing Dismiss is the user, so Dismiss always forces.
+test('Gauntlet 5 review R3: Dismiss of a low-risk ended card runs prune with --force too, whatever the risk', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone' })]])
+  const { calls, ended } = stubHost(on, files)
+  ended.add('q-l1-aaaaaa')
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'dismiss-ended' })
+  const prunes = calls.map(call => call.argv.slice(2).join(' ')).filter(line => line.startsWith('prune'))
+  expect(prunes).toEqual(['prune --id q-l1-aaaaaa --strict --force'])
+  await pane.unmount()
+})
+
+// Gauntlet 5 review R3: the pane read the question as low; askaway.py then rewrote it high with pause (a repeat, M5c). Dismiss
+// must still force, so it does not depend on the risk the pane cached.
+test('Gauntlet 5 review R3: Dismiss of an ended card forces prune even when its question was rewritten to a pause after the pane read it', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone' })]])
+  const { calls, ended, clock } = stubHost(on, files)
+  ended.add('q-l1-aaaaaa')
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  files.set(path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone', risk: 'high', pause: true }))
+  await clock.advance(6000)
+  await pane.press({ key: 'dismiss-ended' })
+  expect(calls.map(call => call.argv.slice(2).join(' '))).toContain('prune --id q-l1-aaaaaa --strict --force')
   await pane.unmount()
 })
 
@@ -5071,10 +5233,7 @@ test('Gauntlet B2 P12: the pane counter says away mode is on while away.json is 
 
 test('Gauntlet B2 leftover: the pick-not-saved toast comes from the i18n table, so pt-BR reads in pt-BR', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
-  on('fs.write', { path: `${STATE}/draft.json` }, () => {
-    throw new Error('disk full')
-  })
-  const { toasts, clock } = stubHost(on, files)
+  const { toasts, clock } = stubHost(on, files, true, {}, { failingWriteTo: 'draft.json' })
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
@@ -5427,6 +5586,134 @@ test('Gauntlet 4 B1 M23: a delivery marker whose write fails leaves no marker, s
   expect(readJson(files, path('d', 'q-l1-aaaaaa'))).toMatchObject({ id: 'q-l1-aaaaaa', via: 'prompt' })
 })
 
+test('Gauntlet 5 B2 M12: a marker write that fails after another marker landed still hands the first reply, and toasts only the one left unmarked', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 0, { session: SELF })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 0, { session: SELF })],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B', 0)],
+    [path('a', 'q-l2-bbbbbb'), answer('q-l2-bbbbbb', 'A', 0)],
+  ])
+  // The second marker's temp file is cut off and its write throws; the first marker lands before it.
+  const { submits, toasts, writes, clock } = stubHost(on, files, true, {}, { tornWriteTo: 'd/.q-l2-bbbbbb.json.' })
+  await $.session.start(SESSION)
+  await clock.advance(5000)
+  expect(submits).toEqual(['Answered via panel by "unknown": B · "Rewrite". Askaway question q-l1-aaaaaa ("Title q-l1-aaaaaa"). (you were using A · "Keep")'])
+  expect(writes).toEqual([path('d', 'q-l1-aaaaaa')])
+  expect(toasts.filter(text => text.includes('q-l2-bbbbbb'))).toHaveLength(1)
+  expect(toasts.some(text => text.includes('q-l1-aaaaaa'))).toBe(false)
+  // The next poll hands the second reply, which has no marker yet.
+  await clock.advance(5000)
+  expect(submits).toHaveLength(2)
+  expect(submits[1]).toContain('q-l2-bbbbbb')
+})
+
+test('Gauntlet 5 B3 M18: a hand-off whose submit throws keeps its markers, toasts each reply once, submits once and logs the failure', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 0, { session: SELF })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 0, { session: SELF })],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B', 0)],
+    [path('a', 'q-l2-bbbbbb'), answer('q-l2-bbbbbb', 'A', 0)],
+  ])
+  const holds: Holds = { failSubmitOnce: true }
+  const { submits, toasts, logs, clock } = stubHost(on, files, true, {}, holds, { LANG: '' })
+  await $.session.start(SESSION)
+  await clock.advance(5000)
+  expect(submits).toHaveLength(1)
+  expect(files.has(path('d', 'q-l1-aaaaaa'))).toBe(true)
+  expect(files.has(path('d', 'q-l2-bbbbbb'))).toBe(true)
+  expect(toasts).toHaveLength(2)
+  expect(toasts).toContain(t('en', 'toast.undelivered', { key: 'B', id: 'q-l1-aaaaaa' }))
+  expect(toasts).toContain(t('en', 'toast.undelivered', { key: 'A', id: 'q-l2-bbbbbb' }))
+  // The failed submit is logged once, and the log names the call that failed (the engine's wording for it is not pinned).
+  expect(logs).toHaveLength(1)
+  expect(logs[0]).toMatch(/^askaway: .*prompt\.submit/)
+  // No retry: the markers are there, so the next poll hands nothing and submits nothing.
+  await clock.advance(5000)
+  expect(submits).toHaveLength(1)
+  expect(toasts).toHaveLength(2)
+})
+
+// Gauntlet 5 review R4: the marker is published by one no-clobber link (`ln temp marker`). A `-f` would clobber another window's marker.
+test('Gauntlet 5 review R4: a delivery marker is published by ln temp marker, with no -f', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 0, { session: SELF })],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B', 0)],
+  ])
+  const { links, submits, clock } = stubHost(on, files, true, {}, {}, { LANG: '' })
+  await $.session.start(SESSION)
+  await clock.advance(5000)
+  expect(submits).toHaveLength(1)
+  expect(links.map(argv => [argv[0], argv.length, argv[2]])).toEqual([['ln', 3, path('d', 'q-l1-aaaaaa')]])
+})
+
+// Gauntlet 5 review R12: a reply whose marker another window wrote after the board was read is skipped, so a failed submit
+// toasts only the reply this window marked.
+test('Gauntlet 5 review R12: a hand-off whose submit throws toasts only the replies it marked, not one another window marked first', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 0, { session: SELF })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 0, { session: SELF })],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B', 0)],
+    [path('a', 'q-l2-bbbbbb'), answer('q-l2-bbbbbb', 'A', 0)],
+  ])
+  const holds: Holds = {
+    failSubmitOnce: true,
+    onLink: marker => {
+      if (marker === path('d', 'q-l1-aaaaaa')) files.set(path('d', 'q-l2-bbbbbb'), delivery('q-l2-bbbbbb', { session: 'hook' }))
+    },
+  }
+  const { submits, toasts, clock } = stubHost(on, files, true, {}, holds, { LANG: '' })
+  await $.session.start(SESSION)
+  await clock.advance(5000)
+  expect(submits).toHaveLength(1)
+  expect(toasts).toEqual([t('en', 'toast.undelivered', { key: 'B', id: 'q-l1-aaaaaa' })])
+})
+
+test('Gauntlet 5 B2 M32: a reply past the 7-day TTL is not handed to its session, as the status shows it expired', async ($, on) => {
+  // Stamped more than the TTL before the clock's start: the reply is past its lapse when the session starts.
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 0, { session: SELF })],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B', -ANSWER_TTL_MS - 60_000)],
+  ])
+  const { submits, writes, clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  await clock.advance(5000)
+  expect(submits).toEqual([])
+  expect(writes).toEqual([])
+  expect(files.has(path('d', 'q-l1-aaaaaa'))).toBe(false)
+})
+
+test('Gauntlet 5 B2 M33: a panel token file that cannot be made is named by no file and no path in the log', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { calls, logs } = stubHost(on, files, true, {}, { installExit: 1 })
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  await pane.press({ key: 'submit-all' })
+  expect(calls).toEqual([])
+  expect(logs.some(line => line.includes('could not create the panel token file'))).toBe(true)
+  // The token file's name is the secret: neither the folder, the file's path nor a 32-character hex name reaches the log.
+  expect(logs.join('\n')).not.toMatch(/panel-tokens|[0-9a-f]{32}/)
+  await pane.unmount()
+})
+
+test('Gauntlet 5 B2 M47: a torn cleared.json write leaves the previous file whole, so another window still hides the rows it lists', async ($, on) => {
+  // A previous file that lists only an id no board knows, so the History row of q-l1 is still drawn for Clear all.
+  const previousCleared = `${JSON.stringify({ ts: 100, ids: ['q-gone-cccccc'] })}\n`
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B')],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+    [`${STATE}/cleared.json`, previousCleared],
+  ])
+  stubHost(on, files, true, {}, { tornWriteTo: 'cleared.json' })
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'history-clear' })
+  // The torn write cut the temp file, not cleared.json: the file another window reads is still the whole previous one.
+  expect(files.get(`${STATE}/cleared.json`)).toBe(previousCleared)
+  await pane.unmount()
+})
+
 test('Gauntlet 4 B1 M24: a failed read of away.json keeps the away state the pane had, so a toggle flips what the person sees', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
@@ -5485,7 +5772,7 @@ test('Gauntlet 4 B1 M34: an unknown /askaway verb names the four verbs, in Engli
   await $.session.start(SESSION)
   expect((await run($, 'list')).text).toBe('Use /askaway, /askaway lang pt-BR|en|auto, /askaway quiet on|off, /askaway who <name> or /askaway away.')
   await run($, 'lang pt')
-  expect((await run($, 'list')).text).toBe('Use /askaway, /askaway lang pt-BR|en|auto, /askaway quiet on|off, /askaway who <nome> ou /askaway away.')
+  expect((await run($, 'list')).text).toBe('Digite /askaway, /askaway lang pt-BR|en|auto, /askaway quiet on|off, /askaway who <nome> ou /askaway away.')
 })
 
 test('Gauntlet 4 B1 M35: in a round of three, a failed reply keeps its pick and a second Submit all writes the one left', async ($, on) => {

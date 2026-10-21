@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import * as i18nModule from '../hooks/i18n'
-import { MESSAGES, detectLang, plural, resolveLang, t, type MessageKey } from '../hooks/i18n'
+import { MESSAGES, detectLang, plural, resolveLang, t } from '../hooks/i18n'
 
 const placeholdersOf = (text: string): string[] => [...text.matchAll(/\{(\w+)\}/g)].map(match => match[1] ?? '')
 
@@ -10,15 +10,30 @@ test('both dictionaries have exactly the same keys', () => {
   expect(pt).toEqual(en)
 })
 
-test('every {name} placeholder in an English message also appears in its pt-BR message', () => {
-  const missing: string[] = []
-  for (const key of Object.keys(MESSAGES.en) as MessageKey[]) {
-    const ptNames = placeholdersOf(MESSAGES.pt[key])
-    for (const name of placeholdersOf(MESSAGES.en[key])) {
-      if (!ptNames.includes(name)) missing.push(`${key}:{${name}}`)
-    }
-  }
-  expect(missing).toEqual([])
+// The distinct {name} placeholders of a message, sorted.
+const namesOf = (text: string): string[] => [...new Set(placeholdersOf(text))].sort()
+
+// The keys whose placeholder names differ between the two dictionaries. A name present in only one of the two is a mismatch.
+function placeholderMismatches(en: Readonly<Record<string, string>>, pt: Readonly<Record<string, string>>): string[] {
+  const keys = new Set([...Object.keys(en), ...Object.keys(pt)])
+  return [...keys].filter(key => JSON.stringify(namesOf(en[key] ?? '')) !== JSON.stringify(namesOf(pt[key] ?? '')))
+}
+
+test('every key has the same {name} placeholders in its English and pt-BR messages, checked both ways', () => {
+  expect(placeholderMismatches(MESSAGES.en, MESSAGES.pt)).toEqual([])
+})
+
+test('the placeholder check flags a name only the pt-BR message has, and a name only the English message has', () => {
+  expect(placeholderMismatches({ hi: 'Hi {name}' }, { hi: 'Oi {name} {extra}' })).toEqual(['hi'])
+  expect(placeholderMismatches({ hi: 'Hi {name} {extra}' }, { hi: 'Oi {name}' })).toEqual(['hi'])
+  expect(placeholderMismatches({ hi: 'Hi {name}' }, { hi: 'Oi {name}' })).toEqual([])
+})
+
+test('no pt-BR command reply keeps the English word "Use" as its verb (Gauntlet 5 B2 M8)', () => {
+  const kept = Object.entries(MESSAGES.pt)
+    .filter(([key, text]) => key.startsWith('command.') && /^Use\b/.test(text))
+    .map(([key]) => key)
+  expect(kept).toEqual([])
 })
 
 test('no message is left empty in either language', () => {
@@ -76,7 +91,7 @@ test('the pt-BR reply to the language command names the language with its placeh
 })
 
 // gauntlet 4, package B2
-test('gauntlet 4, B2 M33: no key nothing reads is left in either dictionary, and i18n exports no langName', () => {
+test('gauntlet 4, B2 M33: the three keys M33 removed are absent from both dictionaries, and i18n exports no langName', () => {
   for (const key of ['card.answeredElsewhere', 'command.describeLang', 'command.describeAway']) {
     expect(Object.keys(MESSAGES.en)).not.toContain(key)
     expect(Object.keys(MESSAGES.pt)).not.toContain(key)
