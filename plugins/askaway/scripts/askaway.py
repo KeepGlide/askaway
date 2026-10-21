@@ -155,6 +155,8 @@ CLOSED_STATUSES: Final = frozenset({"delivered", "expired"})
 STATUS_DAMAGED: Final = "damaged"  # q/<id>.json does not read as a JSON object
 STATUS_DAMAGED_ANSWER: Final = "damaged answer"  # a/<id>.json does not read: answered, key unknown, still pauses
 PAUSE_ENDED: Final = CLOSED_STATUSES
+MAIN_ASKER: Final = "main"  # the asker stamp of a pause the main thread filed; a subagent's stamp is its agent_id
+ASKER_KEY: Final = "asker"  # written by the stamp-asker hook only: an asker key the agent sends is dropped, never kept
 WAIT_DEFAULT_S: Final = 300.0
 WAIT_POLL_S: Final = 0.5
 MIN_WORDS: Final = 3
@@ -793,7 +795,7 @@ UNKNOWN_KEYS_MAX_BYTES: Final = 4096  # the unknown keys as JSON: a little over 
 def _unknown_keys(raw: Mapping[str, Any]) -> dict[str, Any]:
     """The top-level keys the CLI does not read, kept with the question as the agent sent them (SPEC: unknown keys).
     Over UNKNOWN_KEYS_MAX_BYTES as JSON the entry is refiled: a blob is not a field the pane can show."""
-    unknown = {key: value for key, value in raw.items() if key not in ENTRY_FIELDS}
+    unknown = {key: value for key, value in raw.items() if key not in ENTRY_FIELDS and key != ASKER_KEY}
     if len(json.dumps(unknown)) > UNKNOWN_KEYS_MAX_BYTES:  # ASCII by default, so the length is the byte count
         raise ValueError(f"the unknown keys are over {UNKNOWN_KEYS_MAX_BYTES} bytes as JSON: keep them short or drop them")
     return unknown
@@ -2177,6 +2179,11 @@ def _code_reason(code: str, *, sandboxed: bool) -> str | None:
     return None
 
 
+def _closing_index(lines: Sequence[str], word: str) -> int | None:
+    """The index of the first line that closes a heredoc with this terminator word (leading tabs ignored)."""
+    return next((index for index, line in enumerate(lines) if line.lstrip("\t") == word), None)
+
+
 def _heredoc_code(command: str) -> str:
     """The text the code scan reads: an inbox call's heredoc body is JSON on stdin and never runs, so only the lines
     outside it are read. Any other command keeps its body."""
@@ -2185,7 +2192,7 @@ def _heredoc_code(command: str) -> str:
     if opened is None:
         return command
     lines = rest.split("\n")
-    end = next((index for index, line in enumerate(lines) if line.lstrip("\t") == opened[2]), None)
+    end = _closing_index(lines, opened[2])
     return head if end is None else "\n".join([head, *lines[end + 1:]])
 
 
@@ -2396,14 +2403,26 @@ def damaged_question_session(item_id: str) -> str | None:
     return found[1] if found and SESSION_PATTERN.fullmatch(found[1]) else None
 
 
-def _holding_question(session: str) -> tuple[str, str | None] | None:
-    """The (id, title) of the question that pauses this session, or None; the title is None for a damaged file.
+def _holds_caller(entry: Mapping[str, Any], agent_id: str | None) -> bool:
+    """Does this pause hold the call? An unstamped one (no usable asker) holds the whole session, as before the stamp.
+
+    A main-thread pause holds the calls without an agent_id; a subagent's pause holds only the calls of that agent."""
+    asker = entry.get(ASKER_KEY)
+    if asker == MAIN_ASKER:
+        return agent_id is None
+    if isinstance(asker, str) and asker:
+        return asker == agent_id
+    return True
+
+
+def _holding_question(session: str, agent_id: str | None = None) -> tuple[str, str | None] | None:
+    """The (id, title) of the question that pauses this call, or None; the title is None for a damaged file.
 
     A high-risk question holds until its answer is delivered (or lapses). A damaged q/ file cannot show its risk,
     so it holds the session its raw text names, while it is open: only `prune` clears it."""
     entries, damaged = load_questions()
     for entry in entries:
-        if (entry.get("pause") is True and entry.get("session") == session
+        if (entry.get("pause") is True and entry.get("session") == session and _holds_caller(entry, agent_id)
                 and item_status(entry["id"])[0] not in PAUSE_ENDED):
             return entry["id"], entry.get("title") or entry["id"]
     for item_id in damaged:
@@ -2420,7 +2439,7 @@ def _pause_decision(event: Mapping[str, Any]) -> HookOutput:
     command = str((event.get("tool_input") or {}).get("command", ""))
     if _exempt_call(tool, command):
         return None
-    blocking = _holding_question(session)
+    blocking = _holding_question(session, event.get("agent_id") or None)
     if blocking is None:
         return None
     item_id, title = blocking
@@ -2428,8 +2447,9 @@ def _pause_decision(event: Mapping[str, Any]) -> HookOutput:
         return deny(f"Paused: Askaway question {item_id} is damaged (its file does not read), so it cannot be "
                     f"answered. The user clears it with `python3 {SCRIPT_PATH} prune`. Do read-only work or end the turn.")
     return deny(f"Paused: Askaway question {item_id} ({_literal(title)}) needs the "
-                "user's answer. Do read-only work or end the turn; check with "
-                f"`python3 {SCRIPT_PATH} status {item_id}`.")
+                "user's answer. It holds this call: end the turn now instead of retrying or polling, because the "
+                "answer arrives by itself in the context. A subagent hands back what it has and stops. "
+                f"To look it up once: `python3 {SCRIPT_PATH} status {item_id}`.")
 
 
 def hook_pause_guard(event: Mapping[str, Any]) -> HookOutput:
@@ -2440,6 +2460,79 @@ def hook_pause_guard(event: Mapping[str, Any]) -> HookOutput:
         return _pause_decision(event)
     except Exception:  # noqa: BLE001 - fail closed: while a pause may hold the session, an error must not pass the call
         return deny("Paused: the Askaway pause check failed, so this call is denied. Do read-only work or end the turn.")
+
+
+def _asked_id(response: object) -> str | None:
+    """The id of the question an ask reply files, or None when the reply names none. A duplicate reply names none:
+    its twin keeps the asker of the call that filed it, so a repeat never stamps."""
+    stdout = response.get("stdout") if isinstance(response, dict) else None
+    if not isinstance(stdout, str):
+        return None
+    try:
+        reply = json.loads(stdout.strip())
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(reply, dict) or reply.get("duplicate") is True:
+        return None
+    item_id = reply.get("id")
+    return item_id if isinstance(item_id, str) and ID_PATTERN.fullmatch(item_id) else None
+
+
+def _is_ask_call(command: str) -> bool:
+    """Is the command one simple `ask` call: a plain one in inbox_call's shapes, or a heredoc one (see _ends_at_terminator)?"""
+    text = command.strip()
+    head = INBOX_HEAD.match(text)
+    if head is None or head[0].split()[-1] != "ask":
+        return False
+    return inbox_call(text) or _ends_at_terminator(text)
+
+
+def _ends_at_terminator(text: str) -> bool:
+    """Is the command a heredoc call whose terminator is its last line? The body is the JSON on stdin, and no command
+    follows it: a line that closes the heredoc earlier, or any line after the terminator, makes the call not simple."""
+    first, _, rest = text.partition("\n")
+    opened = INBOX_HEREDOC.match(first)
+    if opened is None:
+        return False
+    lines = rest.split("\n")
+    return _closing_index(lines, opened[2]) == len(lines) - 1
+
+
+def _asker_of(event: Mapping[str, Any]) -> str | None:
+    """The asker stamp of the call's caller: its agent_id, or MAIN_ASKER on the main thread; None for an id that is not text."""
+    agent_id = event.get("agent_id")
+    if not agent_id:
+        return MAIN_ASKER
+    return agent_id if isinstance(agent_id, str) else None
+
+
+def _unstamped_pause(item_id: str, session: str) -> dict[str, Any] | None:
+    """The question record when it is a pause of this session with no asker yet, else None."""
+    entry = read_json(item_path("q", item_id))
+    if entry is None or not _question_matches(item_id, entry):
+        return None
+    if entry.get("session") != session or entry.get("pause") is not True or ASKER_KEY in entry:
+        return None
+    return entry
+
+
+def hook_stamp_asker(event: Mapping[str, Any]) -> HookOutput:
+    """PostToolUse on Bash: names who filed the pause an ask call made. Writes nothing on any error (run_hook fails open)."""
+    session = event.get("session_id")
+    if not session or event.get("tool_name") != "Bash":
+        return None
+    command = str((event.get("tool_input") or {}).get("command", ""))
+    asker = _asker_of(event)
+    if asker is None or not _is_ask_call(command):
+        return None
+    item_id = _asked_id(event.get("tool_response"))
+    if item_id is None:
+        return None
+    with _ask_lock():  # the lock an ask writes under: a repeat rewrites its twin under it, so this stamp is not lost
+        entry = _unstamped_pause(item_id, session)
+        if entry is not None:
+            write_atomic(item_path("q", item_id), {**entry, ASKER_KEY: asker})
+    return None
 
 
 def answered_ids() -> list[str]:
@@ -2624,6 +2717,7 @@ def hook_deliver(event: Mapping[str, Any]) -> HookOutput:
 HOOK_MODES: Final[dict[str, Callable[[Mapping[str, Any]], HookOutput]]] = {
     "ask-guard": hook_ask_guard,
     "pause-guard": hook_pause_guard,
+    "stamp-asker": hook_stamp_asker,
     "deliver": hook_deliver,
 }
 
