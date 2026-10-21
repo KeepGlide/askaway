@@ -2,8 +2,23 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.32, set by the beta.32 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.33, set by the beta.33 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.33] - 2026-10-21
+
+Two owner reports on beta.32, seen on the Desktop.
+
+### Fixed
+- `/askaway lang` asks the pane for a new draw at once (`setLang`, `hooks/register.tsx`, the same `$.ui.invalidate('ui.render')` the poll makes in `mergeBoard`), so an open card changes language together with the labels instead of at the next question.
+
+### Changed
+- Option sub-rows (tradeoff, pros, cons, fit) are plain on the Desktop again and dim only while the card fades (`renderOption`, `hooks/pane.tsx`); the measured dim ratios stay recorded in `TEXT_CONTRAST` (`hooks/look.ts`).
+
+### Tests
+- `tests/askaway.test.ts`: `/askaway lang en` draws the open card in English on the very next draw with no new question and no poll; the M58 sub-row test asserts plain on both surfaces.
+
+Gates: plugin tests 425 pass; pytest 842 passed; `claude plugin validate` passed; `biome lint` clean.
 
 ## [0.4.0-beta.32] - 2026-10-21
 
