@@ -45,6 +45,10 @@ const TITLE = 'Askaway'
 const POLL_MS = 5000
 // A draft.json stamped more than this past the clock is pulled back to the clock: a far-future stamp would hold off later drafts.
 const DRAFT_SKEW_MS = 60_000
+// A draft.lock folder this many minutes old or older is a dead window's lock (saveDraft removes it). find's `-mmin +N` matches an
+// age above N whole minutes, so the test is `+(minutes - 1)`: `+0` is a minute or older.
+const DRAFT_LOCK_STALE_MINUTES = 1
+const DRAFT_LOCK_STALE_FIND_ARG = `+${DRAFT_LOCK_STALE_MINUTES - 1}`
 // A pick, Next or Back locks the moves for this long: a second press inside the window (a double click) does nothing.
 const MOVE_LOCK_MS = 350
 // An answered card stays listed, dimmed, for this long after the press; then it leaves and its status line shows.
@@ -183,11 +187,30 @@ function randomHex(bytes: number): string {
 // within one folder is atomic; $.fs has no rename). The temp name is dot-prefixed and random, so two writers of one target
 // never share a temp file, and the CLI's `.*.tmp` prune finds an orphan. `mv -T` refuses a folder target instead of moving into it.
 export async function writeAtomic($: EngineInterface, path: string, text: string): Promise<void> {
-  const slash = path.lastIndexOf('/')
-  const temp = `${path.slice(0, slash + 1)}.${path.slice(slash + 1)}.${randomHex(8)}.tmp`
+  const temp = tempPathOf(path)
   await $.fs.write(temp, text)
   const run = await $.process.run(['mv', '-fT', temp, path])
   if (run.exitCode !== 0) throw new Error(`askaway: could not move ${temp} into place: ${(run.stderr || run.stdout).trim()}`)
+}
+
+// The temp file a write of `path` goes to first: dot-named beside it, with a random part, so two writers never share one.
+function tempPathOf(path: string): string {
+  const slash = path.lastIndexOf('/')
+  return `${path.slice(0, slash + 1)}.${path.slice(slash + 1)}.${randomHex(8)}.tmp`
+}
+
+// Publishes text at `marker` only when no file is there, as the CLI's create_once does (an exclusive hard link). True when
+// this call published it; false when a readable marker, the CLI's or another window's, already holds the answer. A torn
+// marker that is there is replaced, so the answer is still handed once.
+async function publishMarker($: EngineInterface, marker: string, id: string, text: string): Promise<boolean> {
+  const temp = tempPathOf(marker)
+  await $.fs.write(temp, text)
+  const linked = await $.process.run(['ln', temp, marker])
+  await $.process.run(['rm', '-f', temp])
+  if (linked.exitCode === 0) return true
+  if (parseDelivery(await readJson($, marker), id) !== undefined) return false
+  await writeAtomic($, marker, text)
+  return true
 }
 
 async function readCached<T>(
@@ -341,9 +364,10 @@ async function refreshEnded($: EngineInterface, home: string, next: Board, now: 
   }
 }
 
-// Dismiss on an ended card: the CLI removes the question (prune --id), then the board is read again.
+// Dismiss on an ended card: the CLI removes the question (prune --id), then the board is read again. An ended card's pause is
+// over and the person pressing Dismiss is the user, so the prune always runs with --force, whatever the risk.
 async function dismissEnded($: EngineInterface, home: string, id: string): Promise<void> {
-  const argv = ['python3', `${$.plugin.root}/scripts/askaway.py`, 'prune', '--id', id, '--strict']
+  const argv = ['python3', `${$.plugin.root}/scripts/askaway.py`, 'prune', '--id', id, '--strict', '--force']
   const run = await $.process.run(argv, { env: { ASKAWAY_HOME: home } })
   if (run.exitCode !== 0) throw new Error(`askaway prune failed: ${(run.stderr || run.stdout).trim()}`)
   await pollInbox($, home)
@@ -404,8 +428,8 @@ async function applyDraft($: EngineInterface, home: string): Promise<void> {
   const now = await $.clock.now()
   const stamp = draft.ts > now + DRAFT_SKEW_MS ? now : draft.ts
   const open = openQuestions(await read($, board), await read($, leaving))
-  const picks = overlay(draft.picks, unsaved.picks)
   const labels = overlay(draft.labels, unsaved.labels)
+  const picks = overlay(flow.alignOtherToLabels(draft.picks, labels), unsaved.picks)
   const prev = await read($, wizardAtom)
   const pruned = prunedWizard({ ...prev, picks, labels }, open)
   if (!sameEntries(pruned.picks, prev.picks) || !sameEntries(pruned.labels, prev.labels)) {
@@ -454,38 +478,58 @@ async function handDue($: EngineInterface, home: string, session: string, now: n
   const ids = group.items.map(item => item.answer.id)
   if (ids.some(id => handing.has(id))) return
   for (const id of ids) handing.add(id)
+  let undelivered: Answer[] = []
   try {
-    await handOne($, home, session, group.items)
+    undelivered = await handOne($, home, session, group.items)
   } catch (error: unknown) {
     logFailure($, error)
-    // A marker may already be written and $.fs cannot remove it, so say so instead of failing silently.
-    const lang = await read($, langAtom)
-    for (const { answer } of group.items) {
-      $.ui.toast(t(lang, 'toast.undelivered', { key: answer.key, id: answer.id }))
-    }
   } finally {
     for (const id of ids) handing.delete(id)
   }
+  // A marker may already be written and $.fs cannot remove it, so say so instead of failing silently.
+  if (undelivered.length === 0) return
+  const lang = await read($, langAtom)
+  for (const answer of undelivered) {
+    $.ui.toast(t(lang, 'toast.undelivered', { key: answer.key, id: answer.id }))
+  }
 }
 
-// The delivery marker of each answer first (written only when absent), then ONE submit with their lines joined. A later
-// poll sees the markers and never repeats the submit. If the submit fails after the markers, they stay and the caller logs it.
+// The delivery marker of each answer first, published only when no marker is there, then ONE submit with the lines of the
+// markers this call published. An answer whose marker write fails has no line; an answer another window or the CLI marked
+// first is skipped and is not returned. If the submit fails after the markers, they stay, and the answers this call marked
+// are returned with the unmarked ones, for the caller to report. A later poll sees the markers and never repeats the submit.
 async function handOne(
   $: EngineInterface,
   home: string,
   session: string,
   items: readonly { answer: Answer; text: string }[],
-): Promise<void> {
+): Promise<Answer[]> {
   const lines: string[] = []
+  const marked: Answer[] = []
+  const unmarked: Answer[] = []
   for (const { answer, text } of items) {
     const marker = `${home}/d/${answer.id}.json`
-    // A marker that does not parse is no marker (a torn write): it is replaced, so the answer is handed once and not never.
+    // A marker that does not parse is no marker (a torn write): publishMarker replaces it, so the answer is handed once and not never.
     if (parseDelivery(await readJson($, marker), answer.id) !== undefined) continue
-    const stamp: PromptMarker = { id: answer.id, session, ts: await $.clock.now(), via: 'prompt' }
-    await writeAtomic($, marker, `${JSON.stringify(stamp)}\n`)
-    lines.push(text)
+    try {
+      const stamp: PromptMarker = { id: answer.id, session, ts: await $.clock.now(), via: 'prompt' }
+      if (await publishMarker($, marker, answer.id, `${JSON.stringify(stamp)}\n`)) {
+        lines.push(text)
+        marked.push(answer)
+      }
+    } catch (error: unknown) {
+      logFailure($, error)
+      unmarked.push(answer)
+    }
   }
-  if (lines.length > 0) await $.prompt.submit({ text: lines.join('\n') })
+  if (lines.length === 0) return unmarked
+  try {
+    await $.prompt.submit({ text: lines.join('\n') })
+  } catch (error: unknown) {
+    logFailure($, error)
+    return [...unmarked, ...marked]
+  }
+  return unmarked
 }
 
 // Answers the question with the chosen option, or with "Other…" and its free text, through the CLI (answerViaCli). First
@@ -543,11 +587,13 @@ async function mintPanelToken($: EngineInterface, home: string): Promise<string>
   await $.process.run(['install', '-d', '-m', '700', dir])
   // The file is created at mode 600 before it gets its text, and set to 600 again after the write: $.fs.write takes no mode,
   // and a write by temp file and rename would leave the default mode. A failed install or chmod throws: no token is handed out.
+  // The error names the exit code only: the file's name is the token, so neither its path nor the command's stderr (which
+  // names the path) reaches the throw or the log.
   const made = await $.process.run(['install', '-m', '600', '/dev/null', file])
-  if (made.exitCode !== 0) throw new Error(`askaway: could not create the panel token file: ${(made.stderr || made.stdout).trim()}`)
+  if (made.exitCode !== 0) throw new Error(`askaway: could not create the panel token file (install exit ${made.exitCode})`)
   await $.fs.write(file, `${JSON.stringify({ ts: await $.clock.now() })}\n`)
   const mode = await $.process.run(['chmod', '600', file])
-  if (mode.exitCode !== 0) throw new Error(`askaway: could not set the panel token file to mode 600: ${(mode.stderr || mode.stdout).trim()}`)
+  if (mode.exitCode !== 0) throw new Error(`askaway: could not set the panel token file to mode 600 (chmod exit ${mode.exitCode})`)
   return token
 }
 
@@ -617,7 +663,7 @@ async function clearHistory($: EngineInterface): Promise<void> {
   // cleared.json goes first (H10). A failed write is logged; the clear still holds on this window and in the store.
   if (folder !== undefined) {
     const ts = await $.clock.now()
-    await $.fs.write(`${folder}/cleared.json`, `${JSON.stringify({ ts, ids })}\n`).catch((error: unknown) => logFailure($, error))
+    await writeAtomic($, `${folder}/cleared.json`, `${JSON.stringify({ ts, ids })}\n`).catch((error: unknown) => logFailure($, error))
   }
   await $.store.set(CLEARED_KEY, ids)
   await update($, cleared, () => ids)
@@ -724,7 +770,33 @@ function clearPicks(prev: Wizard, ids: readonly string[], first?: string | null)
 // behind the clock or the last ts this session wrote or applied (H4), and becomes draftTs, so this session's own poll does
 // not apply the draft back over its screen. A file that exists but does not parse is held once, so no write drops every
 // other session's picks (H1); the next write replaces it with this window's picks and logs it, else no write would land.
+// The read, the merge and the write run under draft.lock, so a window's pick is never merged into a draft another window is
+// writing; a write that finds the lock held throws, and the pick stays pending for the next poll.
 async function saveDraft($: EngineInterface, home: string, changes: DraftChanges): Promise<void> {
+  if (!(await takeDraftLock($, home))) throw new Error(`askaway: ${home}/draft.json is locked by another window; the pick is retried`)
+  try {
+    await mergeDraft($, home, changes)
+  } finally {
+    await $.process.run(['rmdir', `${home}/draft.lock`])
+  }
+}
+
+// The lock on draft.json is the folder draft.lock: mkdir is atomic, so one window holds it at a time. A lock older than
+// DRAFT_LOCK_STALE_MINUTES is a window that died mid-write: it is removed here, with the draft.json temp files that window
+// left beside it (the same age, so a temp file a live write is still filling is never touched), and the write waits for the next poll.
+async function takeDraftLock($: EngineInterface, home: string): Promise<boolean> {
+  const lock = `${home}/draft.lock`
+  if ((await $.process.run(['mkdir', lock])).exitCode === 0) return true
+  const stale = (await $.process.run(['find', lock, '-maxdepth', '0', '-mmin', DRAFT_LOCK_STALE_FIND_ARG])).stdout.trim() !== ''
+  if (stale) {
+    await $.process.run(['rmdir', lock])
+    await $.process.run(['find', home, '-maxdepth', '1', '-name', '.draft.json.*.tmp', '-mmin', DRAFT_LOCK_STALE_FIND_ARG, '-delete'])
+  }
+  return false
+}
+
+// The merge of saveDraft, under its lock: the file's picks and labels with `changes` laid over them, written whole.
+async function mergeDraft($: EngineInterface, home: string, changes: DraftChanges): Promise<void> {
   const path = `${home}/draft.json`
   const draft = parseDraft(await readJson($, path))
   const unreadable = draft === undefined && (await $.fs.exists(path))
@@ -745,7 +817,7 @@ async function saveDraft($: EngineInterface, home: string, changes: DraftChanges
   // A draft with no kept label keeps the shape it had before labels: the labels key is written only when one is kept.
   const keptLabels = flow.keepOpen(labels, kept)
   const labelsPart = Object.keys(keptLabels).length > 0 ? { labels: keptLabels } : {}
-  await $.fs.write(path, `${JSON.stringify({ ts, picks: flow.keepOpen(picks, kept), ...labelsPart })}\n`)
+  await writeAtomic($, path, `${JSON.stringify({ ts, picks: flow.keepOpen(picks, kept), ...labelsPart })}\n`)
   draftTs = ts
   unreadableHeld = false
 }
@@ -826,7 +898,11 @@ async function submitGroup($: EngineInterface, group: Group): Promise<void> {
     await applyDraft($, folder)
     const items = flow.submittable(group, (await snapshot($)).wizard)
     if (items === undefined) return
-    for (const { id, pick } of items) await answerEntry($, folder, id, pick.key, pick.text)
+    // Each answer takes the pick on screen when its turn comes: a pick changed during the earlier writes is the one sent.
+    for (const { id } of items) {
+      const pick: Pick | undefined = (await snapshot($)).wizard.picks[id]
+      if (pick !== undefined) await answerEntry($, folder, id, pick.key, pick.text)
+    }
     const ids = await settledIds($, items.map(item => item.id))
     await changeWizard($, prev => clearPicks(prev, ids, group.questions[0]?.id ?? null))
   } finally {
@@ -898,15 +974,18 @@ async function jumpToQuestion($: EngineInterface, id: string): Promise<void> {
 // redraw the pane; it is recorded when the field loses focus and before a nav action (recordPendingOther), and Keep drops it.
 const pendingOther = new Map<string, string>()
 
+// How a typed Other text becomes the pick: the label rule (flow.submittedOther) or Submit all's (flow.submittedTypedOther).
+type OtherRecord = typeof flow.submittedOther
+
 // The key the pane's focus ring stood on last, as the ui.focus hook saw it: undefined for one of the engine's own stops.
 let focusedKey: string | undefined
 
 // The text of an "Other…" field recorded as the pick, not kept: blank text takes the pick away. A question
 // that is not open, or fading out, takes nothing.
-async function submitOther($: EngineInterface, id: string, text: string): Promise<void> {
+async function submitOther($: EngineInterface, id: string, text: string, record: OtherRecord): Promise<void> {
   const { open, leaving: fading } = await snapshot($)
   if (fading[id] !== undefined || !open.some(question => question.id === id)) return
-  await changeWizard($, prev => flow.submittedOther(prunedWizard(prev, open), id, text))
+  await changeWizard($, prev => record(prunedWizard(prev, open), id, text))
 }
 
 // Keep in the "Other…" field (Enter, or the Keep button) moves its text to the question's label and empties the field: the
@@ -921,18 +1000,18 @@ async function keepOther($: EngineInterface, id: string, text: string): Promise<
 
 // Records every pending Other text through submitOther, one after another. An entry whose question is no longer open is
 // dropped, not recorded: the card it was typed on is gone.
-async function recordPendingOther($: EngineInterface): Promise<void> {
+async function recordPendingOther($: EngineInterface, record: OtherRecord): Promise<void> {
   const { open } = await snapshot($)
   for (const [id, text] of [...pendingOther]) {
     pendingOther.delete(id)
-    if (open.some(question => question.id === id)) await submitOther($, id, text)
+    if (open.some(question => question.id === id)) await submitOther($, id, text, record)
   }
 }
 
 // A nav action records the pending Other text first, so the move or the write reads the pick the person typed. A failure
-// is logged, and the action goes on.
-async function afterPendingOther($: EngineInterface, act: () => Promise<void>): Promise<void> {
-  await recordPendingOther($).catch((error: unknown) => logFailure($, error))
+// is logged, and the action goes on. Submit all passes its own record (a kept label does not stop the typed answer).
+async function afterPendingOther($: EngineInterface, act: () => Promise<void>, record: OtherRecord = flow.submittedOther): Promise<void> {
+  await recordPendingOther($, record).catch((error: unknown) => logFailure($, error))
   await act()
 }
 
@@ -1005,7 +1084,7 @@ const actionsFor = ($: EngineInterface): PaneActions => ({
   },
   back: () => moveOnce($, () => report($, afterPendingOther($, () => moveWizard($, (current, group) => flow.back(current, group))))),
   next: () => moveOnce($, () => report($, afterPendingOther($, () => moveWizard($, (current, group) => flow.next(current, group))))),
-  submit: () => report($, afterPendingOther($, () => submitCurrent($))),
+  submit: () => report($, afterPendingOther($, () => submitCurrent($), flow.submittedTypedOther)),
   saveWho: text => report($, saveWho($, text)),
   skipWho: () => report($, saveWho($, '')),
 })

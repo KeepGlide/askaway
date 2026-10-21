@@ -97,18 +97,43 @@ export function keptOther(wizard: Wizard, id: string, text: string): Wizard {
   return { ...wizard, picks, labels: { ...wizard.labels, [id]: trimmed }, fieldRound: wizard.fieldRound + 1 }
 }
 
-// The text typed in an Other field and not kept yet, recorded when the field loses focus or a nav action runs: its trimmed
-// text is the Other pick, and keeps the wizard where it is; blank text takes an Other pick away. It never moves on. While
-// the question has a kept label, typed text is not recorded: Keep is the only way to set the Other text, so the pick and
-// the drawn label cannot disagree. The text stays in the field until Keep.
-export function submittedOther(wizard: Wizard, id: string, text: string): Wizard {
+// The Other pick of a question as its typed text leaves the field: trimmed and capped; blank text takes the pick away.
+// The pick is the only thing that moves; the wizard keeps its step.
+function recordedOther(wizard: Wizard, id: string, text: string): Wizard {
   const trimmed = otherTextOf(text)
-  if (trimmed !== '' && wizard.labels[id] !== undefined) return wizard
   const picks = { ...wizard.picks }
   const pick: Pick | undefined = picks[id]
   if (trimmed !== '') picks[id] = { key: OTHER_KEY, text: trimmed }
   else if (pick?.key === OTHER_KEY) delete picks[id]
   return { ...wizard, picks }
+}
+
+// The text typed in an Other field and not kept yet, recorded when the field loses focus or a nav action runs: its trimmed
+// text is the Other pick, and keeps the wizard where it is; blank text takes an Other pick away. It never moves on. While
+// the question has a kept label, typed text is not recorded: Keep is the only way to set the Other text, so the pick and
+// the drawn label cannot disagree. The text stays in the field until Keep. Submit all is the one exception (submittedTypedOther).
+export function submittedOther(wizard: Wizard, id: string, text: string): Wizard {
+  if (otherTextOf(text) !== '' && wizard.labels[id] !== undefined) return wizard
+  return recordedOther(wizard, id, text)
+}
+
+// Submit all records the text typed in an Other field as the answer, a kept label included (SPEC, Submit all: a text typed
+// and followed by a click on Submit all is the answer). The pick is submitted at once, so it does not need to match the label.
+export function submittedTypedOther(wizard: Wizard, id: string, text: string): Wizard {
+  return recordedOther(wizard, id, text)
+}
+
+// A draft's Other pick whose text is not the kept label of its question takes the label as its text: the Other button is
+// drawn chosen only for the kept text, so the reply sent is the text drawn (SPEC, Other: "so the button and the reply sent
+// always agree"). Picks of other kinds, and Other picks with no kept label, are returned as they are.
+export function alignOtherToLabels(picks: Record<string, Pick>, labels: Record<string, string>): Record<string, Pick> {
+  return Object.fromEntries(
+    Object.entries(picks).map(([id, pick]) => {
+      const label = labels[id]
+      const isStale = pick.key === OTHER_KEY && label !== undefined && pick.text !== label
+      return [id, isStale ? { key: OTHER_KEY, text: label } : pick]
+    }),
+  )
 }
 
 // The question on screen at the step (clamped into the group), or undefined for a group with no question.

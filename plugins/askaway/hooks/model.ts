@@ -327,6 +327,8 @@ export function promptsDue(board: Board, session: string, now: number): { answer
     if (!question || question.session !== session || delivered.has(answer.id)) continue
     const age = now - answer.ts
     if (age >= 0 && age < PROMPT_DELAY_MS) continue
+    // Past the TTL the reply shows as expired (answerStatusOf), and the lapse closes it for every session: it is not handed.
+    if (age > ANSWER_TTL_MS) continue
     const text = deliveryLine(question, answer)
     if (text !== undefined) due.push({ answer, text })
   }

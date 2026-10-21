@@ -167,7 +167,7 @@ const PT: Record<MessageKey, string> = {
   'input.send': 'Guardar',
   'command.quietOn': 'Modo silencioso do Askaway ligado: sem aviso para pergunta nova e sem esmaecer depois de uma resposta.',
   'command.quietOff': 'Modo silencioso do Askaway desligado.',
-  'command.quietInvalid': 'Use /askaway quiet on ou off.',
+  'command.quietInvalid': 'Digite /askaway quiet on ou off.',
   'who.prompt': 'Seu nome, mostrado nas respostas que você dá. Perguntado uma vez; mude com /askaway who <nome>.',
   'who.label': 'Seu nome',
   'who.placeholder': 'Digite seu nome',
@@ -199,7 +199,7 @@ const PT: Record<MessageKey, string> = {
   'command.awayOff': 'Modo ausente do Askaway desligado.',
   'command.awayUnavailable': 'O modo ausente não está disponível: sem pasta de estado (HOME não definido).',
   'command.langSet': 'O idioma do Askaway agora é {lang}.',
-  'command.langInvalid': 'Use /askaway lang pt-BR, en ou auto.',
+  'command.langInvalid': 'Digite /askaway lang pt-BR, en ou auto.',
   'list.head.one': 'Askaway: 1 pendente',
   'list.head.many': 'Askaway: {n} pendentes',
   'list.awayOn': ', modo ausente ligado',
@@ -215,7 +215,7 @@ const PT: Record<MessageKey, string> = {
   'details.title': 'Detalhes do Askaway:',
   // gauntlet 4, B1
   'toast.dismissFailed': 'Não foi possível dispensar a pergunta; ela continua na lista.',
-  'command.verbsHelp': 'Use /askaway, /askaway lang pt-BR|en|auto, /askaway quiet on|off, /askaway who <nome> ou /askaway away.',
+  'command.verbsHelp': 'Digite /askaway, /askaway lang pt-BR|en|auto, /askaway quiet on|off, /askaway who <nome> ou /askaway away.',
   // gauntlet 4, package B2
   'urgency.grade.low': 'baixa',
   'urgency.grade.medium': 'média',
