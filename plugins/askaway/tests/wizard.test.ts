@@ -286,6 +286,12 @@ test('submittedOther with a kept label leaves typed text unrecorded: the pick an
   expect(submittedOther(kept, 'q-a-000001', 'Second text').picks).toEqual({ 'q-a-000001': { key: 'other', text: 'First text' } })
 })
 
+test('submittedOther with a kept label and blank text is a no-op too: the label stays picked on blur (M46)', () => {
+  const kept: Wizard = { ...EMPTY_WIZARD, picks: { 'q-a-000001': { key: 'other', text: 'First text' } }, labels: { 'q-a-000001': 'First text' } }
+  expect(submittedOther(kept, 'q-a-000001', '   ')).toBe(kept)
+  expect(submittedOther(kept, 'q-a-000001', '   ').picks).toEqual({ 'q-a-000001': { key: 'other', text: 'First text' } })
+})
+
 test('submittedOther with blank text takes an Other pick away, and leaves a chosen option alone', () => {
   const picked: Wizard = { ...EMPTY_WIZARD, picks: { 'q-a-000001': { key: 'other', text: 'Use a fork' } } }
   expect(submittedOther(picked, 'q-a-000001', '   ').picks).toEqual({})
@@ -302,11 +308,15 @@ test('submittedOther keeps at most 500 code points of the trimmed text, so 600 t
   expect(submittedOther(EMPTY_WIZARD, 'q-a-000001', 'y'.repeat(500)).picks['q-a-000001']?.text).toBe('y'.repeat(500))
 })
 
-test('submittedTypedOther records the typed text as the answer even while a label is kept (Submit all), and blank text takes the pick away', () => {
+test('submittedTypedOther records the typed text as the answer even while a label is kept (Submit all), and blank text keeps a kept label', () => {
   const kept: Wizard = { ...EMPTY_WIZARD, picks: { 'q-a-000001': { key: 'other', text: 'First text' } }, labels: { 'q-a-000001': 'First text' } }
   expect(submittedTypedOther(kept, 'q-a-000001', '  Second text ').picks).toEqual({ 'q-a-000001': { key: 'other', text: 'Second text' } })
   expect(submittedTypedOther(kept, 'q-a-000001', 'Second text').labels).toEqual({ 'q-a-000001': 'First text' })
-  expect(submittedTypedOther(kept, 'q-a-000001', '   ').picks).toEqual({})
+  // Gauntlet 5 M46 (owner reply B): blank text with a kept label changes nothing, so the label stays picked.
+  expect(submittedTypedOther(kept, 'q-a-000001', '   ')).toEqual(kept)
+  // With no kept label, blank text still takes the Other pick away.
+  const typed: Wizard = { ...EMPTY_WIZARD, picks: { 'q-a-000001': { key: 'other', text: 'Typed' } } }
+  expect(submittedTypedOther(typed, 'q-a-000001', '   ').picks).toEqual({})
 })
 
 test('alignOtherToLabels gives a draft Other pick the kept label as its text when the two differ, and leaves the rest alone', () => {

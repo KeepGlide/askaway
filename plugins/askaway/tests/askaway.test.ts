@@ -832,7 +832,7 @@ test('model: the lead line names the recommended key and the local time, or says
 test('model: the list header and rows read in each language, with away mode when it is on', () => {
   const q = parsedQuestion('q-m-000001', 10)
   expect(listText('en', [q], true)).toBe(
-    'Askaway: 1 open, away mode on.\nopen · q-m-000001 · Title q-m-000001 (recommended A)',
+    'Askaway: 1 pending, away mode on.\npending · q-m-000001 · Title q-m-000001 (recommended A)',
   )
   expect(listText('pt', [q], true)).toBe(
     'Askaway: 1 pendente, modo ausente ligado.\npendente · q-m-000001 · Title q-m-000001 (recomendada A)',
@@ -1681,6 +1681,32 @@ test('an option draws its fit as "· aderência N" in Portuguese, the default la
   await pane.unmount()
 })
 
+test('a question with a fit draws one fit hint line in English, explaining the 0 to 100 scale (M45)', async ($, on) => {
+  const options = [
+    { key: 'A', label: 'SQLite', tradeoff: 'fast', fit: 88 },
+    { key: 'B', label: 'JSONL', tradeoff: 'simple', fit: 55 },
+  ]
+  const files = new Map([[path('q', 'q-f-aaaaaa'), question('q-f-aaaaaa', 1000, { options })]])
+  stubHost(on, files, true, {}, {}, { LANG: '' })
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  expect((await textsOf(pane)).filter(text => text === "fit N: the agent's estimate of fit, 0 to 100")).toHaveLength(1)
+  await pane.unmount()
+})
+
+test('a question with a fit draws one fit hint line in Portuguese, explaining the 0 to 100 scale (M45)', async ($, on) => {
+  const options = [
+    { key: 'A', label: 'SQLite', tradeoff: 'fast', fit: 88 },
+    { key: 'B', label: 'JSONL', tradeoff: 'simple', fit: 55 },
+  ]
+  const files = new Map([[path('q', 'q-f-aaaaaa'), question('q-f-aaaaaa', 1000, { options })]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  expect((await textsOf(pane)).filter(text => text === 'aderência N: estimativa do agente, de 0 a 100')).toHaveLength(1)
+  await pane.unmount()
+})
+
 test('an option with fit null draws its tradeoff and no fit, and an option with neither draws no line', async ($, on) => {
   const options = [
     { key: 'A', label: 'Keep', tradeoff: 'cheap', fit: null },
@@ -2384,7 +2410,7 @@ test('Other… keeps the text Enter sends as its label, a link click picks it in
   expect(field?.props).not.toHaveProperty('autoFocus')
   expect(field?.props).not.toHaveProperty('value')
   expect(field?.props).not.toHaveProperty('label')
-  expect(field?.props.submitLabel).toBe('Guardar')
+  expect(field?.props.submitLabel).toBe('Aplicar')
   // The Other link only focuses that field and records nothing.
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   expect(await pane.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa' })).toBeDefined()
@@ -2485,7 +2511,7 @@ test('Enter drops the pending draft: the link picks the text Enter kept, not the
   await pane.unmount()
 })
 
-test('blank Other… text typed after a recorded Other pick takes the pick away when Next leaves the field', async ($, on) => {
+test('blank Other… text typed after a recorded Other pick leaves the kept label picked when Next leaves the field (M46)', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
@@ -2507,8 +2533,29 @@ test('blank Other… text typed after a recorded Other pick takes the pick away 
   await pane.press({ key: 'nav-next' })
   await clock.advance(350)
   await pane.press({ key: 'nav-back' })
-  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(false)
+  // Blur with blank text is a no-op on a kept label: the label stays picked, and its text is still the reply's text.
+  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
   expect(JSON.stringify(await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).toContain('Use a fork')
+  await pane.unmount()
+})
+
+test('a kept label drawn chosen is the primary button with a ✓ mark and bold, as a picked option is; unpicked it stays a plain link (M29b)', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'other-q-l1-aaaaaa' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  const unpicked = await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' })
+  expect(unpicked?.props.plain).toBe(true)
+  expect(unpicked?.props.variant).not.toBe('primary')
+  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(false)
+  await pane.press({ key: 'other-q-l1-aaaaaa' })
+  const chosen = await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' })
+  expect(chosen?.props.plain).toBeUndefined()
+  expect(chosen?.props.variant).toBe('primary')
+  expect(chosen?.props.label).toBe('✓ C · Use a fork')
+  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
   await pane.unmount()
 })
 
@@ -2823,6 +2870,7 @@ test('a draft pick whose text is not the kept label is drawn as the label, and S
   await clock.advance(5000)
   expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
   expect(JSON.stringify(await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).toContain('C · First text')
+  expect(await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' })).toMatchObject({ props: { variant: 'primary', label: '✓ C · First text' } })
   await pane.press({ key: 'submit-all' })
   expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ key: 'other', text: 'First text' })
   await pane.unmount()
@@ -3965,30 +4013,55 @@ test('no text node uses the accent colour, on either surface, in a question with
   }
 })
 
-test('Gauntlet M68: the footer is drawn without dimColor', async ($, on) => {
+test('Gauntlet M68: the footer is drawn without dimColor, on the terminal and on the Desktop', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'A', -ANSWER_TTL_MS + 30_000)],
   ])
   stubHost(on, files)
   await $.session.start(SESSION)
-  const pane = await mountPane($)
-  const footer = nodesOf(await pane.drawn()).find(node => node.type === 'Text' && textOfNode(node).includes('nas últimas 24 h'))
-  expect(footer).toBeDefined()
-  expect((footer?.props as Record<string, unknown> | undefined)?.dimColor).toBeUndefined()
-  await pane.unmount()
+  for (const surface of SURFACES) {
+    const pane = await mountPane($, surface)
+    const footer = nodesOf(await pane.drawn()).find(node => node.type === 'Text' && textOfNode(node).includes('nas últimas 24 h'))
+    expect(footer).toBeDefined()
+    expect((footer?.props as Record<string, unknown> | undefined)?.dimColor).toBeUndefined()
+    await pane.unmount()
+  }
 })
 
 test('Gauntlet M68: every text colour the pane draws measures 4.5:1 or better on both backgrounds', () => {
-  const drawn = ['text', ...Object.values(URGENCY_COLOR)]
+  const drawn = ['text', ...Object.values(URGENCY_COLOR), 'desktopDim']
   for (const theme of ['light', 'dark'] as const) {
     for (const key of drawn) expect(TEXT_CONTRAST[theme][key]).toBeGreaterThanOrEqual(4.5)
   }
 })
 
-test('Gauntlet M68: the recorded light-theme ratios match the WCAG formula on #FFFFFF', () => {
+// Gauntlet 5 M58: the recorded dim ratios are the measured ones (look.ts names each source). The Desktop's dim is the text colour
+// at .6 opacity: #0b0b0b at .6 on #FFFFFF is #6d6d6d (0.6 * 11 + 0.4 * 255 = 108.6), #FFFFFF at .6 on #0b0b0b is #9d9d9d (157.4).
+test('Gauntlet 5 M58: the recorded ratios match the WCAG formula on the surfaces they name', () => {
   expect(Math.abs(contrast('#000000', '#FFFFFF') - TEXT_CONTRAST.light.text)).toBeLessThan(0.05)
-  expect(Math.abs(contrast('#808080', '#FFFFFF') - TEXT_CONTRAST.light.dim)).toBeLessThan(0.05)
+  expect(Math.abs(contrast('#6d6d6d', '#FFFFFF') - TEXT_CONTRAST.light.desktopDim)).toBeLessThan(0.05)
+  expect(Math.abs(contrast('#9d9d9d', '#0b0b0b') - TEXT_CONTRAST.dark.desktopDim)).toBeLessThan(0.05)
+  expect(Math.abs(contrast('#666666', '#FFFFFF') - TEXT_CONTRAST.light.inactive)).toBeLessThan(0.05)
+  expect(Math.abs(contrast('#999999', '#111827') - TEXT_CONTRAST.dark.inactive)).toBeLessThan(0.05)
+})
+
+// Gauntlet 5 M58 (owner reply A): the Desktop dims an option's sub-rows and the terminal draws them plain. The lead line and the
+// link mark are dim on both surfaces, as they were; the footer is never dim (M68).
+test('Gauntlet 5 M58: option sub-rows are dim on the Desktop and plain on the terminal; the lead line and link mark are dim on both', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files, true, {}, {}, { LANG: '' })
+  await $.session.start(SESSION)
+  const dimOf = (node: Record<string, unknown> | undefined): unknown => (node?.props as Record<string, unknown> | undefined)?.dimColor
+  for (const surface of SURFACES) {
+    const pane = await mountPane($, surface)
+    const nodes = nodesOf(await pane.drawn())
+    const textNode = (fragment: string) => nodes.find(node => node.type === 'Text' && textOfNode(node).includes(fragment))
+    expect(dimOf(textNode('Cheap ·'))).toBe(surface === 'desktop')
+    expect(dimOf(textNode('Pick another option'))).toBe(true)
+    expect(dimOf(nodes.find(node => node.type === 'Text' && textOfNode(node) === `${LINK_MARK} `))).toBe(true)
+    await pane.unmount()
+  }
 })
 
 // ---- Held buttons: a Button keeps its press handle across redraws (hooks/held.ts) ----
@@ -5932,5 +6005,97 @@ test('gauntlet 4, B2 M26: an option label with line breaks draws as one row, so 
   expect(await labelOf(pane, 'opt-q-l1-aaaaaa-A')).toBe('A · Ship now B · Fake row (Recommended)')
   expect(await labelOf(pane, 'opt-q-l1-aaaaaa-B')).toBe('B · Rewrite')
   expect((await textsOf(pane)).some(text => text.includes('\n'))).toBe(false)
+  await pane.unmount()
+})
+
+// Gauntlet 5 M15 (owner reply C): a damaged q/ file that pauses its session draws a notice naming its id, with Dismiss.
+const DAMAGED_TEXT = '{"id":"q-l1-aaaaaa","session":"sess-live","ts":1000,"title":'
+
+test('Gauntlet 5 M15: a damaged q/ file that pauses its session draws a notice naming its id, with Dismiss, on both surfaces', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), DAMAGED_TEXT]])
+  stubHost(on, files, true, {}, {}, { LANG: '' })
+  await $.session.start(SESSION)
+  for (const surface of SURFACES) {
+    const pane = await mountPane($, surface)
+    expect(await textNodeWith(pane, 'Question q-l1-aaaaaa is damaged')).toBeDefined()
+    expect(await labelOf(pane, 'dismiss-damaged-q-l1-aaaaaa')).toBe('Dismiss (removes)')
+    await pane.unmount()
+  }
+})
+
+test('Gauntlet 5 M15: Dismiss on a damaged pause runs prune --id --strict without --force, removes the file, and the notice is gone at the next poll', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), DAMAGED_TEXT]])
+  const { calls, clock } = stubHost(on, files, true, {}, {}, { LANG: '' })
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'dismiss-damaged-q-l1-aaaaaa' })
+  expect(calls.map(call => call.argv.slice(2).join(' '))).toContain('prune --id q-l1-aaaaaa --strict')
+  expect(files.has(path('q', 'q-l1-aaaaaa'))).toBe(false)
+  await clock.advance(5000)
+  expect(await pane.find({ type: 'Button', key: 'dismiss-damaged-q-l1-aaaaaa' })).toBeUndefined()
+  await pane.unmount()
+})
+
+test('Gauntlet 5 M15: a damaged q/ file draws no notice when it names no session, or when it is already answered', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), '{"id":"q-l1-aaaaaa","ts":1000,"title":'],
+    [path('q', 'q-l2-bbbbbb'), '{"id":"q-l2-bbbbbb","session":"sess-live","ts":2000,"title":'],
+    [path('a', 'q-l2-bbbbbb'), answer('q-l2-bbbbbb', 'A')],
+  ])
+  stubHost(on, files, true, {}, {}, { LANG: '' })
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  expect(await pane.find({ type: 'Button', key: 'dismiss-damaged-q-l1-aaaaaa' })).toBeUndefined()
+  expect(await pane.find({ type: 'Button', key: 'dismiss-damaged-q-l2-bbbbbb' })).toBeUndefined()
+  await pane.unmount()
+})
+
+// Should-4 (F4): the damaged Dismiss does not force the prune. A file the CLI reads as a question (a stored NaN literal) is refused
+// by the CLI, so the person is told by a toast and the notice stays.
+test('Gauntlet 5 F4 Should-4: Dismiss on a damaged pause whose prune the CLI refuses keeps the notice and shows the dismiss toast', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), DAMAGED_TEXT]])
+  const { calls, toasts, clock } = stubHost(on, files, true, {}, { pruneExit: 1 }, { LANG: '' })
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'dismiss-damaged-q-l1-aaaaaa' })
+  await clock.settle()
+  expect(calls.map(call => call.argv.slice(2).join(' '))).toContain('prune --id q-l1-aaaaaa --strict')
+  expect(toasts).toEqual(['Could not dismiss the question; it is still listed.'])
+  expect(files.has(path('q', 'q-l1-aaaaaa'))).toBe(true)
+  expect(await pane.find({ type: 'Button', key: 'dismiss-damaged-q-l1-aaaaaa' })).toBeDefined()
+  await pane.unmount()
+})
+
+// Should-5 (F4): damagedPauseOf pins. Each file below must draw no notice; breaking the guard named in each test turns it red.
+// (a) a file the CLI reads as a question (id and integer ts), with no required options: readsAsQuestion keeps it out.
+test('Gauntlet 5 F4 Should-5 a: a q/ file the CLI reads as a question, without required options, draws no damaged notice', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-live', options: [] })]])
+  stubHost(on, files, true, {}, {}, { LANG: '' })
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  expect(await pane.find({ type: 'Button', key: 'dismiss-damaged-q-l1-aaaaaa' })).toBeUndefined()
+  await pane.unmount()
+})
+
+// (b) a q/ file with a d/ delivery marker: deliveredIds keeps it out.
+test('Gauntlet 5 F4 Should-5 b: a damaged q/ file with a d/ delivery marker draws no damaged notice', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), DAMAGED_TEXT],
+    [path('d', 'q-l1-aaaaaa'), delivery('q-l1-aaaaaa')],
+  ])
+  stubHost(on, files, true, {}, {}, { LANG: '' })
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  expect(await pane.find({ type: 'Button', key: 'dismiss-damaged-q-l1-aaaaaa' })).toBeUndefined()
+  await pane.unmount()
+})
+
+// (c) a damaged q/ file whose session fails SESSION_NAME (a space in it): the file pauses nothing.
+test('Gauntlet 5 F4 Should-5 c: a damaged q/ file whose session name fails the session pattern draws no damaged notice', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), '{"id":"q-l1-aaaaaa","session":"sess live","ts":1000,"title":']])
+  stubHost(on, files, true, {}, {}, { LANG: '' })
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  expect(await pane.find({ type: 'Button', key: 'dismiss-damaged-q-l1-aaaaaa' })).toBeUndefined()
   await pane.unmount()
 })

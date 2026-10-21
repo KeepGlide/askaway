@@ -29,6 +29,17 @@ test('the placeholder check flags a name only the pt-BR message has, and a name 
   expect(placeholderMismatches({ hi: 'Hi {name}' }, { hi: 'Oi {name}' })).toEqual([])
 })
 
+test('the field button reads Apply in English and Aplicar in pt-BR, the word for choosing the typed text (M29b)', () => {
+  expect(t('en', 'input.send')).toBe('Apply')
+  expect(t('pt', 'input.send')).toBe('Aplicar')
+})
+
+test('the fit hint explains the 0 to 100 scale in both languages, in one line of at most 60 columns (M45)', () => {
+  expect(t('en', 'option.fitHint')).toBe("fit N: the agent's estimate of fit, 0 to 100")
+  expect(t('pt', 'option.fitHint')).toBe('aderência N: estimativa do agente, de 0 a 100')
+  for (const lang of ['en', 'pt'] as const) expect([...t(lang, 'option.fitHint')].length).toBeLessThanOrEqual(60)
+})
+
 test('no pt-BR command reply keeps the English word "Use" as its verb (Gauntlet 5 B2 M8)', () => {
   const kept = Object.entries(MESSAGES.pt)
     .filter(([key, text]) => key.startsWith('command.') && /^Use\b/.test(text))
