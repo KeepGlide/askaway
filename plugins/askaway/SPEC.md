@@ -16,10 +16,23 @@ Two parts, one shared folder:
 Terms:
 - **Group**: the open questions of one session family (`family`: the Claude Desktop root session that started or forked the
   asking session, and its family's other sessions). A question with no `family` (filed before the field existed) groups by
-  its project (`project`). The group's label is the root's title (`family_title`), or the project's name when there is none.
+  its project (`project`). Without a Desktop Group (below), the group's label is the root's title (`family_title`), or the project's name when there is none.
+  On the Desktop, a question whose session (`desktop_session`, else its family root `family`) is filed under one of the
+  sidebar's Groups groups by that Group instead, labelled with the Group's name as the user typed it (beta.35): the pane
+  reads the Desktop's own config, `~/.config/Claude/claude_desktop_config.json` (override `ASKAWAY_DESKTOP_CONFIG`), only
+  when its mtime changes (`readDesktopGroups`, `mtimeOf`, `desktopConfigPathOf`, `hooks/register.tsx`), and takes
+  `preferences.epitaxyPrefs["dframe-group-scopes"][<scope>].groups` (id and name) and `.assignments`
+  (`"code:local_<uuid>"` to a group id) from every scope (`parseDesktopGroups`, `withDesktopGroup`, `groupKeyOf`,
+  `groupLabelOf`, `hooks/model.ts`). The format is the Desktop's private one and undocumented: a missing file or an
+  unknown shape means no Groups, drawn as before, with no toast and no log; a failed folder listing, a read or parse
+  error, or a file over 4 MiB keeps the last Groups read, as one failed listing never empties the board (`readCached`),
+  and is retried at the next poll. A group with no name, or a name that is not text, is skipped; only `code:` keys are
+  read. Moving a session to another Group moves its questions on the next poll. Only the Linux path and the override
+  are read: macOS, Windows and `XDG_CONFIG_HOME` get no Groups.
 - **Session**: the questions of a group that were asked by one session (`session`). The root session of a family (its
   `desktop_session` is the group's `family`, or, for a record filed before `desktop_session` existed, its `session_title` is
-  its `family_title`; `isRootSession`, `hooks/model.ts`) is the group itself: its questions sit right under the group's label, with no session
+  its `family_title`; `isRootSession`, `hooks/model.ts`) is the group itself, except under a Desktop Group, where the root
+  session gets its own session row so its title is still drawn (the Group's name labels the group): its questions sit right under the group's label, with no session
   row, so the family's title is never drawn twice. The other sessions of the family are derived sessions, drawn as rows under
   the root's questions. A question with no session sits in its group under the session label "the session" ("a sessão").
 - **Round**: the open questions of one group; Submit all writes the round of the group on screen.
@@ -376,7 +389,9 @@ status list). `hooks/pane.tsx`, `renderPane`.
     the question has no `desktop_session` or the surface is the terminal (no session opens there: the heading reads "<title> - <risk label> · <age label>"); the surface opens it itself (no `onLinkPress`). Elsewhere the title in bold with
     the risk and age beside it, muted, wrapping under the title when they do not fit. The risk label (low, medium,
     high) is the risk of accepting the recommended option, as the filing agent judged it. A question with no title is
-    named by its text, on one line and cut to 24 code points with "…";
+    named by its whole text, on one line that wraps; the pane never cuts a title (beta.35), and a stored title that
+    is exactly 60 code points, ends with "…" and, without it, starts the question (the CLI's 60-character fallback) is drawn as the whole question
+    (`questionLabel`, `hooks/model.ts`), in the card, the tree, the History, the footer, the new-question toast and the text list;
   - the Urgency line, directly under the title row and before the lead line, when `urgency` is set: "⏱️ Urgency" (pt
     "⏱️ Urgência"), its title bold and its text coloured by grade (`urgencyGradeOf`, `URGENCY_COLOR`, `hooks/look.ts`): low
     `success`, medium `warning`, high `error`, the engine's theme keys, so it follows light and dark. The grade is the optional
@@ -472,15 +487,18 @@ status list). `hooks/pane.tsx`, `renderPane`.
   sessions are "├" or "└" rows (as in the open tree). On the Desktop only (the terminal draws the History labels plain; `renderHistory`, `hooks/pane.tsx`), the family label is a bold link to
   the family root's Desktop session ("**[<title>](#<family>)**") and a derived session's row a link to its Desktop session
   ("└ [<title>](#<desktop_session>)", `sessionLink`, `hooks/pane.tsx`); the surface opens them itself. The open tree draws
-  no such links. Each answer is one row "○ <title> ✓ - <line>", shaped as a picked row of the open tree
-  (the same ○ every history row carries, plain; the state is only in the line). Where the surface draws Markdown and the
-  question is still known with a `desktop_session`, the row is a Markdown line whose title is a link to `#<desktop_session>`,
-  which the surface opens itself (no `onLinkPress`), as the card's See session link; else the row is plain Text. The line reads
-  "Answer <key> · sent <time> · delivered <time> (read by the session)" ("Resposta <key> · enviada <time> · entregue <time> (lida
+  no such links. Each answer is one row "○ <title> ✓ <reply> · <line>", shaped as a picked row of the open tree
+  (the same ○ every history row carries, plain; the state is only in the line). The row is plain Text on both surfaces, its
+  title the question's whole title (beta.35): a `#local_…` link is drawn by the Desktop as a chip with the session's own name,
+  so a linked title read as the session's name on every row (`renderHistoryEntry`, `hooks/pane.tsx`); the group and session
+  rows above keep their links. `<reply>` is the chosen option's label in the pane's language (`localizedQuestion`), or an
+  Other reply's whole typed text in typographic quotes (“…”), so it reads apart from an option label, never the letter
+  (`answerNameOf`, `hooks/model.ts`). The line reads
+  "sent <time> · delivered <time> (read by the session)" ("enviada <time> · entregue <time> (lida
   pela sessão)"); a pending line ends at the sent time (nothing says it is waiting: the line only grows once the session
   answers back), an ended one ends "the session ended before reading
-  it" ("a sessão encerrou antes de ler"), an expired one "expired unread" ("expirou sem ser lida"). An Other answer names its
-  letter and its text (`Answer C (Other: "…")`), cut to 80 code points with an ellipsis; the reply file keeps the whole text. "answered by agent" or "answered by <name>" (a CLI answer) appears only when the
+  it" ("a sessão encerrou antes de ler"), an expired one "expired unread" ("expirou sem ser lida"). An Other answer shows its whole typed text, wrapping (an empty
+  one reads "Other…" / "Outra…"); a row whose question has left the board names the key letter, the only thing left. "answered by agent" or "answered by <name>" (a CLI answer) appears only when the
   answer was not given by the person. Times are local: "14:32" on the day of the pane, "17/10 14:32" on another day. The delivered
   time is the `ts` of the delivery marker (`d/<id>.json`); an expired marker carries a ts, which the History line does not show.
   A question's title is never a jump link: an answered question is no longer open, so no card can be jumped to. A row whose question has left the board is titled "Question closed" ("Pergunta encerrada").
@@ -495,7 +513,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
   Non-destructive: it touches no q/, a/ or d/ file and writes only `cleared.json` in the state folder, so a cleared pending answer is still read by its session. Clear all is one-way from the pane: a hidden History row does not come back there, while the q/, a/ and d/ files stay in the state folder and `list --answered` and `export` still show them. It replaces the
   per-line ✕ of earlier versions. A Clear all that hides a row with no delivery marker (a pending or ended line) shows `toast.clearedPending` (`clearHistory`, `hooks/register.tsx`).
 - **Footer** (`footerText`, `hooks/model.ts`): drawn under the History block, above the Clear all button, only while no
-  question is open. It counts the answers given in the last 24 h, names the last answer (its question's label, on one line and cut to 40 code points, its key and its age; an Other reply shows the letter of its field, or "Other" ("Outra") when the question is gone; `lastAnswerText`, `otherKeyOf`), and counts the answers not yet read and the expired ones, leaving out the rows Clear all hid (`cleared`), each left out at zero (the replied count keeps its "none" form). Absent while a question is open. Its counts are read on the pane's clock (the tick, `tickClock`), which the poll rewrites
+  question is open. It counts the answers given in the last 24 h, names the last answer (its question's whole label, the chosen option's label in the pane's language, or an Other reply's typed text in quotes, and its age: "… → <label>, <age>", `footer.last`; `lastAnswerText`, `answerNameOf`), and counts the answers not yet read and the expired ones, leaving out the rows Clear all hid (`cleared`), each left out at zero (the replied count keeps its "none" form). Absent while a question is open. Its counts are read on the pane's clock (the tick, `tickClock`), which the poll rewrites
   whenever the footer text changes, so the 24 h window and the 7-day TTL move the counts with no status line change. With no state folder the footer reads `command.awayUnavailable` instead, "Askaway away mode is unavailable: no state folder (HOME is unset)." (`hooks/register.tsx`, `hooks/i18n.ts`). The footer is drawn without dim (M68); the recorded ratios are in `TEXT_CONTRAST` (`hooks/look.ts`): the Desktop dim (opacity .6) measures 5.17:1 light and 7.26:1 dark, the engine's inactive token 5.74:1 and 6.23:1, and the terminal's SGR 2 is not measured; the urgency colours measure 4.71 to 6.67 in light and 6.48 to 10.88 in dark. The lead line and the `▪` link mark are dim on both surfaces (owner reply, M58); the sub-rows are plain on both surfaces and dim only while the card fades; the details block is dim only while the card fades.
 
 ## Focus and clicks

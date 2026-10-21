@@ -2,8 +2,24 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.34, set by the beta.34 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.35, set by the beta.35 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.35] - 2026-10-21
+
+Three owner reports on beta.34, seen on the Desktop.
+
+### Fixed
+- Titles are drawn whole: `questionLabel` (`hooks/model.ts`) never cuts (the 24-character title-less cut and the 40-character footer cut are gone), and a stored title that is the CLI's 60-character fallback ("…" at the end, a prefix of the question) is drawn as the whole question, in the card, the tree, the History, the footer, the new-question toast and the text list.
+- History rows read the question and the reply, not the session's name or the letter: `renderHistoryEntry` (`hooks/pane.tsx`) draws plain text, since the Desktop drew the `#local_…` title link as a chip with the session's own name; `answerNameOf` (`hooks/model.ts`) names the chosen option's label in the pane's language, or an Other reply's whole typed text in quotes (“…”), so it reads apart from an option label; the sent, delivered and read-by-the-session times stay. The footer names the label too (`footer.last`, `hooks/i18n.ts`).
+
+### Added
+- Desktop sidebar Groups: the tree and the History group a question by the Desktop Group its session (else its family root) is filed under, labelled with the Group's name, falling back to the family title and then the project; the pane reads `~/.config/Claude/claude_desktop_config.json` (override `ASKAWAY_DESKTOP_CONFIG`) only when its mtime changes; a failed listing, read or parse, or a file over 4 MiB keeps the last Groups read, with no toast and no log, and a Desktop Group header in the History is plain text, not a session link (`readDesktopGroups`, `hooks/register.tsx`; `parseDesktopGroups`, `withDesktopGroup`, `groupKeyOf`, `groupLabelOf`, `hooks/model.ts`).
+
+### Tests
+- `tests/askaway.test.ts`, `tests/i18n.test.ts`, `tests/panel-race.test.ts`: a clipped title drawn whole in the tree, card, History and footer; History rows with the option label in both languages, an Other text, a closed question, plain text on the Desktop; Desktop Groups under one header, a session moved on the next poll after the config changes, a malformed config, the family and root fallbacks; after a Sonnet-high mutation review (15 of 40 mutants survived), cases that kill each real survivor: the clip rule's three conditions, a translated option label, list and read rejections that keep the last Groups, sibling files in the config folder, session-over-family precedence, non-`code:` keys, non-text, empty and control-character group names, a scope with no assignments, the text list, and a one-line label.
+
+Gates: `claude plugin test plugins/askaway` 469 pass, 0 fail; pytest 867 passed; `claude plugin validate` passed; `biome lint` clean (23 files). Mutation check: every real survivor of the review now goes red.
 
 ## [0.4.0-beta.34] - 2026-10-21
 
