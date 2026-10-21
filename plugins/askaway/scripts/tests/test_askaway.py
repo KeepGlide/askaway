@@ -271,6 +271,97 @@ def test_ask_stores_a_short_unknown_key_with_the_question(home, capsys):
     assert stored(home, "q", out["id"])["extra"] == {"note": "kept"}
 
 
+PT_BR_TRANSLATION = {
+    "title": "Cache",
+    "question": "Onde o serviço deve guardar o cache?",
+    "what": "O Redis é um servidor de cache que roda ao lado da API. O serviço guardaria as respostas nele.",
+    "options": {"A": {"label": "Redis", "tradeoff": "mais um serviço para rodar",
+                      "does": "A API guarda as respostas em um servidor Redis.",
+                      "pros": "Os acertos são compartilhados entre os workers.",
+                      "cons": "Mais um serviço para rodar."}},
+}
+LONG_TEXT_PT = ("Esta frase tem palavras suficientes para passar. " * 5).strip()
+
+
+def test_ask_stores_a_pt_br_translation_as_sent(home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations={"pt-BR": PT_BR_TRANSLATION})))
+    assert out["action"] == "continue"
+    assert stored(home, "q", out["id"])["translations"] == {"pt-BR": PT_BR_TRANSLATION}
+
+
+def test_ask_stores_translated_text_cleaned_like_the_main_text(home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations={"pt-BR": {"title": "Cache\u202e"}})))
+    assert stored(home, "q", out["id"])["translations"] == {"pt-BR": {"title": "Cache"}}
+
+
+PT_BR_LONG_QUESTION = "Onde o serviço deve guardar o cache das respostas da API e por quanto tempo?"
+
+
+def test_a_translation_with_only_a_question_gets_its_title_clipped_from_that_question(home, capsys):
+    entry = base_entry(translations={"pt-BR": {"question": PT_BR_LONG_QUESTION}})
+    del entry["title"]
+    out = cli(capsys, "ask", "--json", json.dumps(entry))
+    assert out["action"] == "continue"
+    assert stored(home, "q", out["id"])["translations"] == {"pt-BR": {
+        "question": PT_BR_LONG_QUESTION,
+        "title": "Onde o serviço deve guardar o cache das respostas da API e …",
+    }}
+
+
+def test_a_translation_with_neither_question_nor_title_keeps_no_title(home, capsys):
+    what = PT_BR_TRANSLATION["what"]
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations={"pt-BR": {"what": what}})))
+    assert out["action"] == "continue"
+    assert stored(home, "q", out["id"])["translations"] == {"pt-BR": {"what": what}}
+
+
+@pytest.mark.parametrize(("translations", "reason"), [
+    ({"fr": PT_BR_TRANSLATION}, "translations.fr: not a language"),
+    ({"pt": PT_BR_TRANSLATION}, "translations.pt: not a language; use en or pt-BR"),
+    ({"pt-BR": {"title": "x" * 61}}, "translations.pt-BR.title: too long (61/60)"),
+    ({}, "translations: must be a non-empty object"),
+    ("texto", "translations: must be a non-empty object"),
+    ({"pt-BR": "texto"}, "translations.pt-BR: must be a non-empty object"),
+    ({"pt-BR": {}}, "translations.pt-BR: must be a non-empty object"),
+    ({"pt-BR": {"what": ""}}, "translations.pt-BR.what: missing"),
+    ({"pt-BR": {"what": "Uma frase só, sem fim"}}, "translations.pt-BR.what: needs at least 2 sentences"),
+    ({"pt-BR": {"question": "x" * 401}}, "translations.pt-BR.question: too long (401/400)"),
+    ({"pt-BR": {"price": "Dez reais"}}, "translations.pt-BR.price: not a translatable field"),
+    ({"pt-BR": {"risk": "high"}}, "translations.pt-BR.risk: not a translatable field"),
+    ({"pt-BR": {"options": {}}}, "translations.pt-BR.options: must be a non-empty object"),
+    ({"pt-BR": {"options": {"Z": {"label": "Redis"}}}}, "translations.pt-BR.options.Z: not a key of the main options"),
+    ({"pt-BR": {"options": {"A": {}}}}, "translations.pt-BR.options.A: must be a non-empty object"),
+    ({"pt-BR": {"options": {"A": {"label": ""}}}}, "translations.pt-BR.options.A.label: missing"),
+    ({"pt-BR": {"options": {"A": {"price": "10"}}}}, "translations.pt-BR.options.A.price: not a translatable field"),
+    ({"pt-BR": {"options": {"A": {"fit": 50}}}}, "translations.pt-BR.options.A.fit: not a translatable field"),
+])
+def test_ask_refiles_a_bad_translation_naming_its_path_and_files_nothing(translations, reason, home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations=translations)))
+    assert out["action"] == "refile" and reason in out["error"]
+    assert not (home / "q").exists() or list((home / "q").glob("*.json")) == []
+
+
+def test_translations_are_not_counted_in_the_unknown_keys_cap(home, capsys):
+    texts = {name: LONG_TEXT_PT for name in ("question", "what", "problem", "context", "why", "how", "gains",
+                                             "losses", "analogy", "urgency", "undo")}
+    options = {key: {name: LONG_TEXT_PT for name in ("label", "tradeoff", "does", "pros", "cons")} for key in "AB"}
+    translations = {"pt-BR": {**texts, "title": "Cache", "options": options}}
+    assert len(json.dumps(translations)) > askaway.UNKNOWN_KEYS_MAX_BYTES
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations=translations)))
+    assert out["action"] == "continue"
+    assert stored(home, "q", out["id"])["translations"] == translations
+
+
+def test_delivery_line_does_not_read_translations(home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations={"pt-BR": PT_BR_TRANSLATION})))
+    entry = stored(home, "q", out["id"])
+    plain = {name: value for name, value in entry.items() if name != "translations"}
+    answer = {"key": "A"}
+    line = askaway._delivery_line(entry, answer)
+    assert line == askaway._delivery_line(plain, answer)
+    assert PT_BR_TRANSLATION["question"] not in line
+
+
 def test_ask_ignores_session_and_project_sent_in_payload(home, capsys, monkeypatch):
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
     out = cli(capsys, "ask", "--json",
