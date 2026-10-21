@@ -2,12 +2,12 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.30, set by the beta.30 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.31, set by the beta.31 release commit.
 Commit hashes name the change in `git log`.
 
-## [0.4.0-beta.31] - 2026-10-20
+## [0.4.0-beta.31] - 2026-10-21
 
-Gauntlet round 5: fixes to the CLI's Bash guard, the ask and prune paths and the delivery markers, to the pane's draft and marker writes, and to the pt-BR command replies, with the docs and test pins that go with them. Test counts are recorded at the release gate.
+Gauntlet round 5: fixes to the CLI's Bash guard, the ask and prune paths and the delivery markers, to the pane's draft and marker writes, and to the pt-BR command replies, with the docs and test pins that go with them. Plugin tests: 410 pass; pytest: 800 passed; `biome lint` clean.
 
 ### Fixed
 
