@@ -245,6 +245,32 @@ def test_ask_explicit_run_kind_wins_over_env(home, capsys, monkeypatch):
     assert stored(home, "q", out["id"])["run_kind"] == "subagent"
 
 
+def test_ask_keeps_an_unknown_top_level_key_with_the_question_and_never_lets_it_replace_an_own_field(home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(urgencyLevel="high", id="q-spoofed-000000")))
+    entry = stored(home, "q", out["id"])
+    assert entry["urgencyLevel"] == "high" and entry["id"] == out["id"]
+    assert "urgency_level" not in entry
+
+
+@pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity", "1e400"])
+def test_ask_refiles_a_non_finite_number_in_an_unknown_key_and_files_nothing(literal, home, capsys):
+    text = json.dumps(base_entry())[:-1] + f', "extra": {literal}}}'
+    out = cli(capsys, "ask", "--json", text)
+    assert out["action"] == "refile" and "not a finite number" in out["error"]
+    assert not (home / "q").exists() or list((home / "q").glob("*.json")) == []
+
+
+def test_ask_refiles_unknown_keys_over_the_size_cap_and_files_nothing(home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(extra="x" * 10_000)))
+    assert out["action"] == "refile" and "bytes" in out["error"]
+    assert not (home / "q").exists() or list((home / "q").glob("*.json")) == []
+
+
+def test_ask_stores_a_short_unknown_key_with_the_question(home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(extra={"note": "kept"})))
+    assert stored(home, "q", out["id"])["extra"] == {"note": "kept"}
+
+
 def test_ask_ignores_session_and_project_sent_in_payload(home, capsys, monkeypatch):
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
     out = cli(capsys, "ask", "--json",
@@ -722,6 +748,98 @@ def test_status_reports_expired_for_a_lapsed_marker_not_delivered(home, clock, c
     assert cli(capsys, "status", item)["status"] == "expired"
 
 
+def test_a_backward_clock_step_does_not_extend_an_unread_reply_past_its_ttl(home, clock, capsys):
+    base = 1_000_000_000_000
+    clock["ms"] = base
+    item = ask_item(capsys)
+    cli(capsys, "answer", item, "B")
+    clock["ms"] = base + 7 * DAY_MS + HOUR_MS
+    assert cli(capsys, "status", item)["status"] == "expired"
+    clock["ms"] = base + 7 * DAY_MS - HOUR_MS  # the wall clock stepped back by two hours
+    assert cli(capsys, "status", item)["status"] == "expired"
+
+
+def test_a_forward_clock_jump_of_a_ttl_is_not_persisted_so_a_fresh_reply_does_not_lapse_after_return(
+        home, clock, capsys):
+    base = 1_000_000_000_000
+    clock["ms"] = base
+    early = ask_item(capsys)
+    cli(capsys, "answer", early, "B")
+    assert cli(capsys, "status", early)["status"] == "answered"  # the clock mark is set at base
+    clock["ms"] = base + 30 * DAY_MS  # a 30-day forward excursion of the wall clock
+    assert cli(capsys, "status", early)["status"] == "expired"
+    clock["ms"] = base + HOUR_MS  # the clock is back where it was
+    late = ask_item(capsys, title="Queue backend")
+    cli(capsys, "answer", late, "A")
+    assert cli(capsys, "status", late)["status"] == "answered"
+
+
+def test_a_clock_mark_a_ttl_behind_is_re_seeded_only_after_a_prune_cycle_under_the_new_clock(home, clock):
+    real_now = int(time.time() * 1000)
+    home.mkdir(parents=True, exist_ok=True)
+    marker = home / askaway.CLOCK_MARK
+    prune = home / askaway.PRUNE_STAMP
+    clock["ms"] = real_now
+    askaway._clock_reading_ms()  # day 0: the mark is set
+    clock["ms"] = real_now + 8 * DAY_MS
+    assert askaway._clock_reading_ms() == real_now + 8 * DAY_MS
+    assert marker.stat().st_mtime_ns == real_now * 1_000_000  # no prune under the new clock yet: not persisted
+    prune.touch()
+    os.utime(prune, ns=((real_now + 8 * DAY_MS) * 1_000_000,) * 2)  # a prune cycle at day 8, under the new clock
+    clock["ms"] = real_now + 9 * DAY_MS
+    assert askaway._clock_reading_ms() == real_now + 9 * DAY_MS
+    assert marker.stat().st_mtime_ns == (real_now + 9 * DAY_MS) * 1_000_000  # re-seeded
+
+
+def test_a_clock_excursion_longer_than_a_prune_cycle_that_returns_lapses_fresh_replies_documented_residual(
+        home, clock, capsys):
+    # Documented residual (SPEC.md, clock_mark): once a prune cycle ran under the excursion, the mark moves to it, and
+    # until the clock passes it again a reply written after the return reads as older than the TTL.
+    real_now = int(time.time() * 1000)
+    clock["ms"] = real_now
+    early = ask_item(capsys)
+    cli(capsys, "answer", early, "B")
+    assert cli(capsys, "status", early)["status"] == "answered"  # the clock mark is set at real_now
+    clock["ms"] = real_now + 30 * DAY_MS  # a 30-day forward excursion of the wall clock
+    prune = home / askaway.PRUNE_STAMP
+    prune.touch()
+    os.utime(prune, ns=((real_now + 30 * DAY_MS) * 1_000_000,) * 2)  # a prune cycle ran under the excursion
+    assert cli(capsys, "status", early)["status"] == "expired"
+    clock["ms"] = real_now + HOUR_MS  # the clock is back where it was
+    late = ask_item(capsys, title="Queue backend")
+    cli(capsys, "answer", late, "A")
+    assert cli(capsys, "status", late)["status"] == "expired"
+
+
+def test_a_backward_step_over_a_ttl_lapses_replies_stamped_by_the_recoiled_clock(home, clock, capsys):
+    # Residual, pinned on purpose: the mark is not moved back, so until the clock passes it again a reply
+    # written with the recoiled clock reads as older than the TTL at once (SPEC.md, the clock mark).
+    base = 1_000_000_000_000
+    clock["ms"] = base
+    early = ask_item(capsys)
+    cli(capsys, "answer", early, "B")
+    cli(capsys, "status", early)  # the clock mark is set at base
+    clock["ms"] = base - 8 * DAY_MS  # the wall clock stepped back eight days
+    late = ask_item(capsys, title="Queue backend")
+    cli(capsys, "answer", late, "A")
+    assert cli(capsys, "status", late)["status"] == "expired"
+
+
+def test_the_clock_mark_is_written_only_once_it_trails_the_clock_by_over_a_minute(home, clock):
+    base = 1_000_000_000_000
+    home.mkdir(parents=True, exist_ok=True)
+    marker = home / askaway.CLOCK_MARK
+    clock["ms"] = base
+    askaway._clock_reading_ms()
+    first_write = marker.stat().st_mtime_ns
+    clock["ms"] = base + 1_000
+    assert askaway._clock_reading_ms() == base + 1_000
+    assert marker.stat().st_mtime_ns == first_write  # one second later: no write
+    clock["ms"] = base + 120_000
+    askaway._clock_reading_ms()
+    assert marker.stat().st_mtime_ns == (base + 120_000) * 1_000_000  # two minutes later: written
+
+
 def test_status_of_unknown_id_is_an_error(capsys):
     assert "error" in usage_error(capsys, "status", "q-missing-000000")
 
@@ -1131,6 +1249,27 @@ def test_deliver_sends_the_answer_once_to_the_asking_session(home, capsys, monke
     marker = stored(home, "d", item)
     assert marker["id"] == item and marker["session"] == SESSION
     assert run_hook(capsys, monkeypatch, "deliver", deliver_event()) == ""
+
+
+def test_deliver_never_prints_two_consecutive_runs_the_same_reply_twice(home, capsys, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    first = ask_item(capsys)
+    second = ask_item(capsys, title="Second cache question")
+    cli(capsys, "answer", first, "B")
+    cli(capsys, "answer", second, "A")
+    text = hook_json(capsys, monkeypatch, "deliver", deliver_event())["hookSpecificOutput"]["additionalContext"]
+    assert text.count(f"Askaway question {first} ") == 1 and text.count(f"Askaway question {second} ") == 1
+    assert run_hook(capsys, monkeypatch, "deliver", deliver_event()) == ""
+
+
+def test_deliver_never_prints_a_reply_one_millisecond_past_the_ttl(home, clock, capsys, monkeypatch):
+    base = 1_000_000_000_000
+    clock["ms"] = base
+    item = answer_from(capsys, monkeypatch, SESSION)
+    clock["ms"] = base + 7 * DAY_MS + 1
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    assert run_hook(capsys, monkeypatch, "deliver", deliver_event()) == ""
+    assert stored(home, "d", item)["expired"] is True
 
 
 def test_deliver_omits_you_were_using_when_answer_is_recommended(home, capsys, monkeypatch):
@@ -2117,13 +2256,15 @@ def test_script_parses_with_python_3_10_grammar():
     ast.parse(SCRIPT.read_text(encoding="utf-8"), feature_version=(3, 10))
 
 
-def test_script_on_an_older_python_prints_one_json_line_and_exits_zero(home):
+@pytest.mark.parametrize("verb", [["status", "x"], ["ask"], ["prune"], ["hook", "deliver"]])
+def test_script_on_an_older_python_prints_one_json_error_to_stderr_and_exits_zero(verb, home):
     probe = ("import runpy, sys; sys.version_info = (3, 11, 0, 'final', 0); "
-             f"sys.argv = ['askaway.py', 'status', 'x']; runpy.run_path({str(SCRIPT)!r}, run_name='__main__')")
+             f"sys.argv = ['askaway.py', *{verb!r}]; runpy.run_path({str(SCRIPT)!r}, run_name='__main__')")
     proc = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True,
                           timeout=20, check=False)
     assert proc.returncode == 0
-    lines = proc.stdout.splitlines()
+    assert proc.stdout == ""
+    lines = proc.stderr.splitlines()
     assert len(lines) == 1 and "3.12" in json.loads(lines[0])["error"]
 
 
@@ -2455,6 +2596,56 @@ def test_bash_cannot_answer_an_inbox_question_even_with_no_pause_pending(command
 
 
 @pytest.mark.parametrize("command", [
+    f"python3 {SCRIPT} away off",
+    f"python3 {SCRIPT} away on",
+    f"python3 {SCRIPT} --strict away off",
+    f'python3 "{SCRIPT}" away on',
+    "python3 /x/askaway.py away off",
+    f"cd /tmp && python3 {SCRIPT} away off",
+    f"python3 {SCRIPT} away $S",
+    f'python3 {SCRIPT} "away" on',
+    f"bash -c 'python3 {SCRIPT} away on'",
+])
+def test_bash_cannot_switch_away_mode_on_or_off(command, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == askaway.AWAY_DENIED
+
+
+@pytest.mark.parametrize("command", [
+    f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} away on",
+    f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} --strict away off",
+])
+def test_bash_may_switch_away_mode_in_a_sandbox_home(command, capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+@pytest.mark.parametrize("command", [
+    f"python3 {SCRIPT} away on # it's",
+    f"python3 {SCRIPT} away off # it's",
+    f"python3 {SCRIPT} away on \\\n",
+])
+def test_an_unreadable_command_that_switches_away_mode_is_denied(command, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == askaway.AWAY_DENIED
+
+
+def test_an_unreadable_away_status_read_stays_allowed(capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(f"python3 {SCRIPT} away status # it's")) == ""
+
+
+@pytest.mark.parametrize("command", [
+    f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} away on # it's",
+    f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} answer q-1-abcdef A # it's",
+])
+def test_an_unreadable_command_naming_a_sandbox_home_is_denied_as_the_state_folder(command, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
+
+
+def test_bash_may_read_away_mode_and_the_cli_still_switches_it_for_the_user(home, capsys):
+    assert askaway.bash_tamper_reason(f"python3 {SCRIPT} away status") is None
+    assert cli(capsys, "away", "on") == {"away": True}
+    assert cli(capsys, "away", "off") == {"away": False}
+
+
+@pytest.mark.parametrize("command", [
     f"echo '{{}}' > {STATE_FOLDER}/a/q-1-abcdef.json",
     f"echo '{{}}' >> {STATE_FOLDER}/a/q-1-abcdef.json",
     f"cp /tmp/x.json {STATE_FOLDER}/a/q-1-abcdef.json",
@@ -2556,6 +2747,21 @@ def test_code_that_runs_the_cli_with_a_word_built_at_run_time_is_denied(command,
 def test_code_that_starts_a_process_without_naming_askaway_is_allowed(capsys, monkeypatch):
     command = "python3 -c \"import subprocess; subprocess.run(['git', 'status'])\""
     assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+@pytest.mark.parametrize(("code", "reason"), [
+    ("import sys,runpy; sys.argv=['a','away','on']; runpy.run_path('{script}', run_name='__main__')", askaway.AWAY_DENIED),
+    ("from askaway import away_path; away_path().write_text('')", askaway.AWAY_DENIED),
+    ("import runpy; runpy.run_path('{script}', run_name='__main__')", askaway.ANSWER_DENIED),
+    ("exec(open('{script}').read())", askaway.ANSWER_DENIED),
+])
+def test_code_that_runs_or_names_the_away_switch_next_to_askaway_is_denied(code, reason, capsys, monkeypatch):
+    command = f"python3 -c \"{code.format(script=SCRIPT)}\""
+    assert bash_denial(capsys, monkeypatch, command) == reason
+
+
+def test_code_that_only_prints_the_word_away_is_allowed(capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event("python3 -c \"print('away')\"")) == ""
 
 
 @pytest.mark.parametrize("command", [
@@ -2926,15 +3132,50 @@ def test_ask_refiles_a_fit_that_is_neither_null_nor_an_integer_0_to_100(fit, cap
     assert out["error"] == "option A: fit: must be an integer 0 to 100, or null"
 
 
-def test_list_table_prints_an_aligned_table_with_the_title_cut_to_40_code_points(home, capsys):
-    title = "A title that is long enough to be cut to forty code points"
+def test_list_table_prints_an_aligned_table_with_the_title_cut_to_fit_80_columns(home, capsys):
+    title = "A title long enough to be cut so the table fits 80 columns"
     item = ask_item(capsys, title=title)
     assert askaway.main(["list", "--table"]) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines[0].split() == ["id", "status", "title", "risk", "age"]
-    assert lines[1].startswith(item) and title[:39] + "…" in lines[1]
+    assert lines[1].startswith(item) and lines[1].split()[1] == "open" and "…  low" in lines[1]
     assert lines[1].index("open") == lines[0].index("status")
     assert lines[1].split()[-2:] == ["low", "0m"]
+
+
+def answered_titled(capsys, title: str) -> str:
+    item = ask_item(capsys, title=title)
+    cli(capsys, "answer", item, "B")
+    return item
+
+
+def test_list_and_status_tables_fit_80_columns_for_every_status(home, clock, capsys, monkeypatch):
+    long_title = "a long title that is cut to fit 80 columns"
+    base = 1_000_000_000_000
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    clock["ms"] = base
+    expired = answered_titled(capsys, "Expired " + long_title)
+    clock["ms"] = base + 8 * DAY_MS
+    delivered = answered_titled(capsys, "Delivered " + long_title)
+    run_hook(capsys, monkeypatch, "deliver", deliver_event())
+    answered = answered_titled(capsys, "Answered " + long_title)
+    still_open = ask_item(capsys, title="Open " + long_title)
+    damaged = "q-1-abcdef"
+    write_raw(home, "q", damaged, "not json")
+    damaged_answer = ask_item(capsys, title="Damaged answer " + long_title)
+    write_raw(home, "a", damaged_answer, "{")
+    expected = {expired: "expired", delivered: "delivered", answered: "answered", still_open: "open",
+                damaged: "damaged", damaged_answer: "damaged answer"}
+    assert askaway.main(["list", "--table"]) == 0
+    lines = capsys.readouterr().out.splitlines()[1:]
+    assert len(lines) == len(expected)
+    assert all(len(line) <= 80 for line in lines)
+    for item, status in expected.items():
+        (line,) = [line for line in lines if line.startswith(item)]
+        assert status in line
+    for item in expected:
+        assert askaway.main(["status", item, "--table"]) == 0
+        assert all(len(line) <= 80 for line in capsys.readouterr().out.splitlines())
 
 
 def test_list_without_the_table_flag_still_prints_json(home, capsys):
