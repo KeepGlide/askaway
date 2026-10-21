@@ -36,6 +36,7 @@ import {
   historyOf,
   withAnswer,
   withLocalAnswers,
+  damagedPauseOf,
 } from './model'
 import * as flow from './wizard'
 import type { Group, Pick, Wizard } from './wizard'
@@ -92,6 +93,8 @@ const turn = atom({ plugin: 'askaway', key: 'turn' } as const, { isBusy: false }
 const langAtom = atom({ plugin: 'askaway', key: 'lang' } as const, DEFAULT_LANG)
 // The open questions whose asking session has ended (`list --open` marks them): the card shows a notice for them.
 const endedAtom = atom({ plugin: 'askaway', key: 'ended' } as const, [] as string[])
+// The damaged q/ files that pause their session (readBoard): the pane's notices.
+const damagedAtom = atom({ plugin: 'askaway', key: 'damagedPauses' } as const, [] as string[])
 // The stored answerer name: null before the question was asked, '' after a skip, else the name.
 const whoAtom = atom({ plugin: 'askaway', key: 'who' } as const, null as string | null)
 const quietAtom = atom({ plugin: 'askaway', key: 'quiet' } as const, false)
@@ -239,14 +242,34 @@ async function readCached<T>(
 }
 
 // The board, and the ids of the reply files listed in a/ (an unreadable one included), so a poll lists that folder once.
-async function readBoard($: EngineInterface, home: string): Promise<{ board: Board; answerFileIds: string[] }> {
+async function readBoard($: EngineInterface, home: string): Promise<{ board: Board; answerFileIds: string[]; damagedPauses: string[] }> {
   const questions = await readCached($, `${home}/q`, questionCache, parseQuestion)
   const answers = await readCached($, `${home}/a`, answerCache, parseAnswer)
   const delivered = await readCached($, `${home}/d`, deliveryCache, parseDelivery)
   return {
     board: { questions: questions.found, answers: answers.found, delivered: delivered.found },
     answerFileIds: answers.ids,
+    damagedPauses: await damagedPausesOf($, home, questions, answers.ids, delivered.ids),
   }
+}
+
+// The damaged q/ files that pause their session: a file the pane does not read as a question, that damagedPauseOf reads as a
+// damaged pause, and that is open (no answer and no delivery marker, as item_status reads it). Only the ids are kept.
+async function damagedPausesOf(
+  $: EngineInterface,
+  home: string,
+  questions: { ids: string[]; found: Question[] },
+  answeredIds: string[],
+  deliveredIds: string[],
+): Promise<string[]> {
+  const parsedIds = new Set(questions.found.map(question => question.id))
+  const pausing: string[] = []
+  for (const id of questions.ids) {
+    if (parsedIds.has(id) || answeredIds.includes(id) || deliveredIds.includes(id)) continue
+    const text = await $.fs.read(`${home}/q/${id}.json`).catch(() => undefined)
+    if (damagedPauseOf(id, text)) pausing.push(id)
+  }
+  return pausing
 }
 
 // The language the environment asks for, before any stored choice.
@@ -364,22 +387,29 @@ async function refreshEnded($: EngineInterface, home: string, next: Board, now: 
   }
 }
 
-// Dismiss on an ended card: the CLI removes the question (prune --id), then the board is read again. An ended card's pause is
-// over and the person pressing Dismiss is the user, so the prune always runs with --force, whatever the risk.
-async function dismissEnded($: EngineInterface, home: string, id: string): Promise<void> {
-  const argv = ['python3', `${$.plugin.root}/scripts/askaway.py`, 'prune', '--id', id, '--strict', '--force']
+// Dismiss on an ended or a damaged card: the CLI removes the question (prune --id), then the board is read again. An ended card's pause is
+// over and the person pressing Dismiss is the user, so its prune runs with --force, whatever the risk. A damaged card's prune does not:
+// a file the CLI reads as a question (a stored NaN literal) is refused, not deleted (Should-4).
+async function dismissQuestion($: EngineInterface, home: string, id: string, force: boolean): Promise<void> {
+  const argv = ['python3', `${$.plugin.root}/scripts/askaway.py`, 'prune', '--id', id, '--strict', ...(force ? ['--force'] : [])]
   const run = await $.process.run(argv, { env: { ASKAWAY_HOME: home } })
   if (run.exitCode !== 0) throw new Error(`askaway prune failed: ${(run.stderr || run.stdout).trim()}`)
   await pollInbox($, home)
 }
 
+// The damaged pauses the pane draws; written only when the list changed, so a poll with no change writes nothing.
+async function mergeDamagedPauses($: EngineInterface, damagedPauses: string[]): Promise<void> {
+  if (JSON.stringify(damagedPauses) !== JSON.stringify(await read($, damagedAtom))) await update($, damagedAtom, () => damagedPauses)
+}
+
 // One poll: read the folder, merge it into the board, redraw only when something changed, then announce new questions.
 // The interval poll of a session also hands its own answers to its prompt (handDue).
 async function pollInbox($: EngineInterface, home: string, ownSession?: string): Promise<void> {
-  const { board: next, answerFileIds } = await readBoard($, home)
+  const { board: next, answerFileIds, damagedPauses } = await readBoard($, home)
   const away = await readAway($, home, await read($, isAway))
   const now = await $.clock.now()
   await mergeBoard($, next)
+  await mergeDamagedPauses($, damagedPauses)
   await applyCleared($, home, answerFileIds)
   await applyDraft($, home)
   await retryDraft($, home)
@@ -1045,9 +1075,9 @@ async function awayText($: EngineInterface, lang: Lang): Promise<string> {
   return t(lang, isNowAway ? 'command.awayOn' : 'command.awayOff')
 }
 
-// Dismiss on an ended card: a prune the CLI refuses leaves the question listed, and the person is told by a toast; the cause is logged.
-async function dismissEndedOrSay($: EngineInterface, id: string): Promise<void> {
-  await withFolder($, folder => dismissEnded($, folder, id)).catch(async (error: unknown) => {
+// Dismiss on an ended or a damaged card: a prune the CLI refuses leaves the question listed, and the person is told by a toast; the cause is logged.
+async function dismissOrSay($: EngineInterface, id: string, force: boolean): Promise<void> {
+  await withFolder($, folder => dismissQuestion($, folder, id, force)).catch(async (error: unknown) => {
     logFailure($, error)
     $.ui.toast(t(await read($, langAtom), 'toast.dismissFailed'))
   })
@@ -1070,7 +1100,8 @@ function moveOnce($: EngineInterface, move: () => void): void {
 
 const actionsFor = ($: EngineInterface): PaneActions => ({
   clearHistory: () => report($, clearHistory($)),
-  dismissEnded: id => report($, dismissEndedOrSay($, id)),
+  dismissEndedForced: id => report($, dismissOrSay($, id, true)),
+  dismissDamagedUnforced: id => report($, dismissOrSay($, id, false)),
   pick: (id, choice) => moveOnce($, () => report($, afterPendingOther($, () => pickOption($, id, choice)))),
   focusOther: id => report($, afterPendingOther($, () => focusOther($, id))),
   submitOne: id => report($, afterPendingOther($, () => submitOne($, id))),
@@ -1186,6 +1217,7 @@ export const register: Register = on => {
       footer: folder === undefined ? t(lang, 'command.awayUnavailable') : footerText(lang, current, now, hidden),
       away: await read($, isAway),
       ended: await read($, endedAtom),
+      damagedPauses: await read($, damagedAtom),
       askWho: (await read($, whoAtom)) === null,
       groups,
       active,

@@ -109,17 +109,20 @@ function recordedOther(wizard: Wizard, id: string, text: string): Wizard {
 }
 
 // The text typed in an Other field and not kept yet, recorded when the field loses focus or a nav action runs: its trimmed
-// text is the Other pick, and keeps the wizard where it is; blank text takes an Other pick away. It never moves on. While
-// the question has a kept label, typed text is not recorded: Keep is the only way to set the Other text, so the pick and
-// the drawn label cannot disagree. The text stays in the field until Keep. Submit all is the one exception (submittedTypedOther).
+// text is the Other pick, and keeps the wizard where it is; blank text takes an Other pick away when no label is kept. It
+// never moves on. While the question has a kept label, nothing is recorded, typed or blank: Keep is the only way to set the
+// Other text, so the pick and the drawn label cannot disagree, and a blank text never removes the kept label's pick. The
+// text stays in the field until Keep. Submit all is the one exception (submittedTypedOther).
 export function submittedOther(wizard: Wizard, id: string, text: string): Wizard {
-  if (otherTextOf(text) !== '' && wizard.labels[id] !== undefined) return wizard
+  if (wizard.labels[id] !== undefined) return wizard
   return recordedOther(wizard, id, text)
 }
 
 // Submit all records the text typed in an Other field as the answer, a kept label included (SPEC, Submit all: a text typed
 // and followed by a click on Submit all is the answer). The pick is submitted at once, so it does not need to match the label.
+// Blank text changes nothing while a label is kept: blank text never removes a kept label (owner reply, M46).
 export function submittedTypedOther(wizard: Wizard, id: string, text: string): Wizard {
+  if (otherTextOf(text) === '' && wizard.labels[id] !== undefined) return wizard
   return recordedOther(wizard, id, text)
 }
 

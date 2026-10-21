@@ -57,6 +57,9 @@ export type PaneView = {
   footer?: string
   // The ids of open questions whose asking session has ended: their card shows a notice and Dismiss, no options.
   ended: readonly string[]
+  // The damaged q/ files that pause their session (register: damagedPauses): each draws a notice with its id and Dismiss.
+  // Optional: the register sets it.
+  damagedPauses?: readonly string[]
   // Away mode is on (away.json): the counter line says so. Optional: the register sets it.
   away?: boolean
   // True until the person gave a name or skipped: the pane then asks for it above the card, once.
@@ -65,7 +68,9 @@ export type PaneView = {
 
 export type PaneActions = {
   clearHistory: () => void
-  dismissEnded: (id: string) => void
+  // Dismiss of an ended card: the prune is forced. Dismiss of a damaged pause: the prune is not (the CLI refuses a question it reads).
+  dismissEndedForced: (id: string) => void
+  dismissDamagedUnforced: (id: string) => void
   saveWho: (text: string) => void
   skipWho: () => void
   pick: (id: string, choice: Pick) => void
@@ -111,6 +116,7 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
       </Box>
       {view.groups.length > 0 && renderTree(tree)}
       {view.askWho && view.questions.length > 0 && renderAskWho(ui, lang, actions, held)}
+      {view.damagedPauses?.map(id => renderDamagedPause(ui, lang, actions, held, id))}
       {screen !== undefined && renderQuestion(ui, lang, view, actions, screen, held)}
       {view.history.length > 0 && renderHistory(tree, view.history)}
       {view.footer !== undefined && view.questions.length === 0 && renderFooter(ui, view.footer)}
@@ -122,8 +128,22 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
   return pane
 }
 
-// The footer: one line under the status lines, drawn without dim (the dim blend fails 4.5:1 on white, look.ts). Text only, never
-// a row of the tree, and drawn only with no card up.
+// A damaged q/ file that pauses its session: a notice that names its id, with Dismiss (prune --id removes the file, unless the CLI
+// reads it as a question and refuses). It is drawn above the card until a poll no longer lists the file.
+function renderDamagedPause(ui: Ui, lang: Lang, actions: PaneActions, held: HeldButtons, id: string): RenderElement {
+  const { Box, Button, Text } = ui
+  const dismissLabel = t(lang, 'card.dismiss')
+  const key = `dismiss-damaged-${id}`
+  return (
+    <Box key={`damaged-${id}`} flexDirection="column" gap={1} borderStyle="round" paddingX={1}>
+      <Text>{t(lang, 'damaged.pause', { id })}</Text>
+      {held.hold(key, [dismissLabel, id], () => actions.dismissDamagedUnforced(id), press => (
+        <Button key={key} label={dismissLabel} variant="secondary" onPress={press} />
+      ))}
+    </Box>
+  )
+}
+
 // The one-time question for the answerer's name: the sentence, a name field and Skip. Drawn above the card until answered.
 function renderAskWho(ui: Ui, lang: Lang, actions: PaneActions, held: HeldButtons): RenderElement | false {
   if (!('Input' in ui)) return false
@@ -146,6 +166,8 @@ function renderAskWho(ui: Ui, lang: Lang, actions: PaneActions, held: HeldButton
   )
 }
 
+// The footer: one line under the status lines, drawn without dim (M68, the owner's rule; the dim ratios are in look.ts). Text only, never
+// a row of the tree, and drawn only with no card up.
 function renderFooter(ui: Ui, text: string): RenderElement {
   const { Text } = ui
   return <Text key="footer">{text}</Text>
@@ -469,6 +491,7 @@ function renderQuestion(
   }
   const { isLeaving } = card
   const isEnded = view.ended.includes(question.id)
+  const drawsFitHint = question.options.some(option => typeof option.fit === 'number')
   const details = sectionsOf(lang, question, 'details')
   return (
     <Box key={`card-${question.id}`} flexDirection="column" gap={1} borderStyle="round" borderDimColor={isLeaving} paddingX={1} paddingBottom={1}>
@@ -479,6 +502,7 @@ function renderQuestion(
       <Box flexDirection="column">
         <Text bold dimColor={isLeaving}>{question.question}</Text>
         {!isEnded && <Text dimColor>{leadOf(lang, question, view.now)}</Text>}
+        {!isEnded && drawsFitHint && <Text dimColor={isLeaving}>{t(lang, 'option.fitHint')}</Text>}
       </Box>
       {isEnded ? (
         <Text key={`ended-${question.id}`}>{t(lang, 'card.ended', { key: question.recommended })}</Text>
@@ -585,8 +609,10 @@ function renderFirstBlock(ui: Ui, question: Question, isLeaving: boolean): Rende
 // The key and the label are one line each (singleLine), so a line break in a label cannot draw a fake option row.
 function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, option: QuestionOption): RenderElement {
   const { Box, Button, Text } = ui
-  const { question, isLeaving, isMoveLocked, wizard, held } = card
+  const { question, isLeaving, isMoveLocked, wizard, held, surface } = card
   const isDisabled = isLeaving || isMoveLocked
+  // The Desktop dims an option's sub-rows and the terminal draws them plain (look.ts, M58); a leaving card dims everything.
+  const isSubRowDim = isLeaving || surface === 'desktop'
   const isPicked = wizard.picks[question.id]?.key === option.key
   const isRecommended = option.key === question.recommended
   const pickMark = isPicked ? '✓ ' : ''
@@ -616,9 +642,9 @@ function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContex
       ))}
       {(tradeoffLine !== undefined || details.length > 0) && (
         <Box flexDirection="column" paddingLeft={1}>
-          {tradeoffLine !== undefined && <Text dimColor={isLeaving}>{tradeoffLine}</Text>}
+          {tradeoffLine !== undefined && <Text dimColor={isSubRowDim}>{tradeoffLine}</Text>}
           {details.map(([label, text]) => (
-            <Text key={label} dimColor={isLeaving}>
+            <Text key={label} dimColor={isSubRowDim}>
               <Text bold>{`${label}: `}</Text>
               {text}
             </Text>
@@ -634,7 +660,8 @@ function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContex
 // type. Typing keeps the text in the pane's memory (typeOther), with no redraw. Keep (Enter, or the field's Keep button)
 // moves the text to the link, which then draws "C · <label>" and empties the field; the focus goes to the link. A press on
 // the link with a label picks it, else it only focuses the field. Text typed and not kept is recorded as the pick when the
-// field loses focus or before a nav action, and the card stays where it is. The link is bold once Other is the pick. A
+// field loses focus or before a nav action, and the card stays where it is. The link is bold once Other is the pick, and
+// with a kept label that is the pick it is the primary button (see isKeptChosen). A
 // surface with no Input (mobile) draws no field, so no Other option either.
 function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext): RenderElement | false {
   if (!('Input' in ui)) return false
@@ -648,7 +675,11 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
   const key = otherButtonKey(question.id)
   const letter = otherLetterOf(question.options)
   const linkText = kept === undefined ? t(lang, 'option.other') : singleLine(kept)
-  const label = letter === undefined ? linkText : `${letter.toUpperCase()} · ${linkText}`
+  const bareLabel = letter === undefined ? linkText : `${letter.toUpperCase()} · ${linkText}`
+  // A chosen kept label is drawn as a picked option is: the primary button, its label starting "✓ ", bold. Unpicked, or with
+  // no label, it stays the plain link.
+  const isKeptChosen = isChosen && kept !== undefined
+  const label = isKeptChosen ? `✓ ${bareLabel}` : bareLabel
   const hotkey = letter
   const onPress = () => {
     if (isDisabled) return
@@ -658,9 +689,17 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
   return (
     <Box key={`other-row-${question.id}`} flexDirection="column">
       {held.hold(key, [label, isChosen, isLeaving, isMoveLocked, hotkey], onPress, press => (
-        <Button key={key} label={label} plain dimColor={isDisabled} hotkey={hotkey} onPress={press}>
-          <Text dimColor>{`${LINK_MARK} `}</Text>
-          <Text underline bold={isChosen} dimColor={isLeaving}>{label}</Text>
+        <Button
+          key={key}
+          label={label}
+          plain={isKeptChosen ? undefined : true}
+          variant={isKeptChosen ? 'primary' : 'secondary'}
+          dimColor={isDisabled}
+          hotkey={hotkey}
+          onPress={press}
+        >
+          {!isKeptChosen && <Text dimColor>{`${LINK_MARK} `}</Text>}
+          <Text underline={!isKeptChosen} bold={isChosen} dimColor={isLeaving}>{label}</Text>
         </Button>
       ))}
       {!isLeaving && (
@@ -718,7 +757,7 @@ function renderEndedNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardCont
       {held.hold('nav-back', [backLabel, isBackOff, hotkey], () => !isBackOff && actions.back(), press => (
         <Button key="nav-back" label={backLabel} variant="secondary" dimColor={isBackOff} hotkey={hotkey} onPress={press} />
       ))}
-      {held.hold('dismiss-ended', [dismissLabel, question.id], () => actions.dismissEnded(question.id), press => (
+      {held.hold('dismiss-ended', [dismissLabel, question.id], () => actions.dismissEndedForced(question.id), press => (
         <Button key="dismiss-ended" label={dismissLabel} variant="secondary" onPress={press} />
       ))}
       {renderNext(ui, lang, actions, card, screen)}

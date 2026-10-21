@@ -20,10 +20,15 @@ export const LINK_MARK = '▪' as const
 export const DETAILS_FILL = 'userMessageBackground' as const
 // The Urgency text's colour by grade: the engine's theme keys, so it follows light and dark as the diff numbers do.
 export const URGENCY_COLOR: Readonly<Record<UrgencyGrade, string>> = { low: 'success', medium: 'warning', high: 'error' }
-// Measured WCAG 2.x contrast of the text colours the pane draws, in the engine binary, light and dark themes (backgrounds
-// #FFFFFF and #111827). Each text colour must stay at 4.5:1 or better (WCAG 2.2 1.4.3). `dim` is the engine's dim line, a 50%
-// blend of the text colour: it fails 4.5:1 on white, so the footer is drawn without it (M68).
+// Measured WCAG 2.x contrast of the text colours the pane draws (WCAG 2.2 1.4.3: 4.5:1 or better for text). The light column is
+// measured on #FFFFFF and the dark on #111827, except `desktopDim`, measured on the Desktop's dark surface #0b0b0b. Sources:
+// the Desktop's engine CSS, where `dimColor` is `opacity: .6` (offset 95570 of resources/ion-dist/assets/v1/c2719cf1b-Bs1KFQpq.js),
+// and the CLI theme table of the 2.1.296 binary (`inactive`: rgb(102,102,102) on the light theme at offset 211293157, rgb(153,153,153)
+// on the dark at offset 211302759).
+// `desktopDim`: the text colour at 60% over the surface. #0b0b0b at .6 on #FFFFFF is #6d6d6d, 5.17:1; #FFFFFF at .6 on #0b0b0b is #9d9d9d, 7.26:1.
+// `inactive`: the engine's dim token. #666666 on #FFFFFF is 5.74:1; #999999 on #111827 is 6.23:1.
+// The terminal's own dim is SGR 2, drawn by the terminal emulator, so no ratio is recorded for it. The footer is drawn without dim (M68).
 export const TEXT_CONTRAST: Readonly<Record<'light' | 'dark', Readonly<Record<string, number>>>> = {
-  light: { text: 21, success: 5.32, warning: 4.71, error: 6.67, dim: 3.95 },
-  dark: { text: 17.74, success: 7.21, warning: 10.88, error: 6.48, dim: 5.25 },
+  light: { text: 21, success: 5.32, warning: 4.71, error: 6.67, desktopDim: 5.17, inactive: 5.74 },
+  dark: { text: 17.74, success: 7.21, warning: 10.88, error: 6.48, desktopDim: 7.26, inactive: 6.23 },
 }

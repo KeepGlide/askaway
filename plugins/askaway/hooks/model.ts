@@ -102,6 +102,27 @@ function parseOptions(raw: unknown, recommended: string): QuestionOption[] | und
   return isUsable ? valid : undefined
 }
 
+// Reads as a question file askaway.py keeps: a JSON object whose id is its file name and whose ts is an integer.
+function readsAsQuestion(id: string, text: string): boolean {
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch {
+    return false
+  }
+  return isRecord(raw) && raw.id === id && Number.isInteger(raw.ts)
+}
+
+// A damaged q/ file (one that does not read as a question) holds its session while it is open, the session its raw text names
+// (askaway.py damaged_question_session). True for a damaged file that names a valid session; the caller checks that it is open.
+const SESSION_IN_TEXT = /"session"\s*:\s*"([^"]*)"/
+const SESSION_NAME = /^[A-Za-z0-9_-]{1,128}$/
+export function damagedPauseOf(id: string, text: string | undefined): boolean {
+  if (text === undefined || !ID_PATTERN.test(id) || readsAsQuestion(id, text)) return false
+  const session = SESSION_IN_TEXT.exec(text)?.[1]
+  return session !== undefined && SESSION_NAME.test(session)
+}
+
 // A question file is trusted only when its id matches its file name and every required field is typed.
 export function parseQuestion(raw: unknown, id: string): Question | undefined {
   if (!isRecord(raw) || raw.id !== id || !ID_PATTERN.test(id)) return undefined
