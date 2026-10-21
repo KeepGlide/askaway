@@ -2,6 +2,7 @@
 import ast
 import csv
 import errno
+import fcntl
 import io
 import json
 import os
@@ -1267,7 +1268,7 @@ def test_a_deleted_working_directory_does_not_deny_every_call(tmp_path, capsys, 
 
 
 def test_a_failing_pause_lookup_still_denies_the_call(capsys, monkeypatch):
-    def broken(session: str):
+    def broken(session: str, agent_id: str | None = None):
         raise RuntimeError("lookup failed")
 
     monkeypatch.setattr(askaway, "_holding_question", broken)
@@ -1312,6 +1313,226 @@ def test_pause_guard_matcher_covers_agent_and_mcp_tools_in_hooks_json():
     for name in ("Edit", "Write", "NotebookEdit", "Bash", "Agent", "mcp__graphify__update_node"):
         assert re.fullmatch(matcher, name), name
     assert not re.fullmatch(matcher, "Read")
+
+
+def stamp_event(stdout: str, agent_id: str | None = None, session=SESSION, command: str | None = None) -> dict:
+    """The PostToolUse payload of a finished Bash call; an ask call by default, with the reply as its stdout."""
+    event = {"session_id": session, "cwd": os.getcwd(), "hook_event_name": "PostToolUse", "tool_name": "Bash",
+             "tool_input": {"command": command or f"python3 {askaway.SCRIPT_PATH} ask --json '{{}}'"},
+             "tool_response": {"stdout": stdout, "stderr": ""}}
+    if agent_id is not None:
+        event["agent_id"] = agent_id
+    return event
+
+
+def file_pause(capsys, monkeypatch, agent_id: str | None = None, risk: str = "high") -> dict:
+    """A question filed by an ask call, then stamped with its caller (the main thread when agent_id is None)."""
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    reply = cli(capsys, "ask", "--json", json.dumps(base_entry(risk=risk, title="Delete old data?")))
+    run_hook(capsys, monkeypatch, "stamp-asker", stamp_event(json.dumps(reply), agent_id=agent_id))
+    return reply
+
+
+def agent_event(agent_id: str, tool: str = "Edit", command: str = "") -> dict:
+    return {**edit_event(tool=tool, command=command), "agent_id": agent_id}
+
+
+def test_a_subagent_pause_holds_only_that_subagent(capsys, monkeypatch):
+    file_pause(capsys, monkeypatch, agent_id="agent-1")
+    out = hook_json(capsys, monkeypatch, "pause-guard", agent_event("agent-1"))
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert run_hook(capsys, monkeypatch, "pause-guard", agent_event("agent-2")) == ""
+    assert run_hook(capsys, monkeypatch, "pause-guard", edit_event()) == ""
+
+
+def test_a_main_thread_pause_holds_only_the_main_thread(capsys, monkeypatch):
+    file_pause(capsys, monkeypatch)
+    reason = hook_json(capsys, monkeypatch, "pause-guard", edit_event())["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "end the turn" in reason
+    assert run_hook(capsys, monkeypatch, "pause-guard", agent_event("agent-1")) == ""
+    assert run_hook(capsys, monkeypatch, "pause-guard", agent_event("agent-2", tool="Agent")) == ""
+
+
+def test_an_unstamped_pause_still_holds_every_call_of_the_session(capsys, monkeypatch):
+    pending_pause(capsys, monkeypatch)
+    assert hook_json(capsys, monkeypatch, "pause-guard", edit_event())["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert hook_json(capsys, monkeypatch, "pause-guard", agent_event("agent-1"))["hookSpecificOutput"][
+        "permissionDecision"] == "deny"
+
+
+def test_a_held_subagent_is_told_to_end_its_turn_and_hand_back(capsys, monkeypatch):
+    item = file_pause(capsys, monkeypatch, agent_id="agent-1")["id"]
+    reason = hook_json(capsys, monkeypatch, "pause-guard", agent_event("agent-1"))["hookSpecificOutput"][
+        "permissionDecisionReason"]
+    assert item in reason and "end the turn" in reason and "hands back" in reason
+
+
+def test_a_subagent_repeat_of_a_main_pause_keeps_the_main_thread_as_holder(home, capsys, monkeypatch):
+    item = file_pause(capsys, monkeypatch)["id"]
+    repeat = cli(capsys, "ask", "--json", json.dumps(base_entry(risk="high", title="Delete old data?")))
+    assert repeat["id"] == item and repeat["action"] == "pause"
+    run_hook(capsys, monkeypatch, "stamp-asker", stamp_event(json.dumps(repeat), agent_id="agent-1"))
+    assert stored(home, "q", item)["asker"] == "main"
+    assert run_hook(capsys, monkeypatch, "pause-guard", agent_event("agent-1")) == ""
+
+
+def test_a_high_repeat_of_a_low_question_is_not_stamped_and_holds_the_whole_session(home, capsys, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    item = cli(capsys, "ask", "--json", json.dumps(base_entry(title="Delete old data?")))["id"]
+    repeat = cli(capsys, "ask", "--json", json.dumps(base_entry(risk="high", title="Delete old data?")))
+    run_hook(capsys, monkeypatch, "stamp-asker", stamp_event(json.dumps(repeat), agent_id="agent-1"))
+    assert "asker" not in stored(home, "q", item)
+    assert hook_json(capsys, monkeypatch, "pause-guard", agent_event("agent-1"))["hookSpecificOutput"][
+        "permissionDecision"] == "deny"
+    assert hook_json(capsys, monkeypatch, "pause-guard", edit_event())["hookSpecificOutput"][
+        "permissionDecision"] == "deny"
+
+
+def test_a_subagent_repeat_before_the_main_stamp_leaves_the_pause_with_the_main_thread(home, capsys, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    first = cli(capsys, "ask", "--json", json.dumps(base_entry(risk="high", title="Delete old data?")))
+    repeat = cli(capsys, "ask", "--json", json.dumps(base_entry(risk="high", title="Delete old data?")))
+    assert repeat["duplicate"] is True and repeat["id"] == first["id"]
+    run_hook(capsys, monkeypatch, "stamp-asker", stamp_event(json.dumps(repeat), agent_id="agent-1"))
+    run_hook(capsys, monkeypatch, "stamp-asker", stamp_event(json.dumps(first)))
+    assert stored(home, "q", first["id"])["asker"] == "main"
+    assert hook_json(capsys, monkeypatch, "pause-guard", edit_event())["hookSpecificOutput"][
+        "permissionDecision"] == "deny"
+    assert run_hook(capsys, monkeypatch, "pause-guard", agent_event("agent-1")) == ""
+
+
+def ask_lock_is_held() -> bool:
+    """Can another descriptor not take the ask lock? flock conflicts across open descriptions, even in one process."""
+    fd = os.open(askaway.state_home() / askaway.ASK_LOCK, os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    finally:
+        os.close(fd)  # closing the descriptor releases the probe's own lock
+    return False
+
+
+def test_stamp_records_the_main_thread_as_asker_of_its_pause(home, capsys, monkeypatch):
+    item = file_pause(capsys, monkeypatch)["id"]
+    assert stored(home, "q", item)["asker"] == "main"
+
+
+def test_stamp_records_the_subagent_as_asker_of_its_pause(home, capsys, monkeypatch):
+    item = file_pause(capsys, monkeypatch, agent_id="agent-1")["id"]
+    assert stored(home, "q", item)["asker"] == "agent-1"
+
+
+def test_the_first_stamp_keeps_the_asker(home, capsys, monkeypatch):
+    item = file_pause(capsys, monkeypatch, agent_id="agent-1")["id"]
+    run_hook(capsys, monkeypatch, "stamp-asker", stamp_event(json.dumps({"id": item}), agent_id="agent-2"))
+    assert stored(home, "q", item)["asker"] == "agent-1"
+
+
+def test_stamp_leaves_a_question_without_a_pause_unstamped(home, capsys, monkeypatch):
+    item = file_pause(capsys, monkeypatch, risk="low")["id"]
+    assert "asker" not in stored(home, "q", item)
+
+
+@pytest.mark.parametrize("command", [
+    "python3 {script} status {item}",
+    "python3 {script} list --open",
+    "rm -rf build",
+    "echo {item}",
+])
+def test_stamp_ignores_a_bash_command_that_is_not_an_ask_call(command, home, capsys, monkeypatch):
+    item = pending_pause(capsys, monkeypatch)
+    run_hook(capsys, monkeypatch, "stamp-asker", stamp_event(
+        json.dumps({"id": item}), command=command.format(script=askaway.SCRIPT_PATH, item=item)))
+    assert "asker" not in stored(home, "q", item)
+
+
+@pytest.mark.parametrize("stdout", [
+    "not json",
+    "[1, 2]",
+    "",
+    json.dumps({"action": "pause"}),
+    json.dumps({"id": "../q/escape"}),
+])
+def test_stamp_ignores_a_reply_it_cannot_read(stdout, home, capsys, monkeypatch):
+    item = pending_pause(capsys, monkeypatch)
+    assert run_hook(capsys, monkeypatch, "stamp-asker", stamp_event(stdout)) == ""
+    assert "asker" not in stored(home, "q", item)
+
+
+def test_stamp_ignores_a_payload_without_a_tool_response(home, capsys, monkeypatch):
+    item = pending_pause(capsys, monkeypatch)
+    event = stamp_event(json.dumps({"id": item}))
+    del event["tool_response"]
+    assert run_hook(capsys, monkeypatch, "stamp-asker", event) == ""
+    assert "asker" not in stored(home, "q", item)
+
+
+def test_stamp_writes_the_asker_only_while_the_ask_lock_is_held(home, capsys, monkeypatch):
+    item = pending_pause(capsys, monkeypatch)
+    held_at_write: list[bool] = []
+    real_write = askaway.write_atomic
+
+    def checked_write(target, data):
+        held_at_write.append(ask_lock_is_held())
+        real_write(target, data)
+
+    monkeypatch.setattr(askaway, "write_atomic", checked_write)
+    run_hook(capsys, monkeypatch, "stamp-asker", stamp_event(json.dumps({"id": item})))
+    assert held_at_write == [True]
+    assert stored(home, "q", item)["asker"] == "main"
+
+
+@pytest.mark.parametrize("command", [
+    "python3 {script} ask -h >/dev/null; echo '{{\"id\":\"{item}\"}}'",
+    "python3 {script} ask --json '{{}}' && echo done",
+    "python3 {script} ask --json '{{}}' | cat",
+    "python3 {script} ask --json '{{}}' > out.txt",
+    "echo ready; python3 {script} ask --json '{{}}'",
+])
+def test_stamp_ignores_an_ask_call_with_an_operator_or_a_second_command(command, home, capsys, monkeypatch):
+    item = pending_pause(capsys, monkeypatch)
+    run_hook(capsys, monkeypatch, "stamp-asker", stamp_event(
+        json.dumps({"id": item}), command=command.format(script=askaway.SCRIPT_PATH, item=item)))
+    assert "asker" not in stored(home, "q", item)
+
+
+def test_stamp_records_the_asker_of_a_heredoc_ask_call(home, capsys, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    entry = base_entry(risk="high", title="Delete old data?")
+    reply = cli(capsys, "ask", "--json", json.dumps(entry))
+    command = f"python3 {askaway.SCRIPT_PATH} ask <<'EOF'\n{json.dumps(entry)}\nEOF"
+    run_hook(capsys, monkeypatch, "stamp-asker", stamp_event(json.dumps(reply), command=command))
+    assert stored(home, "q", reply["id"])["asker"] == "main"
+
+
+def test_stamp_ignores_a_heredoc_ask_call_with_a_command_after_its_terminator(home, capsys, monkeypatch):
+    item = pending_pause(capsys, monkeypatch)
+    command = f"python3 {askaway.SCRIPT_PATH} ask <<'EOF'\n{{}}\nEOF\nrm -rf build"
+    run_hook(capsys, monkeypatch, "stamp-asker", stamp_event(json.dumps({"id": item}), command=command))
+    assert "asker" not in stored(home, "q", item)
+
+
+def test_stamp_leaves_another_sessions_pause_unstamped(home, capsys, monkeypatch):
+    item = pending_pause(capsys, monkeypatch)
+    run_hook(capsys, monkeypatch, "stamp-asker", stamp_event(json.dumps({"id": item}), session="other"))
+    assert "asker" not in stored(home, "q", item)
+
+
+def test_an_asker_key_the_agent_sends_cannot_move_its_own_hold(home, capsys, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    entry = {**base_entry(risk="high", title="Delete old data?"), "asker": "main"}
+    reply = cli(capsys, "ask", "--json", json.dumps(entry))
+    run_hook(capsys, monkeypatch, "stamp-asker", stamp_event(json.dumps(reply), agent_id="agent-1"))
+    assert stored(home, "q", reply["id"])["asker"] == "agent-1"
+    assert hook_json(capsys, monkeypatch, "pause-guard", agent_event("agent-1"))["hookSpecificOutput"][
+        "permissionDecision"] == "deny"
+
+
+def test_stamp_hook_is_a_bash_post_tool_use_hook_in_hooks_json():
+    hooks = json.loads((SCRIPTS.parent / "hooks" / "command-hooks.json").read_text(encoding="utf-8"))
+    group = next(group for group in hooks["hooks"]["PostToolUse"] if "stamp-asker" in group["hooks"][0]["command"])
+    assert group["matcher"] == "Bash"
 
 
 # ---- deliver -----------------------------------------------------------
