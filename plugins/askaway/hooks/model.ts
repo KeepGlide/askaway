@@ -1,6 +1,18 @@
 // Pure rules of Askaway: validation of the state files, the open questions, the History tree, the counter and the
 // text. Nothing here touches $; the store and the drawing both depend on it, never the other way round.
-import type { Answer, AnswerBy, Board, Delivery, DeliveryReason, Question, QuestionOption, UrgencyGrade } from '../types'
+import type {
+  Answer,
+  AnswerBy,
+  Board,
+  Delivery,
+  DeliveryReason,
+  Question,
+  QuestionOption,
+  QuestionTranslations,
+  TranslatedFields,
+  TranslatedOption,
+  UrgencyGrade,
+} from '../types'
 import { plural, t, type Lang, type MessageKey } from './i18n'
 
 // The id shape askaway.py mints (q-<base36 ms>-<6 hex>). Checked before an id becomes part of a path.
@@ -123,6 +135,46 @@ export function damagedPauseOf(id: string, text: string | undefined): boolean {
   return session !== undefined && SESSION_NAME.test(session)
 }
 
+// The text fields and option fields a translation may carry (beta.34), and the pane's language tag of each language.
+const TRANSLATED_TEXT: readonly (keyof TranslatedFields)[] = [
+  'title', 'question', 'what', 'problem', 'context', 'analogy', 'why', 'how', 'gains', 'losses', 'urgency', 'undo',
+]
+const TRANSLATED_OPTION_TEXT: readonly (keyof TranslatedOption)[] = ['label', 'does', 'pros', 'cons', 'tradeoff']
+const TRANSLATION_TAG: Record<Lang, keyof QuestionTranslations> = { en: 'en', pt: 'pt-BR' }
+
+// The non-blank text fields among `fields` of a raw object; a missing, blank or non-string one is left out.
+function textFieldsOf<K extends string>(raw: Record<string, unknown>, fields: readonly K[]): Partial<Record<K, string>> {
+  const text: Partial<Record<K, string>> = {}
+  for (const field of fields) {
+    const value = optionalText(raw[field])
+    if (value !== undefined) text[field] = value
+  }
+  return text
+}
+
+// The option translations of one language: only the entries keyed by a key of the question's options; any other is dropped.
+function translatedOptionsOf(raw: unknown, keys: ReadonlySet<string>): Record<string, TranslatedOption> {
+  const options: Record<string, TranslatedOption> = {}
+  if (!isRecord(raw)) return options
+  for (const [key, text] of Object.entries(raw)) {
+    if (keys.has(key) && isRecord(text)) options[key] = textFieldsOf(text, TRANSLATED_OPTION_TEXT)
+  }
+  return options
+}
+
+// The translations of a question (beta.34): each of its en and pt-BR parts that is an object, with its text fields and its
+// options. A value that is not an object reads as none. A malformed part is left out, and never damages the question.
+function translationsOf(raw: unknown, options: readonly QuestionOption[]): QuestionTranslations | undefined {
+  if (!isRecord(raw)) return undefined
+  const keys = new Set(options.map(option => option.key))
+  const translations: QuestionTranslations = {}
+  for (const tag of ['en', 'pt-BR'] as const) {
+    const part = raw[tag]
+    if (isRecord(part)) translations[tag] = { ...textFieldsOf(part, TRANSLATED_TEXT), options: translatedOptionsOf(part.options, keys) }
+  }
+  return translations
+}
+
 // A question file is trusted only when its id matches its file name and every required field is typed.
 export function parseQuestion(raw: unknown, id: string): Question | undefined {
   if (!isRecord(raw) || raw.id !== id || !ID_PATTERN.test(id)) return undefined
@@ -155,6 +207,7 @@ export function parseQuestion(raw: unknown, id: string): Question | undefined {
     options,
     recommended,
     risk: typeof raw.risk === 'string' ? raw.risk : 'low',
+    translations: translationsOf(raw.translations, options),
   }
 }
 
@@ -447,6 +500,20 @@ const padTwoDigits = (value: number): string => String(value).padStart(2, '0')
 // The title line names a question by its title; a question with no title is named by its text, cut short.
 const TITLE_MAX = 24
 
+// The question as the pane draws it in `lang` (beta.34): the current language's translated fields replace the main ones, per
+// field and per option, and a field the translation leaves out keeps its main text. A question with no translation for `lang`
+// is returned as it is. Every draw of question text uses it; the model-facing deliveryLine never does.
+export function localizedQuestion(question: Question, lang: Lang): Question {
+  const translation = question.translations?.[TRANSLATION_TAG[lang]]
+  if (translation === undefined) return question
+  const { options: translatedOptions = {}, ...fields } = translation
+  return {
+    ...question,
+    ...fields,
+    options: question.options.map(option => ({ ...option, ...translatedOptions[option.key] })),
+  }
+}
+
 // The title of a question for the card, the tree, the footer and the toast: its title, else its text cut to TITLE_MAX
 // characters. One line always (singleLine), and cut by code points (clipText), so no line break or lone surrogate is drawn.
 export function questionLabel(question: Question): string {
@@ -532,7 +599,7 @@ function historyEntryOf(
   ]
   return {
     id: answer.id,
-    title: question === undefined ? t(lang, 'history.questionClosed') : questionLabel(question),
+    title: question === undefined ? t(lang, 'history.questionClosed') : questionLabel(localizedQuestion(question, lang)),
     session: question?.desktop_session,
     line: parts.filter((part): part is string => part !== undefined).join(' · '),
   }
@@ -629,7 +696,7 @@ const otherKeyOf = (lang: Lang, question: Question | undefined): string => {
 // The last answer as the footer names it: its question's label (questionLabel) cut to FOOTER_TITLE_MAX characters (its id
 // when the question is gone), its key (an Other answer by its letter), and its age.
 function lastAnswerText(lang: Lang, answer: Answer, question: Question | undefined, now: number): string {
-  const label = question === undefined ? '' : questionLabel(question)
+  const label = question === undefined ? '' : questionLabel(localizedQuestion(question, lang))
   const name = clipText(label === '' ? answer.id : label, FOOTER_TITLE_MAX)
   const key = answer.key === OTHER_KEY ? otherKeyOf(lang, question) : answer.key
   return t(lang, 'footer.last', { title: name, key, age: ageLabel(lang, answer.ts, now) })
@@ -704,7 +771,9 @@ export function leadOf(lang: Lang, question: Question, now: number): string {
 export function listText(lang: Lang, questions: readonly Question[], isAway: boolean): string {
   const head = plural(lang, questions.length, 'list.head.one', 'list.head.many')
   const away = isAway ? t(lang, 'list.awayOn') : ''
-  const rows = questions.map(question => t(lang, 'list.row', { id: question.id, title: question.title, rec: question.recommended }))
+  const rows = questions.map(question =>
+    t(lang, 'list.row', { id: question.id, title: localizedQuestion(question, lang).title, rec: question.recommended }),
+  )
   return [`${head}${away}.`, ...rows].join('\n')
 }
 

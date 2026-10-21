@@ -21,6 +21,7 @@ import {
   groupLabelOf,
   isRootSession,
   leadOf,
+  localizedQuestion,
   otherButtonKey,
   otherInputKey,
   otherLetterOf,
@@ -351,7 +352,7 @@ function renderHistoryClear(tree: TreeContext, count: number): RenderElement {
 // One question row of the tree: its link, then, once the question has a pick not yet submitted, " ✓ - " and its own
 // Submit link. The one mark before the text is the state: on screen (●) or waiting (○); no link mark joins it.
 export function renderTreeQuestion(tree: TreeContext, question: Question, place: RowPlace): RenderElement {
-  const { ui, view, actions, held } = tree
+  const { ui, view, actions, held, lang } = tree
   const { Box, Text } = ui
   const isOnScreen = view.screen?.question.id === question.id
   const isPicked = view.wizard.picks[question.id] !== undefined
@@ -361,7 +362,7 @@ export function renderTreeQuestion(tree: TreeContext, question: Question, place:
         key: `tree-jump-${question.id}`,
         lead: place.lead,
         mark: isOnScreen ? '●' : '○',
-        label: questionLabel(question),
+        label: questionLabel(localizedQuestion(question, lang)),
         href: linkHref('jump', question.id),
         bold: isOnScreen,
         onPress: () => actions.jump(question.id),
@@ -480,7 +481,7 @@ function renderQuestion(
   held: HeldButtons,
 ): RenderElement {
   const { Box, Text } = ui
-  const { question } = screen
+  const question = localizedQuestion(screen.question, lang)
   const card: CardContext = {
     question,
     wizard: view.wizard,

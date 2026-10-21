@@ -50,7 +50,23 @@ export type Question = {
   options: QuestionOption[]
   recommended: string
   risk: string
+  // The optional translations of the agent-written text (beta.34), by the pane's language tag; absent when the file has none.
+  translations?: QuestionTranslations
 }
+
+// The text fields a translation may replace: the agent-written text of a question (never key, risk, fit or session).
+export type TranslatedFields = Partial<
+  Pick<Question, 'title' | 'question' | 'what' | 'problem' | 'context' | 'analogy' | 'why' | 'how' | 'gains' | 'losses' | 'urgency' | 'undo'>
+>
+
+// The text an option's translation may replace: its label, does, pros, cons and tradeoff (never key or fit).
+export type TranslatedOption = Partial<Pick<QuestionOption, 'label' | 'does' | 'pros' | 'cons' | 'tradeoff'>>
+
+// One language of a question's translations: its translated fields, and its options keyed by the option key.
+export type QuestionTranslation = TranslatedFields & { options?: Record<string, TranslatedOption> }
+
+// The pane's two languages by tag (pt is pt-BR, en is en); a key of any other tag is ignored.
+export type QuestionTranslations = Partial<Record<'en' | 'pt-BR', QuestionTranslation>>
 
 // a/<id>.json: the first writer wins. This mod writes one only through `askaway.py answer` (its create-once link), never
 // directly, and never overwrites one. Legacy key "other" carries its free text in `text`.

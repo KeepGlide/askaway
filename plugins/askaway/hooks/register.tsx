@@ -30,6 +30,7 @@ import {
   parseCleared,
   parseDraft,
   parseQuestion,
+  localizedQuestion,
   questionLabel,
   sameBoard,
   clearableIdsOf,
@@ -304,7 +305,7 @@ async function announceNew($: EngineInterface, next: Board): Promise<void> {
   if (await read($, quietAtom)) return
   const lang = await read($, langAtom)
   for (const question of fresh) {
-    if (isOpenIn(next, question.id)) $.ui.toast(t(lang, 'toast.newQuestion', { title: questionLabel(question) }))
+    if (isOpenIn(next, question.id)) $.ui.toast(t(lang, 'toast.newQuestion', { title: questionLabel(localizedQuestion(question, lang)) }))
   }
 }
 
