@@ -2265,6 +2265,22 @@ test('/askaway opens the pane, or answers the text list when the pane waits undr
   expect(listed.text).toContain('Pick a parser')
 })
 
+test('/askaway lang en draws the open card in English on the very next draw, with no new question and no poll', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { desktop_session: 'local_abc', analogy: 'A ring road' })]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($, 'desktop')
+  await run($, 'lang en')
+  const drawn = JSON.stringify(await pane.drawn())
+  expect(drawn).toContain('On A since')
+  expect(drawn).toContain("fit N: the agent's estimate of fit, 0 to 100")
+  expect(drawn).toContain('Askaway Details:')
+  expect(drawn).toContain('Analogy: ')
+  expect(drawn).toContain('See session')
+  expect(await labelOf(pane, 'nav-back')).toBe('← Back')
+  await pane.unmount()
+})
+
 test('/askaway lang en switches the pane to English at once, and the choice is kept in the store', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   const { clock } = stubHost(on, files)
@@ -4046,9 +4062,9 @@ test('Gauntlet 5 M58: the recorded ratios match the WCAG formula on the surfaces
   expect(Math.abs(contrast('#999999', '#111827') - TEXT_CONTRAST.dark.inactive)).toBeLessThan(0.05)
 })
 
-// Gauntlet 5 M58 (owner reply A): the Desktop dims an option's sub-rows and the terminal draws them plain. The lead line and the
-// link mark are dim on both surfaces, as they were; the footer is never dim (M68).
-test('Gauntlet 5 M58: option sub-rows are dim on the Desktop and plain on the terminal; the lead line and link mark are dim on both', async ($, on) => {
+// Gauntlet 5 M58, reverted on 2026-10-21 (the owner: the dimmed reply text looks bad): an option's sub-rows are plain on both
+// surfaces and dim only while the card fades. The lead line and the link mark are dim on both surfaces, as they were; the footer is never dim (M68).
+test('option sub-rows are plain on the Desktop and on the terminal; the lead line and link mark are dim on both', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   stubHost(on, files, true, {}, {}, { LANG: '' })
   await $.session.start(SESSION)
@@ -4057,7 +4073,7 @@ test('Gauntlet 5 M58: option sub-rows are dim on the Desktop and plain on the te
     const pane = await mountPane($, surface)
     const nodes = nodesOf(await pane.drawn())
     const textNode = (fragment: string) => nodes.find(node => node.type === 'Text' && textOfNode(node).includes(fragment))
-    expect(dimOf(textNode('Cheap ·'))).toBe(surface === 'desktop')
+    expect(dimOf(textNode('Cheap ·'))).toBe(false)
     expect(dimOf(textNode('Pick another option'))).toBe(true)
     expect(dimOf(nodes.find(node => node.type === 'Text' && textOfNode(node) === `${LINK_MARK} `))).toBe(true)
     await pane.unmount()
