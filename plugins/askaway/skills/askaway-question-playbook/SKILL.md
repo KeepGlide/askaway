@@ -46,11 +46,11 @@ Write each question in this order. The reader has not seen the conversation.
 
 ## Fields
 
-The CLI refuses longer text as `too long (n/limit)` and names the field, so keep each field within its limit. Only a missing title falls back to the question, cut to 60.
+The CLI refuses longer text as `too long (n/limit)` and names the field, so keep each field within its limit. An absent, null or blank title falls back to the question, cut to 60.
 
 | Field | Required | Limit | Rule |
 |---|---|---|---|
-| `title` | no | 60 | Defaults to the question, cut to 60. |
+| `title` | no | 60 | Absent, null or blank: the question, cut to 60. A title that is not a string is refiled as `title: must be a string, or left out to use the question`. |
 | `question` | yes | 400 | One decision, short and concrete. At least 3 words. |
 | `context` | yes | 600 | Task and step that stopped. At least 3 words. |
 | `what` | yes | 600 | At least 2 sentences, checked by the CLI, and at least 3 words. |
@@ -61,11 +61,11 @@ The CLI refuses longer text as `too long (n/limit)` and names the field, so keep
 | `urgency` | yes | 300 | `Blocks in ~8 min` or `Can wait`. |
 | `urgency_level` | no | | `low`, `medium` or `high`: the colour grade of the Urgency line (green, orange, red). When absent, the card grades `urgency` by keywords, so agents should set it. |
 | `undo` | yes | 300 | For example `changing later ≈ 10 min`. |
-| `recommended` | yes | | One of the option keys. |
+| `recommended` | yes | | One of the option keys. Absent or null is listed in `missing`. |
 | `risk` | yes | | `low`, `medium` or `high`. |
-| `options` | yes | | At least 2. Keys are consecutive uppercase letters from A, in order (A, B, C). Each has `key`, `label` (300), `does`, `pros`, `cons` (300 each, all required; `does`, `pros` and `cons` need at least 3 words each), `tradeoff` (300, required; one line by guidance, as the CLI joins line breaks) and `fit` (integer 0 to 100, or `null` for no estimate; required). |
+| `options` | yes | | At least 2. Keys are consecutive uppercase letters from A, in order (A, B, C). Each has `key`, `label` (300), `does`, `pros`, `cons` (300 each, all required; `does`, `pros` and `cons` need at least 3 words each), `tradeoff` (300, required; one line by guidance, as the CLI joins line breaks) and `fit` (integer 0 to 100, or `null` for no estimate; required). An option whose `key` is absent, blank or not a string is still checked: its other gaps are listed under `#<n>` (its position) in `by_option`, so one refile lists every gap. |
 
-The CLI refuses a long text under 3 words as `placeholder`, as it does text made only of `TBD`, `todo`, `n/a` or `lorem`. Do not pass `session` or `project`: the CLI fills them from the environment and the working directory. A subagent sends `"run_kind":"subagent"`.
+The CLI refuses a long text under 3 words as `placeholder`, as it does text made only of `TBD`, `todo`, `n/a` or `lorem`. Dots and the ellipsis character `…` are not words, so text made only of them, such as `...` or `…`, is refused too. For an unspaced script (CJK), the short-text rule counts letters and digits instead of words, and fewer than 6 is refused. Do not pass `session` or `project`: the CLI fills them from the environment and the working directory. A subagent sends `"run_kind":"subagent"`.
 
 ## Filing
 
@@ -89,9 +89,11 @@ The CLI prints one JSON line: `{"id":"q-...","recommended":"A","title":"...","ac
 - `"action":"pause"` with an `error` holding an OS error text means a high-risk question
   was not written after four tries, and nothing was filed. Stop and report it; do not wait.
 - Pass the JSON on stdin with a quoted heredoc (`<<'JSON'`), as above. The shell
-  expands nothing inside it, so apostrophes and backticks are safe. Use
-  `--json '<JSON>'` only for text without an apostrophe; inside double quotes the
-  shell would run a backticked name as a command. With an apostrophe in a field:
+  expands nothing inside it, so apostrophes and backticks are safe. The stdin
+  must be UTF-8 JSON: a leading byte order mark is dropped, and input that is not
+  UTF-8 is refiled as `the entry must be UTF-8 JSON`. Use `--json '<JSON>'` only
+  for text without an apostrophe; inside double quotes the shell would run a
+  backticked name as a command. With an apostrophe in a field:
 
   ```bash
   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask <<'JSON'
@@ -104,18 +106,21 @@ The CLI prints one JSON line: `{"id":"q-...","recommended":"A","title":"...","ac
 ## After filing
 
 - Continue on `recommended` unless `action` is `pause`.
-- `"action":"pause"` is printed only for `risk` `high`. Do read-only work, or end
+- `"action":"pause"` is printed for `risk` `high` and for a repeat of a paused
+  question (see below). Do read-only work, or end
   the turn, until the answer is delivered to your session. The pause ends at
   delivery, not when the user writes the answer. Check with a plain `status <id>`
   command (no shell operators), which the pause guard lets through.
   A `pause` on a question filed without a session holds no session's pause: no hook
   stops your calls, so you stop on your own and treat the `pause` reply as a stop.
-- `low` and `medium` never pause.
+- `low` and `medium` never pause a new question; a repeat of a paused question does.
 - `"action":"open"` with `"duplicate":true`: the same question is already open.
   Do not file it again; continue on its `recommended` option.
 - `"action":"pause"` with `"duplicate":true`: the same question is already open and
-  paused. Do not file it again; keep waiting as for a pause (read-only work, or end
-  the turn, then `status <id>`).
+  paused. A high-risk repeat of an open question sets its pause and raises its risk to
+  `high`, and a repeat of a paused question gets `pause` whatever its own risk. Do not
+  file it again; keep waiting as for a pause (read-only work, or end the turn, then
+  `status <id>`).
 - A subagent learns the reply with the plugin script's wait command
   (`wait <id> --timeout <s>`) and uses its `line` field, since the delivery hook skips subagents.
 - An answer arrives as a line in your context. It opens with who answered, then the

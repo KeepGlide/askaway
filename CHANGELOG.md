@@ -5,6 +5,65 @@ All notable changes to Askaway are recorded here, newest first. The format follo
 `plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.30, set by the beta.30 release commit.
 Commit hashes name the change in `git log`.
 
+## [0.4.0-beta.31] - 2026-10-20
+
+Gauntlet round 5: fixes to the CLI's Bash guard, the ask and prune paths and the delivery markers, to the pane's draft and marker writes, and to the pt-BR command replies, with the docs and test pins that go with them. Test counts are recorded at the release gate.
+
+### Fixed
+
+- M1: `_hits_state` (`scripts/askaway.py`) judges a glob write target by the directory before its first wildcard, so a glob above the state folder is refused for every write, as deletes already were.
+- M2: `_ShellScan._directory_after` and `_change_directory` (`scripts/askaway.py`) follow `builtin cd`, `command cd`, `pushd` and `cd -P`; `popd`, `cd -`, a variable or glob operand, and several operands leave the directory unknown, and a relative write target is then refused.
+- M3: `_code_reason` (`scripts/askaway.py`) refuses inline code that mentions askaway and starts a process or calls the CLI, so a reply word built at run time next to a literal process call no longer passes; split script names still do.
+- M34: `_pause_decision` (`scripts/askaway.py`) quotes the question title in the pause reason as a JSON string, as the delivery line does.
+- M4: `cmd_prune_id` (`scripts/askaway.py`) refuses a non-forced removal of an open question with `pause` true; only `--force` lifts it.
+- M5: `_file_or_hold_twin` (`scripts/askaway.py`) makes a high-risk repeat of a low twin reply `pause`: the twin it returns is paused, and `_duplicate_reply` replies `pause` for any paused twin.
+- R1: `_directory_after` and `_directory_untracked` (`scripts/askaway.py`) follow `cd --`; they leave the directory unknown for `pushd +N` or `-N`, a bare `pushd`, a command that assigns `CDPATH`, `source` or `.`, and an `eval` whose text holds a `cd`, `pushd` or `popd`.
+- M5b: `_file_or_hold_twin` (`scripts/askaway.py`) pauses the open twin when a high-risk repeat arrives.
+- M5c: `_file_or_hold_twin` (`scripts/askaway.py`) also raises the twin's risk to high with its pause.
+- M6: `_words` (`scripts/askaway.py`) drops Unicode punctuation and symbols at a word's ends, so an ellipsis is a placeholder like three dots.
+- M7: `_prune_command` (`scripts/askaway.py`) treats `--id ""` as an invalid id, not a bulk prune.
+- M11: `create_once` (`scripts/askaway.py`) treats a failed directory sync after the link as published, with a stderr warning; `hook_deliver` prints and flushes the claimed lines before the daily cleanup.
+- M20: `_title` (`scripts/askaway.py`) refiles a non-string title with a message naming the fix.
+- M21: `_read_text` and `_too_short` (`scripts/askaway.py`) count letters for unspaced scripts, so a valid CJK question is not a placeholder.
+- M22: `_options` (`scripts/askaway.py`) keeps a keyless option as `#<n>` and checks its fields in the same refile.
+- M23: `_entry_json` (`scripts/askaway.py`) refiles non-UTF-8 stdin with the UTF-8 message and drops a leading byte order mark.
+- M24: `build_entry` (`scripts/askaway.py`) lists an absent or null `recommended` in `missing`.
+- M25: `help_reply` and `dispatch` (`scripts/askaway.py`) read a help flag after a value option as the value.
+- M26: `_settled_ts` (`scripts/askaway.py`) uses the d/ marker's `ts` for an expired item whose reply does not read.
+- M35: `_make_folder` (`scripts/askaway.py`) creates the state folder and its folders with mode 700.
+- M49: `cmd_prune` and `_prune_command` (`scripts/askaway.py`) add `--dry-run` and `removed_ids`.
+- M52: `_maybe_prune` (`scripts/askaway.py`) removes orphan replies in the daily cleanup.
+- M59: `WRITE_CODE` (`scripts/askaway.py`) denies `os.symlink`, `os.link`, `symlink_to` and `hardlink_to` into the state folder.
+- M8: the pt-BR command replies `command.quietInvalid`, `command.langInvalid` and `command.verbsHelp` (`hooks/i18n.ts`) use "Digite" for "Use".
+- M9: `submitGroup` (`hooks/register.tsx`) re-reads each question's pick before its reply is written, so a pick changed during a Submit all round is sent.
+- M10: `submittedTypedOther` (`hooks/wizard.ts`), used by the submit action (`hooks/register.tsx`): Submit all sends the text typed in a labelled question's Other field.
+- M12: `handOne` and `handDue` (`hooks/register.tsx`): a failed marker write skips its line; the other replies are still handed, and only unmarked replies are toasted.
+- M13: `saveDraft` (`hooks/register.tsx`, with `takeDraftLock` and `mergeDraft`): `draft.json` is read, merged and written under `draft.lock`.
+- M29: `alignOtherToLabels` (`hooks/wizard.ts`), applied in `applyDraft` (`hooks/register.tsx`): a draft Other pick whose text differs from the kept label is drawn and sent as the label.
+- M31: `publishMarker` (`hooks/register.tsx`): pane delivery markers are published with a no-clobber link, as the CLI does.
+- M32: `promptsDue` (`hooks/model.ts`): a reply past `ANSWER_TTL_MS` is not handed to its session.
+- M33: `mintPanelToken` (`hooks/register.tsx`): install and chmod failures name the exit code only, not the token file path.
+- M39: `types/index.d.ts` declares the wizard's `labels` and `fieldRound`, which the hooks use.
+- M47: `saveDraft` and `clearHistory` (`hooks/register.tsx`): `draft.json` and `cleared.json` are written through `writeAtomic`.
+- M4b: `dismissEnded` and `dismissEndedOrSay` (`hooks/register.tsx`): Dismiss of an ended card sends prune --force, whatever the risk, so the person's Dismiss lifts a pause.
+- M60: `takeDraftLock` (`hooks/register.tsx`) also removes `.draft.json.*.tmp` files a minute old or older when it removes a stale `draft.lock`.
+- R12: `handOne` and `handDue` (`hooks/register.tsx`): a failed submit toasts the replies this call marked and those whose marker write failed; the replies another window or the CLI marked first are not toasted.
+
+### Tests
+
+- M54, M55 and M50 are test-only pins (plugin tests): the move lock pinned at 349 and 350 ms; the `mv -fT` argv and folder-at-target; the two-way i18n placeholder check.
+- R4 (test-only): the `ln` temp-marker argv (three words, marker as the target) is pinned in both test host stubs (`tests/askaway.test.ts`, `tests/race.test.ts`).
+- M16: refuted, no module-state leak between tests (no change).
+- M17, M19, M53 and M57 are test-only pins (`scripts/tests/test_askaway.py`): the 7-day TTL boundary, `write_atomic`'s temp-plus-rename, the exact text limits and `fit` 0 and 100, and the shortest prefix of `--force` (`--f`) in the forced-prune guard.
+
+### Docs
+
+- M14: README.md and README.pt-BR.md say a `fit` of `null` is accepted, with no estimate.
+- M36: README.md and README.pt-BR.md, step 7 Expect, include the `title` key the CLI prints.
+- M37: README.md and README.pt-BR.md list the CSV columns, which end with `id`.
+- M38: the beta.29 entry names `keepChangedSince`, the function `hooks/register.tsx` defines (it was misnamed).
+- K: `plugins/askaway/skills/askaway-question-playbook/SKILL.md` states the refile rules of M20, M22, M23, M24, M6 and M21, and the twin pause of M5 and M5c.
+
 ## [0.4.0-beta.30] - 2026-10-20
 
 Owner replies to the 21 questions of Gauntlet round 4 (20 filed on 2026-10-20 plus M72 filed during this release): 14 change code, 1 changes the tests (M36), 1 is covered by M63 (M65), 5 change only the docs (M54, M59, M62, M67, M72; M54, M62, M67 and M72 keep the current behaviour: the dim text outside the footer stays until the Desktop's real dim colour is measured in round 5). Plugin tests: 385 pass; pytest: 695 passed; `biome lint` clean. Review: code-inspect-reviewer on Sonnet high, 0 must, 4 should fixed or recorded, 6 nits recorded.
@@ -66,7 +125,7 @@ Gauntlet round 4 on 2026-10-20 (40 personas): 75 raw findings, 69 after merging,
 - The untitled question label is cut by code points, so an emoji is not split (`questionLabel`, `clipText`; `hooks/model.ts`).
 - The footer names an Other answer by its letter, or "Other" / "Outra" when the question is gone (`lastAnswerText`, `otherKeyOf`; `hooks/model.ts`).
 - The footer and the toast draw the question's label on one line (`singleLine`, `questionLabel`; `hooks/model.ts`, `hooks/register.tsx`).
-- A pick made while a poll applies the draft is kept (`keepPicksChangedSince`; `hooks/register.tsx`).
+- A pick made while a poll applies the draft is kept (`keepChangedSince`; `hooks/register.tsx`).
 - The delivery marker is written atomically, and a torn marker counts as absent (`writeAtomic`, `parseJsonText`, `_marked`; `hooks/register.tsx`, `scripts/askaway.py`).
 - `away.json` is written through a temp file, and a failed read keeps the last away state (`readAway`, `writeAtomic`; `hooks/register.tsx`).
 - A failed folder listing keeps the previous board instead of emptying it (`readCached`, `jsonIds`; `hooks/register.tsx`).
