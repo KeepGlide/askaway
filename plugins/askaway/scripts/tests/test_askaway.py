@@ -4615,7 +4615,9 @@ def test_the_os_error_reply_and_the_prune_rule_are_documented(home):
     outside_error = askaway._os_error_text(OSError(errno.ENOENT, "No such file or directory", "/elsewhere/q.json"))
     assert (state_error, outside_error) == ("File exists: .", "No such file or directory: q.json")
     spec = (SCRIPTS.parent / "SPEC.md").read_text(encoding="utf-8")
-    changelog = (SCRIPTS.parents[2] / "CHANGELOG.md").read_text(encoding="utf-8")
+    # The askaway repo keeps CHANGELOG.md at parents[2]; a local mirror keeps it at parents[3].
+    changelog_path = next(p / "CHANGELOG.md" for p in SCRIPTS.parents[2:4] if (p / "CHANGELOG.md").is_file())
+    changelog = changelog_path.read_text(encoding="utf-8")
     assert "File exists: ." in spec
     assert ("removes only regular files whose bytes read; a file that does not parse or does not match its id "
             "is a damaged question and is removed as such") in changelog

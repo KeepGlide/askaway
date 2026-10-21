@@ -2,8 +2,16 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.36, set by the beta.36 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.37, set by the beta.37 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.37] - 2026-10-21
+
+On macOS, Claude Desktop keeps its sessions under `~/Library/Application Support`, so the tree and the History found no session there and grouped nothing.
+
+### Fixed
+- `DESKTOP_SESSIONS_ROOT` is `~/Library/Application Support/Claude/claude-code-sessions` on macOS and stays `~/.config/Claude/claude-code-sessions` on Linux (`scripts/tests/test_platform_paths.py`).
+- The changelog test finds `CHANGELOG.md` both in this repo and in a local mirror, where it sits one folder higher.
 
 ## [0.4.0-beta.36] - 2026-10-21
 

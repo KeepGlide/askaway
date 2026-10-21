@@ -124,7 +124,8 @@ BODY_CONTROL: Final = re.compile(r"(?!\n)[\x00-\x1f\x7f-\x9f]")  # a body keeps 
 RECOMMENDED_MARKER: Final = re.compile(r"\s*\((?:recommended|recomendad[oa])\)\s*$", re.IGNORECASE)
 SESSION_TITLE_MAX: Final = 80
 SESSION_PATTERN: Final = re.compile(r"[A-Za-z0-9_-]{1,128}")
-DESKTOP_SESSIONS_ROOT: Final = Path.home() / ".config" / "Claude" / "claude-code-sessions"
+DESKTOP_SESSIONS_ROOT: Final = (  # Claude Desktop keeps its data in ~/Library/Application Support on macOS
+    Path.home() / ("Library/Application Support" if sys.platform == "darwin" else ".config") / "Claude" / "claude-code-sessions")
 DESKTOP_SESSIONS_ENV: Final = "ASKAWAY_DESKTOP_SESSIONS"
 PROJECTS_ENV: Final = "ASKAWAY_PROJECTS"  # the transcripts folder; tests point it at a temp folder
 DESKTOP_ID_PREFIX: Final = "local_"  # every Claude Desktop session id the entry stores starts with it
