@@ -12,7 +12,7 @@ A question card appears in the Askaway panel for each decision an agent filed wh
 | **Session** | One Claude Code session. Each question records the session that asked, and its answer goes back to that session. |
 | **Recommended** | The option the agent marks as its default. It keeps working on it until you answer, and your answer overrides it. |
 | **Risk** | How risky accepting the recommended option is: `low`, `medium` or `high`. Only `high` pauses. |
-| **Pause** | A hold on the session that asked a `high` question: its edits, shell commands and other changing tool calls are blocked until the answer is delivered to it. |
+| **Pause** | A hold on the agent that asked a `high` question (the main thread or one subagent): its edits, shell commands and other changing tool calls are blocked until the answer is delivered to its session. |
 | **Fit** | The agent's own 0-100 estimate of how well an option suits the task. Askaway does not measure or check it. |
 
 ![The Askaway pane beside the Context and Environment panes, light theme: two projects, four sessions, five questions, one card open](assets/window-light-en.png)
@@ -21,7 +21,7 @@ A question card appears in the Askaway panel for each decision an agent filed wh
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Early access (0.4.0-beta.35):** the mod API moves between Claude Code releases, so expect changes until a stable release. The changes of this version are listed in [CHANGELOG.md](CHANGELOG.md).
+> ⚠️ **Early access (0.4.0-beta.36):** the mod API moves between Claude Code releases, so expect changes until a stable release. The changes of this version are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## 💡 What it is
 
@@ -52,7 +52,7 @@ Askaway does not:
 - **A tree by Desktop Group, session family and session.** A question asked from a Claude Desktop session in a sidebar Group is grouped under that Group's name, read from the Desktop config (`claude_desktop_config.json`). Other questions group by session family: each Claude Desktop session family with open questions (its root session and the sessions it started or forked) is a group, named by the root's title, with its sessions and their questions under it. The family is read from Claude Desktop's own session records on this machine; questions with no family group by project.
 - **A recommended default.** Every question carries the option the agent would take, so the session keeps working instead of waiting for you.
 - **First click on the desktop.** Each button keeps its press handle across redraws (`hooks/held.ts`), which is the cause of the first click the desktop used to drop.
-- **Risk-aware pausing.** A question with `risk` high pauses the session whose id it carries, until the answer is delivered to that session. A question from Codex has no session id: it replies `"action": "pause"`, but nothing holds a Codex run, so its script waits for the answer itself ([From Codex](#-from-codex)). Low and medium questions never pause.
+- **Risk-aware pausing.** A question with `risk` high pauses the agent that asked it (the main thread, or one subagent) in the session whose id it carries, until the answer is delivered to that session. The other agents keep working; a question with no recorded asker pauses the whole session. A question from Codex has no session id: it replies `"action": "pause"`, but nothing holds a Codex run, so its script waits for the answer itself ([From Codex](#-from-codex)). Low and medium questions never pause.
 - **Two languages.** English and Brazilian Portuguese, from your locale or with `/askaway lang`. A question may carry its own `translations`, so `/askaway lang` switches the whole card.
 
 ## ⚙️ How it works
@@ -216,7 +216,7 @@ The risk label is the risk of accepting the recommended option, as the agent jud
 
 - **✅ low risk:** safe to accept and easy to change later.
 - **⚠️ medium risk:** reversible, but changing it costs rework.
-- **🛑 high risk:** irreversible, or it touches real files, credentials or money. A high-risk question pauses the session that asked: its edits, shell commands and other changing tool calls are blocked until the answer is delivered to that session, at its next hook run. The agent can still read and end its turn.
+- **🛑 high risk:** irreversible, or it touches real files, credentials or money. A high-risk question pauses the agent that asked it (the main thread, or one subagent; a question with no recorded asker pauses the whole session): its edits, shell commands and other changing tool calls are blocked until the answer is delivered to that session, at its next hook run. The agent can still read and end its turn.
 
 ### Hotkeys
 
@@ -360,6 +360,7 @@ The state folder belongs to one user, and every Claude Code session that runs as
   - `SessionStart` (on `startup`, `resume`, `clear` or `compact`), `UserPromptSubmit` and `PostToolUse` run `hook deliver`: it reads `q/`, `a/` and `d/`, writes a delivery marker to `d/` for each answer it hands over, and puts the answer text into that session's context.
   - `PreToolUse` on `AskUserQuestion` runs `hook ask-guard`: it reads the away state and writes nothing.
   - `PreToolUse` on `Edit|Write|NotebookEdit|Bash|Agent|mcp__.*` runs `hook pause-guard`: it reads `q/`, `a/` and `d/` and writes nothing.
+  - `PostToolUse` on `Bash` runs `hook stamp-asker`: after an `ask` call it writes `asker` (the caller's `agent_id`, or `main`) onto the pause that call filed, and changes no other field.
 - **Session titles:** when a question is filed, `ask` reads the asking session's transcript, `~/.claude/projects/<project folder>/<session>.jsonl`, and keeps only its title entries (`custom-title`, `agent-name`, `ai-title`). It does not read prompts or replies. The title labels the session on the card.
 - **Claude Desktop release markers:** `deliver` looks for `<session>.desktop-released.json` in the same project folder, to close the answers of a session that Claude Desktop has released.
 - **Panel (mod):** reads `q/`, `a/` and `d/`; it writes answers only through the CLI (`answer --by panel`), the away toggle, `draft.json` and `cleared.json` in the state folder, and its own store keys (the language choice).
@@ -396,9 +397,9 @@ The known limits of the single-user state folder are in the [Security](plugins/a
 | Category | Tests |
 |---|---|
 | Mod (TypeScript), `plugins/askaway/tests/` | 469 |
-| CLI and hooks (Python), `plugins/askaway/scripts/tests/` | 867 |
+| CLI and hooks (Python), `plugins/askaway/scripts/tests/` | 899 |
 
-Counts from `claude plugin test plugins/askaway` (469 pass, 0 fail) and `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts` (867 tests), on 2026-10-21.
+Counts from `claude plugin test plugins/askaway` (469 pass, 0 fail) and `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts` (899 tests), on 2026-10-21.
 
 ## 🔧 Development
 

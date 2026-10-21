@@ -61,7 +61,7 @@ The state folder and its `q/`, `a/` and `d/` folders are created with mode 700 (
    "risk":"low|medium|high","pause":false,"source":"cli"}
   ```
   `fit` is an int 0-100, or null for no estimate (older questions may hold null too; the panel then draws no fit for that option).
-  `urgency_level` is optional: `low`, `medium` or `high` (any case, stored lower-case), the grade the pane colours Urgency by; without it the pane grades the urgency text by keywords. Any other value is refiled, naming `urgency_level`. A blank `urgency_level` counts as absent, like null. Top-level keys the CLI does not read are stored with the question as sent (`_unknown_keys`, `scripts/askaway.py`); the fields the CLI writes win over a key of the same name. Over 4096 bytes as JSON the entry is refiled as `the unknown keys are over 4096 bytes as JSON: keep them short or drop them`.
+  `urgency_level` is optional: `low`, `medium` or `high` (any case, stored lower-case), the grade the pane colours Urgency by; without it the pane grades the urgency text by keywords. Any other value is refiled, naming `urgency_level`. A blank `urgency_level` counts as absent, like null. Top-level keys the CLI does not read are stored with the question as sent, except `asker`, which only the `stamp-asker` hook writes (`ASKER_KEY`, `_unknown_keys`, `scripts/askaway.py`); the fields the CLI writes win over a key of the same name. Over 4096 bytes as JSON the entry is refiled as `the unknown keys are over 4096 bytes as JSON: keep them short or drop them`.
 - `translations` (optional; null counts as absent): the question's text in the panel's other language, so `/askaway lang` switches the whole card. An object keyed by `en` and `pt-BR` only (another key is refiled as `translations.<key>: not a language; use en or pt-BR`); each language holds a non-empty subset of `title`, `question`, `context`, `what`, `problem`, `analogy`, `why`, `how`, `gains`, `losses`, `urgency` and `undo`, plus an optional `options` object keyed by the main option keys, each holding a subset of `label`, `does`, `pros`, `cons` and `tradeoff`. Each string goes through the same check, cap and cleaning as its main field (`_read_text`; `what` keeps its 2-sentence rule), and a refusal names its path, such as `translations.pt-BR.options.Z: not a key of the main options` or `translations.pt-BR.price: not a translatable field` (`_translations`, `scripts/askaway.py`). A translation that has `question` and no `title` gets `title` set to its question cut to 60, the fallback the main title uses; a translation with neither keeps no title, and the pane shows the main title. It is a known field: it is not counted in the 4096-byte unknown-keys cap, and it is stored only when non-empty. Delivery lines never read it (pinned by a case with `translations` in the shared `tests/delivery-lines.ts`).
   `session_title` is filled by `ask`, not by the caller: it is the window title of the asking
   session, read from its transcript `~/.claude/projects/<dir>/<session>.jsonl`. The folder is
@@ -257,7 +257,7 @@ writes its document instead). Exit codes: 0 for a reply; 1 for a usage error (un
 ## Hook modes
 
 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" hook <mode>` reads the hook JSON from stdin.
-It fails open: any error exits 0 with no output (below Python 3.12 the version line goes to stderr, see Exit codes), except in the pause guard: it fails closed when the pause lookup raises (the call is denied), while the tamper check fails open (`hook_pause_guard`, `_tamper_denial`); the deliver hook still fails open. The command hooks are declared in
+It fails open: any error exits 0 with no output (below Python 3.12 the version line goes to stderr, see Exit codes), except in the pause guard: it fails closed when the pause lookup raises (the call is denied), while the tamper check fails open (`hook_pause_guard`, `_tamper_denial`); the deliver and stamp-asker hooks still fail open. The command hooks are declared in
 `hooks/command-hooks.json`.
 
 - `ask-guard` — PreToolUse, matcher `AskUserQuestion`. Away → for each `tool_input.questions[i]`
@@ -278,14 +278,16 @@ It fails open: any error exits 0 with no output (below Python 3.12 the version l
 - `pause-guard` — PreToolUse, matcher `Edit|Write|NotebookEdit|Bash|Agent|mcp__.*`. If an entry with
   `pause:true` (risk `high` only) whose status is not closed (`open` or `answered`, that is, not yet
   delivered nor expired) has `session == input.session_id`, it denies with the reason "Paused: Askaway question
-  <id> ("<title>") needs the user's answer. Do read-only work or end the turn; check with
+  <id> ("<title>") needs the user's answer. It holds this call: end the turn now instead of retrying or polling, because the answer
+  arrives by itself in the context. A subagent hands back what it has and stops. To look it up once, run
   `askaway.py status <id>`." Exception: one simple Bash command running `askaway.py ask|status|list|wait|export` (its installed or mirror path may start with `~`, `$HOME` or `${HOME}`)
   passes when it is one simple call: an operator, `$` or a backtick counts only outside single quotes, so single-quoted text may hold them (`inbox_call`, `_without_single_quoted`). `answer` never passes (the Bash guard, a deterrent and not a token, is the barrier against the agent answering its own question), so only the user lifts a pause; an answer that is
   written but not yet delivered still holds it, and the next deliver run (the `status` call's
   PostToolUse, for one) ends it. Read-only MCP tools pass: `mcp__<server>__<tool>` whose tool name
   starts with a read prefix (`get_`, `list_`, `read_`, `search_`, `find_`, `describe_`, `show_`, `query_`; `is_read_only_mcp`) and no write
   word (`create`, `update`, `delete`, `keep`, `save`, `send`, `run`, and similar). A generic `query_*` tool (a SQL server's `query_database`) passes the guard if its name has no write word; the owner accepted this (M55). Every other tool
-  of the matcher is denied, `Agent` included. A high-risk question filed without a session holds no session's pause (`_holding_question`): only the model stops, and the agent treats the `pause` reply as a stop on its own.
+  of the matcher is denied, `Agent` included. Which calls a pause holds follows its `asker` (stamped by `stamp-asker`): a pause with asker `"main"` (`MAIN_ASKER`) holds the calls without an `agent_id`; a subagent's pause, with its `agent_id` as asker, holds only that agent's calls; a pause with no `asker` (not stamped yet, or its stamp failed) holds every call of the session, as before the stamp. A main-thread pause does not hold subagents already running, which may still act, so the main thread should not delegate the paused action. A damaged q/ file holds the whole session, since its asker cannot be read (`_holds_caller`, `_holding_question`). A high-risk question filed without a session holds no session's pause (`_holding_question`): only the model stops, and the agent treats the `pause` reply as a stop on its own.
+- `stamp-asker` — PostToolUse, matcher `Bash`. For a finished command that is a call of this script's `ask` (the head the pause guard accepts, `_is_ask_call`), it reads the question id from the reply on stdout (`tool_response.stdout`, `_asked_id`) and, under `.ask.lock` (the lock an ask writes under, so a repeat's rewrite of the twin cannot drop it), writes `asker` onto that record when the record is a pause (`pause` true) of the payload's `session_id` and has no `asker` yet (`_unstamped_pause`, `hook_stamp_asker`). The asker is the payload's `agent_id`, or `"main"` when the call has none. A duplicate reply never stamps, so a high repeat that pauses an open low question stays unstamped and holds the whole session until it is answered; a repeat of a pause that already has an asker changes nothing. It prints nothing. An error, or a reply with no readable id, leaves the record without an asker, so its pause holds the whole session, as before this hook.
 - `deliver` — UserPromptSubmit, SessionStart (matcher `startup|resume|clear|compact`) and PostToolUse
   (no matcher). It picks `answered` items with `session == input.session_id`, or with session null
   and `project == input.cwd`, and prints
@@ -615,7 +617,7 @@ field, a recommended option, and on `refile` complete and file again; continue o
   entry `askaway` is a `git-subdir` source pointing at `plugins/askaway` of this repository. Installed with
   `claude plugin marketplace add KeepGlide/claude-plugins` and `claude plugin install askaway@keepglide`.
 - `plugins/askaway/.claude-plugin/plugin.json`: the manifest; `"hooks": "./hooks/command-hooks.json"`
-  declares the command hooks (`deliver`, `ask-guard`, `pause-guard`), which use
+  declares the command hooks (`deliver`, `ask-guard`, `pause-guard`, `stamp-asker`), which use
   `python3` and `${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py`.
 - `plugins/askaway/hooks/hooks.json`: the mod, `{"modules":["./register.tsx"]}`.
 - `plugins/askaway/skills/askaway-question-playbook/SKILL.md`: the skill (`askaway:askaway-question-playbook`) agents read before they file a question.

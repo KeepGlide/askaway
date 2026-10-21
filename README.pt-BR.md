@@ -12,7 +12,7 @@ Um cartão de pergunta aparece no painel do Askaway para cada decisão que um ag
 | **Sessão** (*session*) | Uma sessão do Claude Code. Cada pergunta registra a sessão que perguntou, e a resposta volta para essa sessão. |
 | **Recomendada** (*recommended*) | A opção que o agente marca como padrão. Ele segue trabalhando nela até você responder, e a sua resposta a substitui. |
 | **Risco** (*risk*) | Quão arriscado é aceitar a opção recomendada: `low`, `medium` ou `high`. Só `high` pausa. |
-| **Pausa** (*pause*) | Uma retenção da sessão que perguntou uma pergunta `high`: as edições, os comandos de shell e as outras chamadas de ferramenta que alteram algo ficam bloqueadas até a resposta ser entregue a ela. |
+| **Pausa** (*pause*) | Uma retenção do agente que perguntou uma pergunta `high` (a thread principal ou um subagente): as edições, os comandos de shell e as outras chamadas de ferramenta que alteram algo ficam bloqueadas até a resposta ser entregue à sessão dele. |
 | **Aderência** (*fit*) | A estimativa do próprio agente, de 0 a 100, de quão bem uma opção serve à tarefa. O Askaway não mede nem verifica essa nota. |
 
 ![O painel do Askaway ao lado dos painéis Context e Environment, tema claro: dois projetos, quatro sessões, cinco perguntas, um cartão aberto](assets/window-light-en.png)
@@ -21,7 +21,7 @@ Um cartão de pergunta aparece no painel do Askaway para cada decisão que um ag
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> ⚠️ **Acesso antecipado (0.4.0-beta.35):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável. As mudanças desta versão estão listadas no [CHANGELOG.md](CHANGELOG.md).
+> ⚠️ **Acesso antecipado (0.4.0-beta.36):** a API do mod muda entre versões do Claude Code, então espere mudanças até uma versão estável. As mudanças desta versão estão listadas no [CHANGELOG.md](CHANGELOG.md).
 
 ## 💡 O que é
 
@@ -52,7 +52,7 @@ O Askaway não:
 - **Uma árvore por grupo do Desktop, família de sessões e sessão.** Uma pergunta feita numa sessão do Claude Desktop que está num grupo da barra lateral é agrupada sob o nome desse grupo, lido da configuração do Desktop (`claude_desktop_config.json`). As demais perguntas agrupam por família de sessões: cada família do Claude Desktop com perguntas abertas (a sessão raiz e as sessões que ela iniciou ou bifurcou) é um grupo, com o título da raiz como nome, e as sessões e perguntas dele logo abaixo. A família é lida dos registros de sessão do próprio Claude Desktop nesta máquina; perguntas sem família agrupam por projeto.
 - **Uma opção recomendada.** Cada pergunta traz a opção que o agente escolheria, então a sessão segue trabalhando em vez de esperar por você.
 - **Primeiro clique no desktop.** Cada botão mantém o seu identificador de clique entre as redesenhas (`hooks/held.ts`), que era a causa do primeiro clique que o desktop perdia.
-- **Pausa conforme o risco.** Uma pergunta com `risk` alto pausa a sessão cujo id ela traz, até a resposta ser entregue a essa sessão. Uma pergunta do Codex não tem id de sessão: ela responde `"action": "pause"`, mas nada segura uma execução do Codex, então o script dela espera a resposta sozinho ([Pelo Codex](#-pelo-codex)). Perguntas de risco baixo e médio nunca pausam.
+- **Pausa conforme o risco.** Uma pergunta com `risk` alto pausa o agente que perguntou (a thread principal ou um subagente) na sessão cujo id ela traz, até a resposta ser entregue a essa sessão. Os outros agentes seguem trabalhando; uma pergunta sem autor registrado pausa a sessão inteira. Uma pergunta do Codex não tem id de sessão: ela responde `"action": "pause"`, mas nada segura uma execução do Codex, então o script dela espera a resposta sozinho ([Pelo Codex](#-pelo-codex)). Perguntas de risco baixo e médio nunca pausam.
 - **Dois idiomas.** Inglês e português do Brasil, pelo seu locale ou com `/askaway lang`. Uma pergunta pode trazer as próprias `translations`, e `/askaway lang` troca o painel inteiro.
 
 ## ⚙️ Como funciona
@@ -216,7 +216,7 @@ O rótulo de risco é o risco de aceitar a opção recomendada, como o agente av
 
 - **✅ risco baixo:** seguro de aceitar e fácil de mudar depois.
 - **⚠️ risco médio:** reversível, mas mudar custa retrabalho.
-- **🛑 risco alto:** irreversível, ou toca arquivos reais, credenciais ou dinheiro. Uma pergunta de risco alto pausa a sessão que perguntou: as edições, os comandos de shell e as outras chamadas de ferramenta que alteram algo ficam bloqueados até a resposta ser entregue a essa sessão, no próximo disparo de hook dela. O agente ainda pode ler e encerrar o turno.
+- **🛑 risco alto:** irreversível, ou toca arquivos reais, credenciais ou dinheiro. Uma pergunta de risco alto pausa o agente que perguntou (a thread principal ou um subagente; uma pergunta sem autor registrado pausa a sessão inteira): as edições, os comandos de shell e as outras chamadas de ferramenta que alteram algo ficam bloqueados até a resposta ser entregue a essa sessão, no próximo disparo de hook dela. O agente ainda pode ler e encerrar o turno.
 
 ### Teclas
 
@@ -360,6 +360,7 @@ A pasta de estado pertence a um usuário, e todas as sessões do Claude Code que
   - `SessionStart` (em `startup`, `resume`, `clear` ou `compact`), `UserPromptSubmit` e `PostToolUse` rodam `hook deliver`: ele lê `q/`, `a/` e `d/`, grava uma marca de entrega em `d/` para cada resposta que entrega, e coloca o texto da resposta no contexto daquela sessão.
   - `PreToolUse` em `AskUserQuestion` roda `hook ask-guard`: lê o estado ausente e não grava nada.
   - `PreToolUse` em `Edit|Write|NotebookEdit|Bash|Agent|mcp__.*` roda `hook pause-guard`: lê `q/`, `a/` e `d/` e não grava nada.
+  - `PostToolUse` em `Bash` roda `hook stamp-asker`: depois de uma chamada de `ask`, grava `asker` (o `agent_id` de quem chamou, ou `main`) na pausa que a chamada registrou, e não altera outro campo.
 - **Títulos de sessão:** ao registrar uma pergunta, `ask` lê o transcrito da sessão que perguntou, `~/.claude/projects/<pasta do projeto>/<sessão>.jsonl`, e guarda só as suas entradas de título (`custom-title`, `agent-name`, `ai-title`). Não lê prompts nem respostas. O título dá nome à sessão no cartão.
 - **Marcadores de liberação do Claude Desktop:** `deliver` procura `<sessão>.desktop-released.json` na mesma pasta do projeto, para fechar as respostas de uma sessão que o Claude Desktop liberou.
 - **Painel (mod):** lê `q/`, `a/` e `d/`; grava respostas só pela CLI (`answer --by panel`), o interruptor do modo ausente, `draft.json` e `cleared.json` na pasta de estado, e as próprias chaves de armazenamento (a escolha de idioma).
@@ -396,9 +397,9 @@ Os limites conhecidos da pasta de estado de um só usuário estão nas seções 
 | Categoria | Testes |
 |---|---|
 | Mod (TypeScript), `plugins/askaway/tests/` | 469 |
-| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 867 |
+| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 899 |
 
-Contagens de `claude plugin test plugins/askaway` (469 passam, 0 falham) e `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts` (867 testes), em 2026-10-21.
+Contagens de `claude plugin test plugins/askaway` (469 passam, 0 falham) e `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts` (899 testes), em 2026-10-21.
 
 ## 🔧 Desenvolvimento
 

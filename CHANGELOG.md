@@ -2,8 +2,20 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.35, set by the beta.35 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.36, set by the beta.36 release commit.
 Commit hashes name the change in `git log`.
+
+## [0.4.0-beta.36] - 2026-10-21
+
+A high-risk question filed by a background subagent froze a whole session for 13 minutes: the pause held every tool call, the main thread's and the other subagents' too, and the main thread kept waking to report it was blocked.
+
+### Changed
+- The pause holds only the agent that filed the question (`hook stamp-asker`, a PostToolUse hook on `Bash`, writes `asker`: the caller's `agent_id`, or `main` for the main thread; `_holds_caller`, `_holding_question`, `_pause_decision`). A question with no `asker` (a failed stamp, a duplicate reply, a twin promoted to a pause by a high-risk repeat) still holds the whole session. Only a simple `ask` call or its heredoc form is stamped; an agent-sent `asker` key is dropped. The deny text tells the caller the reply arrives by itself and to end the turn instead of retrying or polling; a held subagent hands back what it has and stops.
+
+### Tests
+- `scripts/tests/test_askaway.py`: 32 cases for the scoped pause (subagent, main and unstamped holds), the stamp (once, per session, not from a duplicate, not from a compound command, only under the ask lock) and the deny text. A Sonnet review ran 13 mutations; the one survivor (a stamp outside the lock) now goes red.
+
+Gates: `claude plugin test plugins/askaway` 469 pass, 0 fail; pytest 899 passed; `claude plugin validate` passed; `biome lint` clean.
 
 ## [0.4.0-beta.35] - 2026-10-21
 
