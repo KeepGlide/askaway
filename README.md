@@ -47,7 +47,7 @@
 
 ## 📌 Status
 
-**Beta** (`0.4.0-beta.38`, early access). Askaway follows [SemVer](https://semver.org/): while the version is `0.y.z`, anything may change at any time. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
+**Beta** (`0.4.0-beta.39`, early access). Askaway follows [SemVer](https://semver.org/): while the version is `0.y.z`, anything may change at any time. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
 > The mod API moves between Claude Code releases, so expect changes until a stable release.

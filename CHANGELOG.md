@@ -2,12 +2,14 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.38, set by the beta.38 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.39, set by the beta.39 release commit.
 Commit hashes name the change in `git log`.
 
 ## [Unreleased]
 
-Two fixes ported from a local mirror.
+## [0.4.0-beta.39] - 2026-10-22
+
+Askaway 0.4.0-beta.39 delivers each answer to the subagent that asked, and stops the Bash guard denying unrelated commands.
 
 ### Changed
 - The frozen guard `scripts/askaway_guard_baseline.py` is re-extracted from a later revision of the guard: the guard of 0.4.0-beta.36 plus the relaxations listed under Fixed below. It still decides first, so the guard denies at least what the installed one denied, and it no longer denies what those relaxations let through (`bash_tamper_reason`, `_baseline_guard`).
@@ -675,3 +677,6 @@ Third gauntlet round (40 personas over betas 14 to 25): 150 findings, 64 adopted
 
 - The README describes the away flow and what each card carries, matches every claim to the plugin, and adds a screenshot (150ad49, 6020300).
 - SPEC.md records the 0.4.0-beta.5 live check of the pane layout (0f43a9f).
+
+[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.39...HEAD
+[0.4.0-beta.39]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.38...v0.4.0-beta.39
