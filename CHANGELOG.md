@@ -2,10 +2,14 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.37, set by the beta.37 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.38, set by the beta.38 release commit.
 Commit hashes name the change in `git log`.
 
 ## [Unreleased]
+
+## [0.4.0-beta.38] - 2026-10-22
+
+Askaway 0.4.0-beta.38 hardens the pause guard's shell scanner, keeps an answered card dimmed until its reply is written, and makes the README pair follow the KeepGlide README standard.
 
 ### Changed
 - The README pair follows the KeepGlide README standard: banner, badges, contents, status, screenshots, known issues, uninstall and maintainer sections (`README.md`, `README.pt-BR.md`).
