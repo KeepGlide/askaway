@@ -15,6 +15,7 @@ import {
   OTHER_KEY,
   SUBMIT_ALL_KEY,
   ageLabel,
+  answerWho,
   footerText,
   groupBySession,
   isOpenIn,
@@ -62,6 +63,9 @@ const DRAFT_LOCK_STALE_FIND_ARG = `+${DRAFT_LOCK_STALE_MINUTES - 1}`
 const MOVE_LOCK_MS = 350
 // The `list --open` run that finds the ended sessions repeats at most this often while the linked open questions do not change.
 const ENDED_RECHECK_MS = 30_000
+// The longest text a failed `list --open` run logs after the command's name, in code points: a longer stderr or stdout is cut
+// (logEndedListFailure).
+const LIST_FAILURE_LOG_MAX = 500
 // The plugin's own store keys: the ids of the History lines the person cleared, and the chosen language.
 const CLEARED_KEY = 'cleared'
 const LANG_KEY = 'lang'
@@ -118,8 +122,11 @@ type DraftChanges = { picks: Map<string, Pick | undefined>; labels: Map<string, 
 const unsaved: DraftChanges = { picks: new Map(), labels: new Map() }
 // Whether the poll's retry of unsavedPicks failed and the person was told; the toast shows once per failure.
 let draftFailing = false
-// Whether an interval poll is running: a tick that comes meanwhile starts no second poll (the `handing` pattern).
-let polling = false
+// The draft.json saves of this window in flight: the poll's retry skips its turn meanwhile rather than meet their draft.lock.
+let draftSaves = 0
+// The poll running now, undefined when none: a tick that comes meanwhile starts no second poll (the `handing` pattern), and
+// a poll asked for meanwhile (Dismiss) runs after it, so two polls never read `seen` or take draft.lock at once.
+let polling: Promise<void> | undefined
 // Whether the last write held the picks because draft.json did not parse. The next write overwrites the file (H1, one held write).
 let unreadableHeld = false
 
@@ -434,33 +441,61 @@ function anchorStep(prev: Wizard, active: Group | undefined, switched: boolean):
 
 // The last `list --open` run: the linked open ids it covered and when it ran.
 let endedCheck: { key: string; at: number } | undefined
+// The `list --open` failure last logged, undefined once a run succeeds: a run that keeps failing the same way is logged once
+// rather than at every 5 s poll (the draftFailing pattern; gauntlet 7 review F8).
+let endedListFailure: string | undefined
 
 // Asks the CLI which open questions belong to an ended session; only questions that name a session can. A run that fails
-// keeps what the pane knew. The run repeats when the linked ids change, else at most every ENDED_RECHECK_MS. The atom
-// is written only when the list changed, so a poll that learns nothing redraws nothing. The result is false when the list did
-// not run or printed no list, so a press can refuse its reply rather than send it on the last list.
-async function refreshEnded($: EngineInterface, home: string, next: Board, now: number): Promise<boolean> {
+// keeps what the pane knew. The run repeats when the linked ids change, else at most every ENDED_RECHECK_MS; `force` (a reply
+// press) runs it whatever the throttle. The atom is written only when the list changed, so a poll that learns nothing redraws
+// nothing. The result is the ended ids this call knows (its own run's, or the atom's when the throttle skipped the run), and
+// undefined when the list did not run or printed no list, so a press refuses its reply on its own run rather than on a list
+// a concurrent poll may rewrite (pane-conc5-1).
+async function refreshEnded($: EngineInterface, home: string, next: Board, now: number, force = false): Promise<string[] | undefined> {
   const linked = next.questions.filter(question => question.session !== null && isOpenIn(next, question.id)).map(question => question.id)
-  let ended: string[] = []
   if (linked.length === 0) {
     endedCheck = undefined
-  } else {
-    const key = linked.sort().join(',')
-    if (endedCheck?.key === key && now - endedCheck.at < ENDED_RECHECK_MS) return true
-    const argv = ['python3', `${$.plugin.root}/scripts/askaway.py`, 'list', '--open']
-    const run = await $.process.run(argv, { env: { ASKAWAY_HOME: home } }).catch(() => undefined)
-    // A run that fails keeps what the pane knew and is due again at the next poll, so only a run that ran is stamped.
-    if (run?.exitCode !== 0) return false
-    // Output that is not the list is a check that did not run: it is not stamped either, so the next poll runs it again.
-    const parsed = parseEndedIds(run.stdout)
-    if (parsed === undefined) return false
-    endedCheck = { key, at: now }
-    ended = parsed
+    return mergeEnded($, [])
   }
-  if (JSON.stringify(ended) !== JSON.stringify(await read($, endedAtom))) {
-    await update($, endedAtom, () => ended)
-  }
-  return true
+  const key = linked.sort().join(',')
+  if (!force && endedCheck?.key === key && now - endedCheck.at < ENDED_RECHECK_MS) return read($, endedAtom)
+  const ended = await runEndedList($, home)
+  // A run that fails keeps what the pane knew and is due again at the next poll, so only a run that ran is stamped.
+  if (ended === undefined) return undefined
+  endedCheck = { key, at: now }
+  return mergeEnded($, ended)
+}
+
+// One `list --open` run: the ended ids it printed. A run that cannot start, exits non-zero or prints output that is not the
+// list did not run: it is logged with its exit code and stderr (a press that it refuses only shows a toast) and gives undefined.
+async function runEndedList($: EngineInterface, home: string): Promise<string[] | undefined> {
+  const argv = ['python3', `${$.plugin.root}/scripts/askaway.py`, 'list', '--open']
+  const run = await $.process.run(argv, { env: { ASKAWAY_HOME: home } }).catch((error: unknown) => {
+    logEndedListFailure($, `did not start: ${error instanceof Error ? error.message : String(error)}`)
+    return undefined
+  })
+  if (run === undefined) return undefined
+  const parsed = run.exitCode === 0 ? parseEndedIds(run.stdout) : undefined
+  if (parsed === undefined) logEndedListFailure($, `failed (exit ${run.exitCode}): ${(run.stderr || run.stdout).trim()}`)
+  else endedListFailure = undefined
+  return parsed
+}
+
+// Logs a `list --open` run that did not run, its text cut to LIST_FAILURE_LOG_MAX code points and "…": once while it keeps
+// failing with the same text, again when the text changes or after a run that succeeded.
+function logEndedListFailure($: EngineInterface, detail: string): void {
+  const chars = [...detail]
+  const cut = chars.length <= LIST_FAILURE_LOG_MAX ? detail : `${chars.slice(0, LIST_FAILURE_LOG_MAX).join('')}…`
+  const text = `askaway list --open ${cut}`
+  if (text === endedListFailure) return
+  endedListFailure = text
+  logFailure($, new Error(text))
+}
+
+// Writes the ended ids to the atom only when they changed, and gives them back.
+async function mergeEnded($: EngineInterface, ended: string[]): Promise<string[]> {
+  if (JSON.stringify(ended) !== JSON.stringify(await read($, endedAtom))) await update($, endedAtom, () => ended)
+  return ended
 }
 
 // Dismiss on an ended or a damaged card: the CLI removes the question (prune --id), then the board is read again. An ended card's pause is
@@ -470,7 +505,18 @@ async function dismissQuestion($: EngineInterface, home: string, id: string, for
   const argv = ['python3', `${$.plugin.root}/scripts/askaway.py`, 'prune', '--id', id, '--strict', ...(force ? ['--force'] : [])]
   const run = await $.process.run(argv, { env: { ASKAWAY_HOME: home } })
   if (run.exitCode !== 0) throw new Error(`askaway prune failed: ${(run.stderr || run.stdout).trim()}`)
-  await pollInbox($, home)
+  await pollAfterRunning($, home)
+}
+
+// Runs a poll once the poll running now, if any, has ended (pane-conc5-3), and marks it as the one running until it ends.
+function pollAfterRunning($: EngineInterface, home: string, ownSession?: string): Promise<void> {
+  const run = (polling ?? Promise.resolve()).then(() => pollInbox($, home, ownSession))
+  const settled = run.catch(() => undefined)
+  polling = settled
+  void settled.then(() => {
+    if (polling === settled) polling = undefined
+  })
+  return run
 }
 
 // The damaged pauses the pane draws; written only when the list changed, so a poll with no change writes nothing.
@@ -665,15 +711,16 @@ async function writeAnswer($: EngineInterface, home: string, id: string, key: st
   // first, and a refused or failed press brings it back, including when a read, a write or a toast throws.
   try {
     const lang = await read($, langAtom)
-    // A press checks the ended sessions at once: the poll's throttle must not let a reply reach a session that ended.
-    // A check that did not run refuses the reply too: the person is told, and the pick stays for another press.
-    endedCheck = undefined
-    if (!(await refreshEnded($, home, current, await $.clock.now()))) {
+    // A press runs its own ended check at once (force): the poll's throttle must not let a reply reach a session that ended,
+    // and the press reads its own run's ids, not the atom a concurrent poll may rewrite. A check that did not run refuses the
+    // reply too: the person is told, and the pick stays for another press.
+    const ended = await refreshEnded($, home, current, pressedAt, true)
+    if (ended === undefined) {
       $.ui.toast(t(lang, 'toast.replyFailed'))
       return false
     }
     // A question whose session ended takes no reply: its card offers Dismiss only.
-    if ((await read($, endedAtom)).includes(id)) return false
+    if (ended.includes(id)) return false
     const path = `${home}/a/${id}.json`
     // A reply the CLI could not write (an error or a refused token) is logged and told; the pick stays for another press.
     const written = await answerViaCli($, home, id, key, text).catch((error: unknown) => {
@@ -685,7 +732,13 @@ async function writeAnswer($: EngineInterface, home: string, id: string, key: st
     // The board takes the record on disk, whoever wrote it. The CLI stamps its own ts, who and session, so a copy made here
     // would differ from the file and redraw the pane on the next poll.
     const stored = parseAnswer(await readJson($, path), id)
-    if (stored !== undefined) await update($, board, prev => withAnswer(prev, stored))
+    // A written reply whose file does not read back yet still takes the card off the board: a copy made here stands in until a
+    // poll reads the file (withLocalAnswers), so the card does not come back active and a second press is not refused (pane-exec3-3).
+    // The copy carries the who the CLI stamped (panelWho), so a hand-off made before the file reads names the person as the
+    // CLI's own line does, not "unknown" (gauntlet 7 review F6).
+    const local: Answer = { id, key, by: 'panel', ts: pressedAt, ...(key === OTHER_KEY && text !== undefined ? { text } : {}) }
+    const shown = stored ?? (written ? { ...local, who: await panelWho($) } : undefined)
+    if (shown !== undefined) await update($, board, prev => withAnswer(prev, shown))
     // The CLI keeps the first reply: a refused one names the reply that holds the question, so the person knows which one stays.
     if (!written && stored !== undefined) $.ui.toast(t(lang, 'toast.replyHeld', { key: stored.key }))
     return written
@@ -731,6 +784,18 @@ async function answerViaCli($: EngineInterface, home: string, id: string, key: s
     throw new Error(`askaway answer failed: ${(run.stderr || run.stdout).trim()}`)
   }
   return written
+}
+
+// The who the CLI stamps on a panel answer (askaway.py's answerer_name, through answerWho): the stored name answerViaCli
+// sends as ASKAWAY_WHO, else this window's own ASKAWAY_WHO, which the CLI inherits, else the OS user name getpass.getuser()
+// reads from the environment (the first of LOGNAME, USER, LNAME and USERNAME set to a non-empty text), else "unknown".
+// getpass's last resort, the password database, is out of the pane's reach: with none of the four set, the copy says
+// "unknown" where the CLI may name the account.
+async function panelWho($: EngineInterface): Promise<string> {
+  const stored = await read($, whoAtom)
+  const askawayWho = stored ? stored : await $.env.get('ASKAWAY_WHO')
+  const users = await Promise.all([$.env.get('LOGNAME'), $.env.get('USER'), $.env.get('LNAME'), $.env.get('USERNAME')])
+  return answerWho(askawayWho, users.find(user => user !== undefined && user !== ''))
 }
 
 // Marks the card as leaving; writeAnswer's finally ends the fade, once the reply is written or when the press is refused or fails.
@@ -949,11 +1014,14 @@ function forgetLanded<V>(queue: Map<string, V>, landed: ReadonlyMap<string, V>):
 async function writeUnsaved($: EngineInterface, home: string): Promise<boolean> {
   if (unsaved.picks.size === 0 && unsaved.labels.size === 0) return true
   const batch: DraftChanges = { picks: new Map(unsaved.picks), labels: new Map(unsaved.labels) }
+  draftSaves += 1
   try {
     await saveDraft($, home, batch)
   } catch (error: unknown) {
     logFailure($, error)
     return false
+  } finally {
+    draftSaves -= 1
   }
   forgetLanded(unsaved.picks, batch.picks)
   forgetLanded(unsaved.labels, batch.labels)
@@ -963,6 +1031,9 @@ async function writeUnsaved($: EngineInterface, home: string): Promise<boolean> 
 // The poll's retry of the pending picks (H2). The person is told once while the write keeps failing; a write that lands
 // clears the mark.
 async function retryDraft($: EngineInterface, home: string): Promise<void> {
+  // A save of this window holds draft.lock now: the retry would only meet that lock and report a failure (pane-conc5-2). The
+  // changes the save did not take stay queued for the next poll.
+  if (draftSaves > 0) return
   if (await writeUnsaved($, home)) {
     draftFailing = false
     return
@@ -1122,12 +1193,17 @@ async function keepOther($: EngineInterface, id: string, text: string): Promise<
 }
 
 // Records every pending Other text through submitOther, one after another. An entry whose question is no longer open is
-// dropped, not recorded: the card it was typed on is gone.
-async function recordPendingOther($: EngineInterface, record: OtherRecord): Promise<void> {
-  const { open } = await snapshot($)
+// dropped, not recorded: the card it was typed on is gone. On a blur (`keepsSetAside`), a text a kept label sets aside
+// (flow.setsTypedOtherAside) stays pending, as its field is still on screen, so a later Submit all sends the text the field
+// shows (SPEC, Other; pane-exec3-1). A nav action drops it: Next and Back take the field off screen, and a pick, a jump or a
+// row's Submit chooses something else.
+async function recordPendingOther($: EngineInterface, record: OtherRecord, keepsSetAside = false): Promise<void> {
+  const { open, wizard } = await snapshot($)
   for (const [id, text] of [...pendingOther]) {
+    const isOpen = open.some(question => question.id === id)
+    if (keepsSetAside && isOpen && flow.setsTypedOtherAside(wizard, id)) continue
     pendingOther.delete(id)
-    if (open.some(question => question.id === id)) await submitOther($, id, text, record)
+    if (isOpen) await submitOther($, id, text, record)
   }
 }
 
@@ -1248,14 +1324,7 @@ export const register: Register = on => {
       $.ui.invalidate('ui.render')
       const ownSession = await $.session.id().catch(() => undefined)
       poller = $.clock.every(POLL_MS, () => {
-        if (polling) return
-        polling = true
-        report(
-          $,
-          pollInbox($, folder, ownSession).finally(() => {
-            polling = false
-          }),
-        )
+        if (polling === undefined) report($, pollAfterRunning($, folder, ownSession))
       })
     }
     return next(e)
@@ -1326,13 +1395,13 @@ export const register: Register = on => {
   })
 
   // The ring leaving the Other field: the move is passed on first, then the field's pending text is recorded, so a person
-  // who never pressed Keep keeps it. A move onto Submit all records nothing: its press records the text as the answer
+  // who never pressed Keep keeps it; a text a kept label sets aside stays pending for Submit all (recordPendingOther). A move onto Submit all records nothing: its press records the text as the answer
   // (submittedTypedOther), a kept label included. The hook never blocks, rewrites or re-targets the move.
   on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
     const isLeavingOther = leavesOtherText(focusedKey, e.element)
     focusedKey = e.element
     const result = await next(e)
-    if (isLeavingOther) await afterPendingOther($, async () => undefined)
+    if (isLeavingOther) await recordPendingOther($, flow.submittedOther, true).catch((error: unknown) => logFailure($, error))
     return result
   })
 

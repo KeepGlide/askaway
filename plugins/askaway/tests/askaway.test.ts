@@ -811,7 +811,7 @@ test('model: the footer reads the zero and the singular forms in both languages'
 
 // beta.35, item 1 and 2: the footer names the last answer's title whole (a clipped one as its whole question) and its option
 // label, never its letter.
-test('model: the footer names a long or clipped title of the last answer whole, and a question that is gone by its id and its letter', () => {
+test('model: the footer names a long or clipped title of the last answer whole, and a question that is gone as "Question closed" and its letter', () => {
   const long: Board = {
     questions: [parsedQuestion('q-f-000001', 1, { title: 'a'.repeat(60) })],
     answers: [answerOf('q-f-000001', 'A', FOOT_DAY - FOOT_MIN)],
@@ -825,7 +825,9 @@ test('model: the footer names a long or clipped title of the last answer whole, 
   }
   expect(footerText('en', clipped, FOOT_DAY)).toContain(`last: ${CLIPPED_TEXT} → Keep, 1 min ago`)
   const gone: Board = { questions: [], answers: [answerOf('q-f-000009', 'B', FOOT_DAY - FOOT_MIN)], delivered: [] }
-  expect(footerText('en', gone, FOOT_DAY)).toContain('last: q-f-000009 → B, 1 min ago')
+  // pane-rule1-5: a question that is gone is named as its History row names it, never by its raw id.
+  expect(footerText('en', gone, FOOT_DAY)).toContain('last: Question closed → B, 1 min ago')
+  expect(footerText('en', gone, FOOT_DAY)).not.toContain('q-f-000009')
 })
 
 test('model: each explanation section reads in the chosen language and shows only the fields set', () => {
@@ -6362,9 +6364,9 @@ test('gauntlet 4, B2 M13: the footer names an Other answer by its typed text, an
   expect(footerText('pt', board, now)).toContain('última: Pick the queue → “lavanda”, há 12 min')
   expect(footerText('en', board, now)).not.toContain('other')
   const gone: Board = { questions: [], answers: board.answers, delivered: [] }
-  expect(footerText('en', gone, now)).toContain('last: q-b2-000001 → “lavanda”, 12 min ago')
+  expect(footerText('en', gone, now)).toContain('last: Question closed → “lavanda”, 12 min ago')
   const blank: Board = { questions: [], answers: [answerOf('q-b2-000001', 'other', now - 12 * FOOT_MIN)], delivered: [] }
-  expect(footerText('pt', blank, now)).toContain('última: q-b2-000001 → Outra…, há 12 min')
+  expect(footerText('pt', blank, now)).toContain('última: Pergunta encerrada → Outra…, há 12 min')
 })
 
 // beta.35, item 1: a clipped title (the CLI's 60 characters, its last one "…") is drawn whole in the tree row, the card title row
@@ -7196,6 +7198,272 @@ test('gauntlet 7 own-1 model: History and the footer name a marked recommended l
   }
 })
 
+test('gauntlet 7 pane-exec3-1: with a kept label, Tab from the Other field onto Back, then Submit all, sends the text the field shows', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { writes } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'other-q-l1-aaaaaa' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'First text' })
+  // The click picks the kept label; then the person types a new text in the field under its new round and Tabs to Back.
+  await pane.press({ key: 'other-q-l1-aaaaaa' })
+  await moveRing($, 'other-input-q-l1-aaaaaa-1')
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa-1', text: 'Use a fork', kind: 'change' })
+  await moveRing($, 'nav-back')
+  // The blur records nothing under the kept label: the button still draws the label as the pick.
+  expect(JSON.stringify(await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).toContain('✓ C · First text')
+  await pane.press({ key: 'submit-all' })
+  expect(writes).toEqual([path('a', 'q-l1-aaaaaa')])
+  expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ key: 'other', text: 'Use a fork' })
+  await pane.unmount()
+})
+
+test('gauntlet 7 pane-exec3-1: with a kept label, Esc out of the Other field, then Submit all, sends the text the field shows', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { writes } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'other-q-l1-aaaaaa' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'First text' })
+  await pane.press({ key: 'other-q-l1-aaaaaa' })
+  await moveRing($, 'other-input-q-l1-aaaaaa-1')
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa-1', text: 'Use a fork', kind: 'change' })
+  await moveRing($)
+  await pane.press({ key: 'submit-all' })
+  expect(writes).toEqual([path('a', 'q-l1-aaaaaa')])
+  expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ key: 'other', text: 'Use a fork' })
+  await pane.unmount()
+})
+
+test('gauntlet 7 pane-exec3-1: a text a kept label set aside is dropped once Next takes its field off screen: Submit all then sends the label', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  const { writes, clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'other-q-l1-aaaaaa' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'First text' })
+  await pane.press({ key: 'other-q-l1-aaaaaa' })
+  await clock.advance(350)
+  await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
+  await clock.advance(350)
+  await pane.press({ key: 'nav-back' })
+  await clock.advance(350)
+  await moveRing($, 'other-input-q-l1-aaaaaa-1')
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa-1', text: 'Second text', kind: 'change' })
+  await moveRing($, 'nav-next')
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
+  await pane.press({ key: 'submit-all' })
+  expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb')])
+  expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ key: 'other', text: 'First text' })
+  await pane.unmount()
+})
+
+test('gauntlet 7 pane-exec3-2: a list --open run that fails is logged with its exit code and stderr, as is one that cannot start or prints no list', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone' })]])
+  const faults: (() => unknown)[] = [
+    () => {
+      throw new Error('spawn python3 ENOENT')
+    },
+    () => ({ value: { exitCode: 2, stdout: '', stderr: 'askaway: state folder unreadable\n', isStdoutTruncated: false, isStderrTruncated: false } }),
+    () => cliReply('not a list'),
+  ]
+  // Registered before the host stub: each `list` call takes the next fault.
+  on('process.run', {}, (_$, e, next) => {
+    const fault = e.argv[2] === 'list' ? faults.shift() : undefined
+    return fault === undefined ? next(e) : fault()
+  })
+  const { logs, clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  await clock.advance(5000)
+  await clock.advance(5000)
+  // A handler that throws is skipped by the kit, and the run rejects with the kit's own words: the log names the run that did not start.
+  expect(logs).toHaveLength(3)
+  expect(logs[0]?.startsWith('askaway: askaway list --open did not start: ')).toBe(true)
+  expect(logs.slice(1)).toEqual([
+    'askaway: askaway list --open failed (exit 2): askaway: state folder unreadable',
+    'askaway: askaway list --open failed (exit 0): not a list',
+  ])
+})
+
+test('gauntlet 7 pane-exec3-3: a written reply whose file does not read back takes the card off the board, and is not pressed twice', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const holds: Holds = {}
+  const { writes, toasts, calls } = stubHost(on, files, true, {}, holds)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
+  holds.failReadOf = path('a', 'q-l1-aaaaaa')
+  await pane.press({ key: 'submit-all' })
+  expect(writes).toEqual([path('a', 'q-l1-aaaaaa')])
+  expect(holds.failReadOf).toBeUndefined()
+  expect(await pane.find({ type: 'Button', key: 'opt-q-l1-aaaaaa-B' })).toBeUndefined()
+  expect(await pane.find({ type: 'Button', key: 'submit-all' })).toBeUndefined()
+  expect(calls.filter(call => call.argv[2] === 'answer')).toHaveLength(1)
+  expect(toasts).toEqual([])
+  expect((await textsOf(pane)).some(text => text.startsWith('○ Title q-l1-aaaaaa ✓ Rewrite · enviada '))).toBe(true)
+  await pane.unmount()
+})
+
+test('gauntlet 7 pane-exec3-4: a clipped title is drawn whole in the card title row itself, read by its own key', async ($, on) => {
+  const files = new Map([[path('q', 'q-t1-aaaaaa'), question('q-t1-aaaaaa', 1000, { title: CLIPPED_TITLE, question: CLIPPED_TEXT })]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  for (const surface of SURFACES) {
+    const pane = await mountPane($, surface)
+    const row = nodesOf(await pane.drawn()).find(node => keyOfNode(node) === 'title-q-t1-aaaaaa')
+    const text = row?.type === 'Markdown' ? plainMarkdown(String((row.props as Record<string, unknown>).text)) : textOfNode(row)
+    expect(text).toContain(CLIPPED_TEXT)
+    expect(text).not.toContain(CLIPPED_TITLE)
+    await pane.unmount()
+  }
+})
+
+test('gauntlet 7 pane-conc5-1: a press runs its own list --open and refuses on it, though a poll stamps an older run as the press starts', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone' })]])
+  const pollList = gate()
+  let isPollListHeld = false
+  let nowsSincePress: number | undefined
+  // Registered before the host stub. The poll's run waits for the gate, then prints the list from before the session ended.
+  on('process.run', {}, async (_$, e, next) => {
+    if (e.argv[2] !== 'list' || !isPollListHeld) return next(e)
+    isPollListHeld = false
+    await pollList.promise
+    return cliReply(JSON.stringify({ items: [{ id: 'q-l1-aaaaaa' }] }))
+  })
+  // The poll's older run lands at the press's second clock read: the gap in which the press used to clear the throttle stamp.
+  on('clock.now', {}, async (_$, e, next) => {
+    if (nowsSincePress !== undefined) nowsSincePress += 1
+    if (nowsSincePress === 2) {
+      pollList.open()
+      for (let tick = 0; tick < 50; tick++) await Promise.resolve()
+    }
+    return next(e)
+  })
+  const { writes, ended, calls, clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
+  isPollListHeld = true
+  await clock.advance(30_000)
+  ended.add('q-l1-aaaaaa')
+  const listRuns = calls.filter(call => call.argv[2] === 'list').length
+  nowsSincePress = 0
+  await pane.press({ key: 'submit-all' })
+  pollList.open()
+  await clock.settle()
+  expect(writes).toEqual([])
+  expect(calls.filter(call => call.argv[2] === 'list').length).toBe(listRuns + 1)
+  await pane.unmount()
+})
+
+test('gauntlet 7 pane-conc5-2: the poll retry reports no failure while this window saves a pick under draft.lock, and the pick saves', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const save = gate()
+  let isSaveHeld = true
+  const locks = new Set<string>()
+  // Registered before the host stub: mkdir and rmdir hold and free draft.lock as on disk, and the pick's temp write waits.
+  on('process.run', {}, (_$, e, next) => {
+    const [command = '', target = ''] = e.argv
+    if (command === 'mkdir') {
+      if (locks.has(target)) return cliReply('', 1)
+      locks.add(target)
+      return cliReply('')
+    }
+    if (command === 'rmdir') {
+      locks.delete(target)
+      return cliReply('')
+    }
+    return command === 'find' ? cliReply('') : next(e)
+  })
+  on('fs.write', {}, async (_$, e, next) => {
+    if (isSaveHeld && e.path.includes('.draft.json.')) {
+      isSaveHeld = false
+      await save.promise
+    }
+    return next(e)
+  })
+  const { toasts, drafts, logs, clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
+  await clock.advance(5000)
+  expect(toasts).toEqual([])
+  save.open()
+  await clock.settle()
+  await clock.advance(5000)
+  expect(toasts).toEqual([])
+  expect(logs).toEqual([])
+  expect(JSON.parse(drafts[drafts.length - 1] ?? '{}').picks).toEqual({ 'q-l1-aaaaaa': { key: 'B' } })
+  await pane.unmount()
+})
+
+test('gauntlet 7 pane-conc5-3: the poll after a Dismiss waits for the interval poll that is running, so a new question is toasted once', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone' })]])
+  const holds: Holds = {}
+  const { toasts, ended, clock } = stubHost(on, files, true, {}, holds)
+  ended.add('q-l1-aaaaaa')
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  files.set(path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000))
+  const listing = gate()
+  holds.listAnswers = listing.promise
+  await clock.advance(5000)
+  // The interval poll waits on its a/ listing; the poll after the Dismiss lists nothing until that poll has ended.
+  holds.listed = []
+  await pane.press({ key: 'dismiss-ended' })
+  await clock.settle()
+  expect(holds.listed).toEqual([])
+  listing.open()
+  await clock.settle()
+  // The interval poll goes on (its d/ listing), and the Dismiss poll lists the folder after it.
+  expect(holds.listed[0]).toBe(`${STATE}/d`)
+  expect(holds.listed.indexOf(`${STATE}/q`)).toBeGreaterThan(0)
+  expect(toasts.filter(text => text.startsWith('Nova pergunta'))).toEqual(['Nova pergunta: Title q-l2-bbbbbb'])
+  expect(files.has(path('q', 'q-l1-aaaaaa'))).toBe(false)
+  await pane.unmount()
+})
+
+// Gauntlet 7, review-fix package P6 (the pane).
+
+// The lines a session is handed for a reply whose file did not read back after the press, the polls not seeing it either:
+// only the copy the press made stands for the reply, so the hand-off line names the who that copy carries.
+async function handedUnreadReply($: Engine, on: On, stored: Record<string, unknown>, env: Record<string, string>): Promise<string[]> {
+  const id = 'q-l1-aaaaaa'
+  const files = new Map([[path('q', id), question(id, 1000, { session: SELF })]])
+  const holds: Holds = {}
+  const { submits, clock } = stubHost(on, files, true, stored, holds, env)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: `opt-${id}-B` })
+  holds.failReadOf = path('a', id)
+  await pane.press({ key: 'submit-all' })
+  expect(holds.failReadOf).toBeUndefined()
+  files.delete(path('a', id))
+  await clock.advance(5000)
+  await clock.advance(5000)
+  await pane.unmount()
+  return submits
+}
+
+const handedLineBy = (who: string): string =>
+  `Answered via panel by ${JSON.stringify(who)}: B · "Rewrite". Askaway question q-l1-aaaaaa ("Title q-l1-aaaaaa"). (you were using A · "Keep")`
+
+test('gauntlet 7 review F6: a written reply that does not read back is handed with the stored name, which the CLI stamps', async ($, on) => {
+  expect(await handedUnreadReply($, on, { who: 'Ana' }, { ASKAWAY_WHO: 'Bia', USER: 'jdoe' })).toEqual([handedLineBy('Ana')])
+})
+
+test("gauntlet 7 review F6: with no stored name, the copy carries the window's ASKAWAY_WHO, cleaned as the CLI cleans it", async ($, on) => {
+  expect(await handedUnreadReply($, on, {}, { ASKAWAY_WHO: '  Ana\tSilva  ', USER: 'jdoe' })).toEqual([handedLineBy('Ana Silva')])
+})
+
+test('gauntlet 7 review F6: a skipped name and no ASKAWAY_WHO give the OS user name, from the first of LOGNAME and USER that is set', async ($, on) => {
+  expect(await handedUnreadReply($, on, { who: '' }, { LOGNAME: '', USER: 'jdoe', USERNAME: 'other' })).toEqual([handedLineBy('jdoe')])
+})
+
 test('gauntlet 7 review F7 model: optionLabelOf takes recommended markers off the start of a label, in English and Portuguese, and keeps a bare leading word', () => {
   const en = (text: string): string => optionLabelOf('en', { key: 'A', label: text })
   const pt = (text: string): string => optionLabelOf('pt', { key: 'A', label: text })
@@ -7282,4 +7550,33 @@ test('gauntlet 7 review F7 model: History and the footer name a label marked at 
   expect(lineOf('pt', 'B').startsWith('(Recomendada) · ')).toBe(true)
   expect(footerText('en', boardOf('B'), now)).toMatch(/ → \(Recommended\), /)
   expect(footerText('pt', boardOf('B'), now)).toMatch(/ → \(Recomendada\), /)
+})
+
+test('gauntlet 7 review F8: a list --open run that keeps failing the same way is logged once, cut to 500 characters, and again once a run succeeds', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone' })]])
+  let stderr = `askaway: ${'x'.repeat(5000)}\n`
+  let isListFailing = true
+  // Registered before the host stub: a `list` call fails with `stderr` while the test says so, else the stub lists.
+  on('process.run', {}, (_$, e, next) => {
+    if (e.argv[2] !== 'list' || !isListFailing) return next(e)
+    return { value: { exitCode: 2, stdout: '', stderr, isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  const { logs, clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  await clock.advance(5000)
+  await clock.advance(5000)
+  const detail = `failed (exit 2): askaway: ${'x'.repeat(5000)}`
+  const cut = `askaway: askaway list --open ${detail.slice(0, 500)}…`
+  expect(logs).toEqual([cut])
+  // A run that succeeds ends the failure; the same failure after it is logged again, once (the next run is due 30 s later).
+  isListFailing = false
+  await clock.advance(5000)
+  isListFailing = true
+  await clock.advance(30_000)
+  await clock.advance(5000)
+  expect(logs).toEqual([cut, cut])
+  // Another failure text is logged at once.
+  stderr = 'askaway: state folder unreadable\n'
+  await clock.advance(5000)
+  expect(logs).toEqual([cut, cut, 'askaway: askaway list --open failed (exit 2): askaway: state folder unreadable'])
 })

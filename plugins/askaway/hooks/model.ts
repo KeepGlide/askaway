@@ -756,12 +756,12 @@ export function footerText(lang: Lang, board: Board, now: number, cleared: reado
   return parts.filter((part): part is string => part !== undefined).join(' · ')
 }
 
-// The last answer as the footer names it: its question's title whole (its id when the question is gone), the label of the
-// option it chose (an Other reply its typed text), and its age.
+// The last answer as the footer names it: its question's title whole ("Question closed" when the question is gone, as its
+// History row says), the label of the option it chose (an Other reply its typed text), and its age.
 function lastAnswerText(lang: Lang, answer: Answer, question: Question | undefined, now: number): string {
   const label = question === undefined ? '' : questionLabel(localizedQuestion(question, lang))
   return t(lang, 'footer.last', {
-    title: label === '' ? answer.id : label,
+    title: label === '' ? t(lang, 'history.questionClosed') : label,
     label: answerNameOf(lang, answer, question),
     age: ageLabel(lang, answer.ts, now),
   })
