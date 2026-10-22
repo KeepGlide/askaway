@@ -89,17 +89,18 @@ The CLI prints one JSON line: `{"id":"q-...","recommended":"A","title":"...","ac
   Stop and report it; do not wait.
 - `"action":"pause"` with an `error` holding an OS error text means a high-risk question
   was not written after four tries, and nothing was filed. Stop and report it; do not wait.
-- Pass the JSON on stdin with a quoted heredoc (`<<'JSON'`), as above. The shell
-  expands nothing inside it, so apostrophes and backticks are safe. The stdin
-  must be UTF-8 JSON: a leading byte order mark is dropped, and input that is not
-  UTF-8 is refiled as `the entry must be UTF-8 JSON`. Use `--json '<JSON>'` only
-  for text without an apostrophe; inside double quotes the shell would run a
-  backticked name as a command. With an apostrophe in a field:
+- While no pause holds your calls, pass the JSON on stdin with a quoted heredoc
+  (`<<'JSON'`), as above. The shell expands nothing inside it, so apostrophes are
+  safe. The stdin must be UTF-8 JSON: a leading byte order mark is dropped, and
+  input that is not UTF-8 is refiled as `the entry must be UTF-8 JSON`.
+- While a pause holds your calls, the pause guard denies the heredoc and passes only
+  `ask --json '<JSON>'`, which also works without a pause. Keep the JSON in single
+  quotes, write an apostrophe as the JSON escape `\u0027`, and never write `<<` in
+  it: the guard then reads the whole command as code, and a plain word such as away
+  denies it.
 
   ```bash
-  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask <<'JSON'
-  {"title": "Cache", "question": "Don't drop the cache?", ...}
-  JSON
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title": "Cache", "question": "Don\u0027t drop the cache?", ...}'
   ```
 
   The other fields follow the worked example below.
@@ -121,10 +122,10 @@ The CLI prints one JSON line: `{"id":"q-...","recommended":"A","title":"...","ac
   `high`, and a repeat of a paused question gets `pause` whatever its own risk. Do not
   file it again; end the turn as for a pause (a subagent hands back instead, see the next rule).
 - A subagent that files a `pause` question hands back what it has and stops: its final
-  report names the open question id and what remains. Unlike the main thread, it does not
-  poll `status <id>` and does not run `wait` while paused. The pause guard holds its calls,
-  and `wait` writes no delivery marker, so it would stay held. The answer reaches the main
-  thread, whose delivery hook passes it on.
+  report names the open question id and what remains. Like the main thread, it ends the
+  turn; at most one `status <id>`, no `wait`. The delivery marker records who received the
+  answer: the subagent's pause ends only on a delivery to that subagent, as hook context
+  after its own `status` call. The main thread receives its own copy, which leaves that pause in place.
 - A subagent that files a non-pause question learns the reply with the plugin script's wait command
   (`wait <id> --timeout <s>`) and uses its `line` field, since the delivery hook skips subagents.
 - An answer arrives as a line in your context. It opens with who answered, then the
@@ -159,6 +160,9 @@ The CLI prints one JSON line: `{"id":"q-...","recommended":"A","title":"...","ac
   backticks, such as `software-test-engineer` or `hooks/pane.tsx`. The panel
   draws these names in bold and does not draw the backticks.
   A slash command may stand bare (`/reload-plugins`).
+- Never wrap the `askaway.py` script with `answer`, `away on`, `away off` or `prune --force`
+  in backticks or `$(...)` inside the JSON, in either filing form: the guard reads that
+  span as a command and denies the call. Name the subcommand alone, such as `answer`.
 
 ## Worked example
 
