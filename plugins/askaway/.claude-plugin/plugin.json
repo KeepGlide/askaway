@@ -1,6 +1,6 @@
 {
   "name": "askaway",
-  "version": "0.4.0-beta.41",
+  "version": "0.4.0-beta.42",
   "description": "Askaway: a question inbox for Claude Code. Agents file questions with a recommended default while you are away; you answer them one at a time in a real panel, all at once per group.",
   "author": { "name": "Sophia Phillipa (KeepGlide)", "url": "https://keepglide.com" },
   "homepage": "https://github.com/KeepGlide/askaway",

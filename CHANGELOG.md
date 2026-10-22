@@ -2,10 +2,14 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.41, set by the beta.41 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.42, set by the beta.42 release commit.
 Commit hashes name the change in `git log`.
 
 ## [Unreleased]
+
+## [0.4.0-beta.42] - 2026-10-22
+
+Askaway 0.4.0-beta.42 stops the Bash guard's scanner from reading the script of `sed -i` as a file it writes, and lists the data edits the frozen copy still over-denies (ff413d3).
 
 ### Fixed
 - The Bash guard's scanner no longer reads the script of `sed -i` as a file it writes. Its first operand is the script, unless `-e`, `-f`, `--expression` or `--file` gives the script, or a word may expand into more words or an option (a `$`, a backquote, a brace, a glob or an extglob outside quotes, as in `sed -i f {-e,s/a/b/}` or `sed -i f -@(e)`, which edit `f`), so a glob in a quoted script (`sed -i '1s|.*|x|' notes.md` run from `~` or `~/.claude`) no longer reaches the state folder (`_sed_files`, `SED_SCRIPT_OPTION`, `_may_expand`). Every file operand still counts. The frozen copy still denies such a command until it is removed.
@@ -716,7 +720,8 @@ Third gauntlet round (40 personas over betas 14 to 25): 150 findings, 64 adopted
 - The README describes the away flow and what each card carries, matches every claim to the plugin, and adds a screenshot (150ad49, 6020300).
 - SPEC.md records the 0.4.0-beta.5 live check of the pane layout (0f43a9f).
 
-[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.41...HEAD
+[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.42...HEAD
+[0.4.0-beta.42]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.41...v0.4.0-beta.42
 [0.4.0-beta.41]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.40...v0.4.0-beta.41
 [0.4.0-beta.40]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.39...v0.4.0-beta.40
 [0.4.0-beta.39]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.38...v0.4.0-beta.39

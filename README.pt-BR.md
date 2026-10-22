@@ -50,7 +50,7 @@
 
 ## 📌 Status
 
-**Beta** (`0.4.0-beta.41`, acesso antecipado). O Askaway segue o [SemVer](https://semver.org/): enquanto a versão for `0.y.z`, qualquer coisa pode mudar a qualquer momento. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
+**Beta** (`0.4.0-beta.42`, acesso antecipado). O Askaway segue o [SemVer](https://semver.org/): enquanto a versão for `0.y.z`, qualquer coisa pode mudar a qualquer momento. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
 > A API de mods muda entre as versões do Claude Code, então espere mudanças até uma versão estável.
@@ -750,9 +750,9 @@ Encontrou um? [Abra uma issue](https://github.com/KeepGlide/askaway/issues/new).
 | Categoria | Testes |
 |---|---|
 | Mod (TypeScript), `plugins/askaway/tests/` | 508 |
-| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 1203 |
+| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 1236 |
 
-Contagem Python de `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts`, no commit `4a64166`, em 2026-10-22. A contagem do mod vem de uma execução nova de `claude plugin test plugins/askaway` no mesmo commit (o runner não tem modo de coleta).
+Contagem Python de `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts`, no commit `ff413d3`, em 2026-10-22. A contagem do mod vem de uma execução nova de `claude plugin test plugins/askaway` no mesmo commit (o runner não tem modo de coleta).
 
 ## 🔧 Desenvolvimento
 
@@ -790,6 +790,7 @@ As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md), no formato 
 | beta.36 a beta.39 | 2026-10-21 a 10-22 | A pausa segura só o agente que perguntou (`stamp-asker`); o caminho de sessões do macOS; falhar fechado com `onFailure: block`; a cópia congelada do guarda; esmaecido até gravar; entrega ao subagente que perguntou. |
 | beta.40 | 2026-10-22 | Uma cópia de cada resposta por destinatário (`d/` e `s/`); a marca de recomendada desenhada uma vez; comandos com mais de 64K caracteres negados; um diretório de trabalho apagado não libera mais; `MultiEdit` coberto; um evento de gancho ilegível negado. |
 | beta.41 | 2026-10-22 | O README registra as decisões, as escolhas e os limites; o histórico público foi reescrito com texto neutro, então todos os shas de commits e tags mudaram. |
+| beta.42 | 2026-10-22 | O scanner do guarda lê o primeiro operando de `sed -i` como o script, não como um arquivo que ele grava; Problemas conhecidos lista as edições de dados que a cópia congelada ainda nega a mais. |
 
 ## 🤝 Contribuição
 
