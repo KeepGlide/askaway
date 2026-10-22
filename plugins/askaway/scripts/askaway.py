@@ -324,6 +324,9 @@ PREFIX_WORDS: Final = frozenset({"!", "{", "do", "elif", "else", "if", "then", "
 WRAPPER_ARG: Final = re.compile(r"-\S*|[0-9.]+[smhd]?")
 ASSIGNMENT: Final = re.compile(r"([A-Za-z_]\w*)=(.*)", re.DOTALL)
 SED_IN_PLACE: Final = re.compile(r"-[A-Za-z]*i|--in-place")
+SED_SCRIPT_OPTION: Final = re.compile(r"-[A-Za-z]*[ef]|--e|--fi")  # -e, -f, --expression, --file: sed takes its script from an option
+LITERAL_PIECE: Final = re.compile(r"'[^']*'|\\.|\"[^\"$`]*\"", re.DOTALL)  # a piece of a word the shell does not expand
+EXTGLOB_HEADS: Final = ("@", "+", "!")  # @(...), +(...), !(...): the ? and * heads are globs already
 PY_VALUE_OPTIONS: Final = frozenset({"-W", "-X"})
 MKTEMP_HOME: Final = re.compile(r"\$\(mktemp(?:\s[^()]*)?\)")
 EXPANSION: Final = re.compile(r"[$`*?\[{]")
@@ -2569,6 +2572,23 @@ def _edits_in_place(name: str, args: Sequence[str]) -> bool:
     return name == "sed" and any(SED_IN_PLACE.fullmatch(arg) for arg in args)
 
 
+def _may_expand(raw: str) -> bool:
+    """Can the shell turn this word into more words or an option: a $, a backtick, a brace or a glob outside quotes, or
+    an extglob (-@(e) may match a file named -e; the tokens read its ( as an operator, so the word ends in its head)?
+    A $'...' text counts, as the scan does not decode it."""
+    bare = SHELL_PIECE.sub(lambda piece: "" if LITERAL_PIECE.fullmatch(piece[0]) else piece[0], raw)
+    return EXPANSION.search(bare) is not None or bare.endswith(EXTGLOB_HEADS)
+
+
+def _sed_files(args: Sequence[str], raw: Sequence[str]) -> list[str]:
+    """The files a sed -i edits: its operands less the first, which is the script. Every operand counts when an option
+    gives the script (SED_SCRIPT_OPTION) or a word may expand into more words or an option (`sed -i f {-e,s/a/b/}`
+    edits f). A glob in a quoted script ('1s|.*|x|') is no path."""
+    operands = [arg for arg in args if not arg.startswith("-")]
+    every = any(SED_SCRIPT_OPTION.match(arg) for arg in args) or any(map(_may_expand, raw))
+    return operands if every else operands[1:]
+
+
 def _operands_and_folder(args: Sequence[str]) -> tuple[list[str], str | None]:
     """The operands of a mv or ln, and the folder that -t or --target-directory names (None without one). A -S or
     --suffix takes the next word as its value, so that word is no operand."""
@@ -2601,16 +2621,18 @@ def _write_operands(name: str, args: Sequence[str]) -> list[str]:
     return [*operands, folder] if folder else operands
 
 
-def _command_targets(name: str, args: Sequence[str]) -> list[tuple[str, bool]]:
+def _command_targets(name: str, args: Sequence[str], raw: Sequence[str]) -> list[tuple[str, bool]]:
     """The operands a command writes to, each with whether the command removes what it names: a delete's operands,
-    a mv's sources (moved away, so a folder above a state folder counts), sed -i's and dd's of= targets, and the
-    folder a cp, ln or install -t names, even glued to its option (-tDIR, --target-directory=DIR)."""
+    a mv's sources (moved away, so a folder above a state folder counts), sed -i's files (not its script) and dd's
+    of= targets, and the folder a cp, ln or install -t names, even glued to its option (-tDIR, --target-directory=DIR)."""
     if name == "dd":
         return [(arg[3:], False) for arg in args if arg.startswith("of=")]
     if name == "mv":
         return _move_targets(args)
+    if _edits_in_place(name, args):
+        return [(arg, False) for arg in _sed_files(args, raw)]
     operands = _write_operands(name, args)
-    if name in WRITE_COMMANDS or name in DELETE_COMMANDS or _edits_in_place(name, args):
+    if name in WRITE_COMMANDS or name in DELETE_COMMANDS:
         return [(arg, name in DELETE_COMMANDS) for arg in operands]
     return []
 
@@ -2618,7 +2640,8 @@ def _command_targets(name: str, args: Sequence[str]) -> list[tuple[str, bool]]:
 def _write_targets(argv: Sequence[str], writes: Sequence[str]) -> list[tuple[str, bool]]:
     """The unquoted words a command writes to (redirections and operands), each with whether it removes what it names."""
     name = _command_name(argv)
-    return [(_unquote(word), False) for word in writes] + _command_targets(name, [_unquote(word) for word in argv[1:]])
+    return [(_unquote(word), False) for word in writes] + _command_targets(
+        name, [_unquote(word) for word in argv[1:]], argv[1:])
 
 
 def _state_roots() -> tuple[str, ...]:

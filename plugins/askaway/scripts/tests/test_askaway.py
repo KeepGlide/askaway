@@ -5629,6 +5629,80 @@ def test_a_heredoc_terminator_bash_does_not_join_keeps_the_body_data(command, ca
     assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
 
 
+# Data edits the guard denied in a review round. The frozen copy denies each (SPEC.md, Backstop); the scanner alone
+# passes all but the copy after a cd to a variable, which it refuses by design in a command naming askaway (STATE_HINT).
+SED_GLOB_EDIT = ("cd ~/.claude && sed -i '204s|.*|Release: 1.2.3, tag `v1.2.3`, pushed.|' notes/report.md"
+                 " && git status --short -- plugins/askaway notes/report.md")
+LEDGER_APPEND = ("cd /tmp/scratch && cat >> ledger.md <<'EOF'\n## Review R2: APPROVE\n"
+                 "Second look: an exported GIT_CONFIG is not seen by the state scan (no execution vector).\nEOF\n"
+                 "echo '- R2 APPROVE, gate green' >> resume-brief.md")
+TEST_FILE_APPEND = ("cd ~/src/askaway && cat >> plugins/askaway/tests/askaway.test.ts <<'EOF'\n"
+                    "test('a written answer keeps the window\\'s name', () => {\n"
+                    "  expect(line).toBe('Answered via panel by Ana; askaway list --open shows it')\n})\nEOF")
+COPY_AFTER_VARIABLE_CD = "P=/tmp/scratch; cd \"$SRC\" && cp $P/askaway.py $P/red/scripts/askaway.py"
+SCANNER_PASSES = {"sed-script-glob": SED_GLOB_EDIT, "sed-script-glob-home": "cd ~ && sed -i '1s|.*|# Notes|' notes.md",
+                  "sed-double-quoted-script": 'cd ~/.claude && sed -i "1s|.*|x|" notes.md',
+                  "sed-follow-symlinks": "cd ~/.claude && sed -i --follow-symlinks '1s|.*|x|' notes.md",
+                  "ledger-heredoc": LEDGER_APPEND, "test-file-heredoc": TEST_FILE_APPEND}
+
+
+@pytest.mark.parametrize(("command", "reason"), [
+    *[(command, askaway.STATE_DENIED) for command in [SED_GLOB_EDIT, LEDGER_APPEND, COPY_AFTER_VARIABLE_CD]],
+    (TEST_FILE_APPEND, askaway.ANSWER_DENIED),
+], ids=["sed-script-glob", "ledger-heredoc", "copy-after-variable-cd", "test-file-heredoc"])
+def test_the_frozen_copy_still_denies_these_data_edits(command, reason, capsys, monkeypatch):
+    assert askaway._baseline_guard().bash_tamper_reason(command) == reason
+    assert bash_denial(capsys, monkeypatch, command) == reason
+
+
+@pytest.mark.usefixtures("scanner_only")  # the frozen copy over-denies these: sed's script read as a path, a quoted body read as commands
+@pytest.mark.parametrize("command", SCANNER_PASSES.values(), ids=SCANNER_PASSES.keys())
+def test_the_scanner_lets_these_data_edits_through(command, capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+@pytest.mark.usefixtures("scanner_only")  # no over-deny: the frozen copy denies these too, and would hide a scanner miss
+@pytest.mark.parametrize("command", [
+    f"sed 's/a/b/' -i {STATE_FOLDER}/q/q-1-abcdef.json",
+    f"sed -i -e 's/a/b/' {STATE_FOLDER}/q/q-1-abcdef.json",
+    f"sed -i --expression=s/a/b/ {STATE_FOLDER}/q/q-1-abcdef.json",
+    f"sed -ni -f fix.sed {STATE_FOLDER}/q/q-1-abcdef.json",
+    f"sed -i '' 's/a/b/' {STATE_FOLDER}/q/q-1-abcdef.json",
+    f"sed -i -- 's/a/b/' {STATE_FOLDER}/q/q-1-abcdef.json",
+    f"sed -i 's/a/b/' notes.md {STATE_FOLDER}/q/q-1-abcdef.json",
+    "cd ~/.claude && sed -i 's/a/b/' state/askaway/q/q-1-abcdef.json",
+    "cd ~/.claude && sed -i -e '1s|.*|x|' notes.md",
+    f"sed -i {STATE_FOLDER}/q/q-1-abcdef.json {{-e,s/a/b/}}",
+    f"sed -i {STATE_FOLDER}/q/q-1-abcdef.json $E s/a/b/",
+    f'sed -i {STATE_FOLDER}/q/q-1-abcdef.json "$@"',
+    f"sed -i {STATE_FOLDER}/q/q-1-abcdef.json -$'e' s/a/b/",
+    f"sed -i {STATE_FOLDER}/q/q-1-abcdef.json $(printf %s -e) s/a/b/",
+    f"sed -i {STATE_FOLDER}/q/q-1-abcdef.json `printf %s -e` s/a/b/",
+    f"shopt -s extglob\nsed -i {STATE_FOLDER}/q/q-1-abcdef.json -@(e) s/a/b/",
+    f"shopt -s extglob\nsed -i {STATE_FOLDER}/q/q-1-abcdef.json -+(e) s/a/b/",
+    f"shopt -s extglob\nsed -i {STATE_FOLDER}/q/q-1-abcdef.json -!(x) s/a/b/",
+], ids=["options-after", "expression", "expression-glued", "script-file", "bsd-suffix", "end-of-options", "second-file",
+        "relative", "expression-glob", "brace-option", "variable-option", "all-arguments", "ansi-c-option",
+        "substituted-option", "backquoted-option", "extglob-at", "extglob-plus", "extglob-not"])
+def test_sed_in_place_still_counts_every_file_it_may_edit(command, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED  # with -e or -f, the first operand is a file
+
+
+@pytest.mark.usefixtures("scanner_only")  # the frozen copy denies it too: an over-deny of both, see SPEC.md (Backstop)
+def test_the_scanner_still_refuses_a_copy_after_a_cd_to_a_variable_in_a_command_naming_askaway(capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, COPY_AFTER_VARIABLE_CD) == askaway.STATE_DENIED
+
+
+@pytest.mark.parametrize("command", [
+    "cp /tmp/scratch/askaway.py ~/src/askaway/plugins/askaway/scripts/askaway.py",
+    "cd ~/src/askaway && cp /tmp/scratch/askaway.py plugins/askaway/scripts/",
+    "R=~/src/askaway; cp /tmp/scratch/test_askaway.py $R/plugins/askaway/scripts/tests/",
+    "cd ~/src/askaway && cp -t plugins/askaway/scripts/ /tmp/scratch/askaway.py",
+], ids=["absolute", "relative", "variable", "target-folder"])
+def test_a_copy_into_the_plugin_folder_passes(command, capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
 def test_a_held_ask_is_told_the_inline_json_form_the_pause_lets_through(capsys, monkeypatch):
     pending_pause(capsys, monkeypatch)
     heredoc = f"python3 {askaway.SCRIPT_PATH} ask <<'JSON'\n{{\"title\": \"x\"}}\nJSON"

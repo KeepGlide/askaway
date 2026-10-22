@@ -7,6 +7,12 @@ Commit hashes name the change in `git log`.
 
 ## [Unreleased]
 
+### Fixed
+- The Bash guard's scanner no longer reads the script of `sed -i` as a file it writes. Its first operand is the script, unless `-e`, `-f`, `--expression` or `--file` gives the script, or a word may expand into more words or an option (a `$`, a backquote, a brace, a glob or an extglob outside quotes, as in `sed -i f {-e,s/a/b/}` or `sed -i f -@(e)`, which edit `f`), so a glob in a quoted script (`sed -i '1s|.*|x|' notes.md` run from `~` or `~/.claude`) no longer reaches the state folder (`_sed_files`, `SED_SCRIPT_OPTION`, `_may_expand`). Every file operand still counts. The frozen copy still denies such a command until it is removed.
+
+### Changed
+- SPEC.md (Backstop) and the README pair's Known issues list the data edits that the frozen copy over-denies, found in a review round: a quoted heredoc whose body line ends in `).`, which the copy reads as a `.` command, followed by a relative write; a quoted heredoc whose body has an odd number of single quotes, in a command that names askaway and holds the word answer; and the glob in a `sed -i` script. They also list the over-deny that the copy and the scanner share: a relative or `$VAR` write after `cd "$VAR"` in a command that names askaway.
+
 ## [0.4.0-beta.41] - 2026-10-22
 
 Askaway 0.4.0-beta.41 records its decisions, trade-offs and limits in the README pair, and ships from a rewritten public history.
