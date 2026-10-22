@@ -4,7 +4,7 @@
 State lives in one JSON file per item under ASKAWAY_HOME (default
 ~/.claude/state/askaway): q/ questions, a/ answers (first writer wins),
 d/ delivery markers and away.json. Contract: SPEC.md next to this plugin.
-Hook modes fail open: any error exits 0 with no output.
+Hook modes fail open: any error exits 0 with no output, except the pause guard, which denies the call.
 """
 import os
 import sys
@@ -224,12 +224,14 @@ TOO_DEEP_DENIED: Final = ("Denied: the Askaway guard could not read this command
                           "nesting goes deeper than 64 levels. Split it into simpler commands.")
 BACKSTOP_DENIED: Final = "Askaway guard backstop missing: reinstall the plugin (scripts/askaway_guard_baseline.py)."
 SCAN_DEPTH_LIMIT: Final = 64  # nested scans (command substitutions, eval, sh -c, comments) the scanner follows
-SCAN_SIZE_LIMIT: Final = 64 * 1024  # characters: a longer command is decided by the frozen guard alone
+SCAN_SIZE_LIMIT: Final = 64 * 1024  # characters: a longer command is not scanned, and is denied
+TOO_LONG_DENIED: Final = ("Denied: the Askaway guard does not read a command longer than 64K characters. Split it into "
+                          "smaller commands, or write large content to a file with the Write tool.")
 FORCE_PRUNE_DENIED: Final = ("Denied: prune --force is for the user's own terminal only. It removes an open question "
                              "whose session has not ended, which frees that session's pause. Do read-only work or "
                              "end the turn.")
 FORCE_FLAG: Final = "--force"  # argparse takes any unambiguous prefix of a long option, so a prefix counts too
-FILE_TOOLS: Final = frozenset({"Edit", "Write", "NotebookEdit"})
+FILE_TOOLS: Final = frozenset({"Edit", "Write", "NotebookEdit", "MultiEdit"})
 SHELL_TOOLS: Final = frozenset({"Bash", "Monitor"})  # Monitor runs its command under the Bash rules (tools reference)
 SHELL_OPERATORS: Final = frozenset({";", "&&", "||", "|", "&", "(", ")", "\n"})
 WRITE_REDIRECTS: Final = frozenset({">", ">>", ">&", ">|", "&>", "<>"})
@@ -243,9 +245,15 @@ SHELL_BLANKS: Final = re.compile(r"[ \t]*")
 SHELL_TOKEN: Final = re.compile(
     r"&&|\|\||>>|>&|>\||<<-?|<>|&>|(?P<comment>(?<![^ \t\n;&|(])#[^\n]*)"  # a # is a comment only at text start or after
     r"|[;&|<>()\n]")  # these, never after )
+CONTINUED_LINE_PIECE: Final = re.compile(  # the pieces _joined_lines steps over whole, and the escapes it reads
+    r"'[^']*'|\$'(?:\\.|[^'\\])*'"  # single-quoted text keeps a backslash-newline as it is
+    r"|\"(?:\\[^\n]|[^\"\\])*\""  # a double-quoted text with no continued line in it: its ' and # are no quote or comment
+    r"|(?<![^ \t\n;&|(])#[^\n]*"  # a comment ends at its newline, even after a backslash
+    r"|\\[\s\S]")  # an escape: a backslash-newline is a continued line; any other escape stays
 WRITE_COMMANDS: Final = frozenset({"cp", "mv", "tee", "touch", "ln", "install", "truncate", "rsync",
                                  "mkfifo", "mknod", "mkdir", "chmod", "chown", "chgrp", "setfacl", "chattr"})
 DELETE_COMMANDS: Final = frozenset({"rm", "unlink", "shred", "rmdir"})
+TARGET_FOLDER_COMMANDS: Final = frozenset({"cp", "ln", "install"})  # each also writes into the folder -t names
 PYTHON_NAME: Final = re.compile(r"python(?:3(?:\.\d+)?)?")
 CODE_RUNNERS: Final = frozenset({"perl", "ruby", "node", "bun", "deno", "php"})
 SHELL_NAMES: Final = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
@@ -259,7 +267,7 @@ SOURCE_NAMES: Final = frozenset({"source", "."})  # run in this shell, and the s
 CDPATH_VAR: Final = "CDPATH"  # cd searches these folders for a relative operand
 SHELL_VAR_NAMES: Final = frozenset({"declare", "typeset", "readonly"})  # set shell variables; only CDPATH matters to cd
 MOVE_TARGET_LONG: Final = re.compile(r"--t[\w-]*(?:=(.*))?", re.DOTALL)  # --target-directory, or a prefix of it
-MOVE_TARGET_SHORT: Final = re.compile(r"-[A-Za-z]*t(.*)", re.DOTALL)  # mv -t DIR, -tDIR, -vtDIR
+MOVE_TARGET_SHORT: Final = re.compile(r"-[A-RT-Za-z]*t(.*)", re.DOTALL)  # mv -t DIR, -tDIR, -vtDIR; in -St/x the t is -S's suffix
 LINK_COPY: Final = re.compile(r"-[A-Za-z]*[sadlP][A-Za-z]*|--(?:symbolic-link|archive|no-dereference|links)")  # cp, rsync keep links
 SUFFIX_OPTION: Final = re.compile(r"-[A-Za-z]*S|--su[\w-]*")  # mv and ln take the next word as a suffix, which is no operand
 PREFIX_WORDS: Final = frozenset({"!", "{", "do", "elif", "else", "if", "then", "until", "while"})
@@ -275,6 +283,14 @@ STATE_PIECES: Final = re.compile(  # the words state and askaway as one path, sp
 STATE_MENTION: Final = re.compile(r"state[\W_]*askaway|ASKAWAY_HOME")
 STATE_HINT: Final = re.compile(r"askaway|ASKAWAY_HOME|\bstate\b", re.IGNORECASE)  # a command with none of these cannot aim at the state folder
 PROSE_COMMANDS: Final = frozenset({"git", "gh"})  # a heredoc under these is a commit, PR or issue text, never code
+# The builtin subcommands whose heredoc is message text: an alias (git x) may run a shell, and neither git nor gh lets an
+# alias hide a builtin. A heredoc on the command itself is message text only when the command reads its message from
+# stdin (-F -, -F-, --file=-, --body-file -); a -c, --config-env or GIT_CONFIG* variable may define an alias or a hook.
+MESSAGE_SUBCOMMANDS: Final = {"git": frozenset({"commit", "merge", "notes", "tag"}),
+                              "gh": frozenset({"api", "gist", "issue", "pr", "release", "repo"})}
+STDIN_MESSAGE_WORDS: Final = frozenset({"-F-", "--file=-", "--body-file=-"})
+STDIN_MESSAGE_OPTIONS: Final = frozenset({"-F", "--file", "--body-file"})  # each followed by the word -
+GIT_CONFIG_ENV: Final = "GIT_CONFIG"  # GIT_CONFIG_COUNT, GIT_CONFIG_KEY_0, GIT_CONFIG_PARAMETERS, GIT_CONFIG_GLOBAL...
 STATE_FOLDER_PATH: Final = re.compile(r"\.claude[\W_]*state")  # ~/.claude/state, spelled out or with $HOME
 WRITE_CODE: Final = re.compile(r"open\(.*?(?:['\"][wax+]|>)|write|unlink|remove|rename|os\.replace\(|rmtree|copy|move"
                                r"|os\.(?:symlink|link)\(|symlink_to|hardlink_to"
@@ -2136,6 +2152,7 @@ def _word_end(text: str, pos: int) -> int:
 
 HEREDOC_QUOTES: Final = re.compile(r"['\"\\]")  # quoting a heredoc delimiter makes its body data
 HEREDOC_BODY_UNIT: Final = re.compile(r"`(?:\\.|[^`\\])*`")  # a backtick unit in an unquoted heredoc body
+CONTINUED_BODY_LINE: Final = re.compile(r"(?<!\\)(?:\\\\)*\\$")  # ends in an odd run of backslashes: bash joins the next line
 
 
 def _heredoc_units(body: str) -> list[str]:
@@ -2156,14 +2173,33 @@ def _heredoc_units(body: str) -> list[str]:
     return units
 
 
+def _body_lines(lines: Sequence[str], quoted: bool) -> list[tuple[str, int]]:
+    """A heredoc body's lines as bash reads them, each with the index of the last line of text it takes. In an unquoted
+    body a line that ends in an unescaped backslash joins the next one, the backslash and the newline removed, so a
+    terminator split that way (EO\\, then F) still ends the heredoc; a quoted body keeps every line as written."""
+    if quoted:
+        return [(line, index) for index, line in enumerate(lines)]
+    joined: list[tuple[str, int]] = []
+    head = ""
+    for index, line in enumerate(lines):
+        if CONTINUED_BODY_LINE.search(line) and index + 1 < len(lines):
+            head += line[:-1]
+            continue
+        joined.append((head + line, index))
+        head = ""
+    return joined
+
+
 def _heredoc_body(text: str, pos: int, opened: tuple[str, bool, bool]) -> tuple[list[str], int]:
     """(the units the body runs, the index of its terminator line's end) for the heredoc (word, quoted, tab-stripped)
     whose body starts at pos. A quoted delimiter makes the body data: _heredoc_code reads it when an interpreter runs it."""
     word, quoted, dashed = opened
     lines = text[pos:].split("\n")
-    stop = next((index for index, line in enumerate(lines) if (line.lstrip("\t") if dashed else line) == word), None)
-    body = lines if stop is None else lines[:stop]
-    end = len(text) if stop is None else pos + len("\n".join(lines[:stop + 1]))
+    body_lines = _body_lines(lines, quoted)
+    stop = next((index for index, (line, _) in enumerate(body_lines)
+                 if (line.lstrip("\t") if dashed else line) == word), None)
+    body = [line for line, _ in (body_lines if stop is None else body_lines[:stop])]
+    end = len(text) if stop is None else pos + len("\n".join(lines[:body_lines[stop][1] + 1]))
     return ([] if quoted else _heredoc_units("\n".join(body))), end
 
 
@@ -2202,10 +2238,17 @@ def _shell_tokens(text: str) -> list[tuple[str, str]] | None:
         pos = end
 
 
+def _joined_lines(command: str) -> str:
+    """The command with each backslash-newline outside single quotes and comments removed, as bash joins a continued
+    line. A quoted heredoc body is not told apart, so the scan reads this text only when the command does not read."""
+    return CONTINUED_LINE_PIECE.sub(lambda match: "" if match[0] == "\\\n" else match[0], command)
+
+
 class _Simple(NamedTuple):
     words: list[str]  # raw words of one simple command: assignments, wrappers, the command and its arguments
     writes: list[str]  # raw targets of its write redirections
     comments: list[str]  # text after a # the scan reads as a comment: also read as a command, in case the shell does
+    heredoc: bool  # does a << or <<- redirect the command's own stdin?
 
 
 def _simple_commands(tokens: Sequence[tuple[str, str]]) -> list[_Simple]:
@@ -2213,22 +2256,24 @@ def _simple_commands(tokens: Sequence[tuple[str, str]]) -> list[_Simple]:
     words: list[str] = []
     writes: list[str] = []
     comments: list[str] = []
+    heredoc = False
     redirect: str | None = None  # the redirection operator whose target is the next word
     for kind, value in tokens:
         if kind == "op" and value in SHELL_OPERATORS:
-            commands.append(_Simple(words, writes, comments))
-            words, writes, comments, redirect = [], [], [], None
+            commands.append(_Simple(words, writes, comments, heredoc))
+            words, writes, comments, heredoc, redirect = [], [], [], False, None
         elif kind == "comment":
             comments.append(value)
         elif kind == "op":
             redirect = value
+            heredoc = heredoc or value in ("<<", "<<-")
         elif redirect is None:
             words.append(value)
         else:
             if redirect in WRITE_REDIRECTS and not value.isdigit():
                 writes.append(value)
             redirect = None
-    commands.append(_Simple(words, writes, comments))
+    commands.append(_Simple(words, writes, comments, heredoc))
     return commands
 
 
@@ -2376,6 +2421,36 @@ def _inline_code(argv: Sequence[str]) -> str | None:
     return next((args[index + 1] for index, arg in enumerate(args[:-1]) if arg in ("-c", "-e")), None)
 
 
+def _subcommand(words: Sequence[str]) -> str | None:
+    """The subcommand of a git or gh command: its first word after the global options (-C takes a value), or None when
+    a -c or --config-env sets config before it."""
+    rest = iter(words)
+    for word in rest:
+        if word == "-c" or word.startswith("--config-env"):
+            return None
+        if word == "-C":
+            next(rest, None)
+        elif not word.startswith("-"):
+            return word
+    return None
+
+
+def _reads_stdin_message(words: Sequence[str]) -> bool:
+    """Does the command read its message from stdin: -F -, -F-, --file=-, --file -, --body-file - or --body-file=-?"""
+    return any(word in STDIN_MESSAGE_WORDS or (word in STDIN_MESSAGE_OPTIONS and following == "-")
+               for word, following in zip(words, [*words[1:], ""], strict=True))
+
+
+def _message_command(env: Mapping[str, str], argv: Sequence[str], *, own_heredoc: bool) -> bool:
+    """Is a heredoc of this command message text: git or gh with a builtin subcommand of MESSAGE_SUBCOMMANDS, no config
+    set (-c, --config-env, a GIT_CONFIG* variable), and, for a heredoc on the command itself, a message read from stdin?"""
+    name = _command_name(argv)
+    if name not in PROSE_COMMANDS or any(key.startswith(GIT_CONFIG_ENV) for key in env):
+        return False
+    words = [_unquote(word) for word in argv[1:]]
+    return _subcommand(words) in MESSAGE_SUBCOMMANDS[name] and (not own_heredoc or _reads_stdin_message(words))
+
+
 def _directory_operand(operand: str) -> str | None:
     """The expanded operand of a cd or pushd, or None when it is `-`, a stack index, or still holds a variable, a glob or a brace."""
     target = _expand(operand, str(DEFAULT_HOME))
@@ -2451,14 +2526,22 @@ def _move_targets(args: Sequence[str]) -> list[tuple[str, bool]]:
     return [(arg, True) for arg in operands] + [(folder, False)]
 
 
+def _write_operands(name: str, args: Sequence[str]) -> list[str]:
+    """The words that are no option, and the folder a cp, ln or install -t names, even glued to its option."""
+    operands = [arg for arg in args if not arg.startswith("-")]
+    folder = _operands_and_folder(args)[1] if name in TARGET_FOLDER_COMMANDS else None
+    return [*operands, folder] if folder else operands
+
+
 def _command_targets(name: str, args: Sequence[str]) -> list[tuple[str, bool]]:
     """The operands a command writes to, each with whether the command removes what it names: a delete's operands,
-    a mv's sources (moved away, so a folder above a state folder counts), sed -i's and dd's of= targets."""
+    a mv's sources (moved away, so a folder above a state folder counts), sed -i's and dd's of= targets, and the
+    folder a cp, ln or install -t names, even glued to its option (-tDIR, --target-directory=DIR)."""
     if name == "dd":
         return [(arg[3:], False) for arg in args if arg.startswith("of=")]
     if name == "mv":
         return _move_targets(args)
-    operands = [arg for arg in args if not arg.startswith("-")]
+    operands = _write_operands(name, args)
     if name in WRITE_COMMANDS or name in DELETE_COMMANDS or _edits_in_place(name, args):
         return [(arg, name in DELETE_COMMANDS) for arg in operands]
     return []
@@ -2541,18 +2624,33 @@ class _ShellScan:
     def text(self, command: str) -> str | None:
         if self.depth > SCAN_DEPTH_LIMIT:
             return TOO_DEEP_DENIED
-        self.command = command
         tokens = _shell_tokens(command)
         if tokens is None:
-            return _unreadable_reason(command)
+            reason = _unreadable_reason(command)
+            if reason is not None or "\\\n" not in command:
+                return reason  # the denial of the command as written stands; with no continued line, nothing is joined
+            command = _joined_lines(command)  # a continued line reads once joined, as bash runs it
+            if (tokens := _shell_tokens(command)) is None:
+                return _unreadable_reason(command)
+        self.command = command
         if self.hinted is None:
             self.hinted = STATE_HINT.search(command) is not None
         simple_commands = _simple_commands(tokens)
-        prose = self.prose or (bool(simple_commands) and all(
-            _command_name(_strip_prefix(simple.words)[1]) in PROSE_COMMANDS for simple in simple_commands))
-        if not prose and "<<" in command and (reason := _code_reason(_heredoc_code(command), sandboxed=False)) is not None:
+        if not self._prose(simple_commands) and "<<" in command and (
+                reason := _code_reason(_heredoc_code(command), sandboxed=False)) is not None:
             return reason  # a heredoc body is code too, except an inbox call's JSON body and git or gh message text
         return next((reason for reason in map(self._simple, simple_commands) if reason is not None), None)
+
+    def _prose(self, simple_commands: Sequence[_Simple]) -> bool:
+        """Is a heredoc here commit, PR or issue text? Yes when every command is a git or gh message command (see
+        _message_command: one that carries a heredoc itself reads its message from stdin), or when this text is such a
+        command's argument and only cat reads the heredoc: python or another runner reads it as code. An empty command
+        (the newline after a heredoc ends one) holds no command."""
+        named = [simple for simple in simple_commands if simple.words]
+        if self.prose and all(_command_name(_strip_prefix(simple.words)[1]) == "cat" for simple in named):
+            return True
+        return bool(named) and all(_message_command(*_strip_prefix(simple.words), own_heredoc=simple.heredoc)
+                                   for simple in named)
 
     def _simple(self, simple: _Simple) -> str | None:
         env, argv = _strip_prefix(simple.words)
@@ -2692,7 +2790,7 @@ class _ShellScan:
         scans = [(self.exported, text) for word in simple.words for text in _substitutions(word)]
         scans += [({**self.exported, **env}, text) for text in _script_texts(argv)]
         for exported, text in scans:
-            reason = self._child(exported, prose=_command_name(argv) in PROSE_COMMANDS).text(text)
+            reason = self._child(exported, prose=_message_command(env, argv, own_heredoc=False)).text(text)
             if reason is not None:
                 return reason
         return None
@@ -2743,34 +2841,47 @@ def _baseline_guard() -> ModuleType:
 
 
 def _working_directory() -> str | None:
-    """The working directory, or None when it was deleted: the one case the guard lets through unchecked."""
+    """The working directory, or None when it was deleted: a relative path then cannot be placed, so it is refused."""
     try:
         return os.getcwd()
     except FileNotFoundError:
         return None
 
 
-def bash_tamper_reason(command: str) -> str | None:
-    """Why a Bash command may not answer a question, force a prune or write the state folder, or None.
-
-    The frozen guard decides first (the guard of 0.4.0-beta.36 plus the relaxations that stop it
-    denying unrelated commands), so this guard never denies less than the installed one did; the current scanner then decides what is left (it is skipped above SCAN_SIZE_LIMIT). Each runs in its own try, and an
-    exception in either is a denial, never an allow; drop the frozen guard and its file once the scanner has a clean
-    review (SPEC.md). A deterrent against the agent's own shell, not a guarantee (SPEC.md, the Bash guard)."""
-    cwd = _working_directory()
-    if cwd is None:
-        return None
+def _backstop_reason(command: str, cwd: str | None) -> str | None:
+    """The frozen guard's denial, or the denial for a frozen guard that cannot load or decide; None when it allows. With
+    the working directory deleted (cwd None) its bash_tamper_reason, which reads os.getcwd(), cannot run, so its own
+    scan runs with the directory unknown and strict, as the scanner's does."""
     try:
         backstop = _baseline_guard()
     except Exception:  # noqa: BLE001 - fail closed: no backstop, no allow
         return BACKSTOP_DENIED
     try:
-        reason = backstop.bash_tamper_reason(command)
+        if cwd is None:
+            return backstop._ShellScan(os.sep, {}, backstop._state_roots(), cwd_known=False, strict=True).text(command)
+        return backstop.bash_tamper_reason(command)
     except Exception:  # noqa: BLE001 - fail closed
         return UNREADABLE_DENIED
-    if reason is not None or len(command) > SCAN_SIZE_LIMIT:
+
+
+def bash_tamper_reason(command: str) -> str | None:
+    """Why a Bash command may not answer a question, force a prune or write the state folder, or None.
+
+    The frozen guard decides first (the guard of 0.4.0-beta.36 plus the relaxations that stop it
+    denying unrelated commands), so this guard never denies less than the installed one did; the current scanner then decides
+    what is left. Above SCAN_SIZE_LIMIT the scanner is skipped and the command is denied: a spelling no pattern names
+    (st\\<newline>ate) could aim at the state folder. A deleted working directory leaves both reading every relative
+    path as unknown (_backstop_reason). Each runs in its own try, and an exception in either is a denial, never an
+    allow; drop the frozen guard and its file once the scanner has a clean review (SPEC.md). A deterrent against the
+    agent's own shell, not a guarantee (SPEC.md, the Bash guard)."""
+    cwd = _working_directory()
+    if (reason := _backstop_reason(command, cwd)) is not None:
         return reason
+    if len(command) > SCAN_SIZE_LIMIT:
+        return TOO_LONG_DENIED
     try:
+        if cwd is None:
+            return _ShellScan(os.sep, {}, _state_roots(), cwd_known=False, strict=True).text(command)
         return _ShellScan(cwd, {}, _state_roots()).text(command)
     except Exception:  # noqa: BLE001 - fail closed: a scan that cannot finish allows nothing
         return UNREADABLE_DENIED
@@ -2780,18 +2891,19 @@ def _file_tamper_reason(tool_input: Mapping[str, Any]) -> str | None:
     raw = tool_input.get("file_path") or tool_input.get("notebook_path")
     if not isinstance(raw, str) or not raw:
         return None
+    path = os.path.expanduser(raw)
     cwd = _working_directory()
-    if cwd is None:
-        return None
-    path = os.path.realpath(os.path.join(cwd, os.path.expanduser(raw)))
+    if cwd is None and not os.path.isabs(path):
+        return STATE_DENIED  # a deleted working directory: the path cannot be placed, as in the strict Bash scan
+    path = os.path.realpath(os.path.join(cwd or os.sep, path))
     return STATE_DENIED if _inside(path, _state_roots()) else None
 
 
 def _tamper_denial(event: Mapping[str, Any]) -> HookOutput:
     """The deny for a Bash command, or a file tool call, that touches the state folder against the rules.
 
-    Fails closed: a check that cannot run denies the call. The one allow is a deleted working directory
-    (`_working_directory`), where there is no folder to resolve a path against."""
+    Fails closed: a check that cannot run denies the call. A deleted working directory (`_working_directory`) leaves
+    no folder to resolve a relative path against, so such a path is refused and an absolute one is still checked."""
     try:
         tool_input = event.get("tool_input") or {}
         if event.get("tool_name") in SHELL_TOOLS:
@@ -2855,18 +2967,29 @@ def _pause_decision(event: Mapping[str, Any]) -> HookOutput:
     if blocking is None:
         return None
     item_id, title = blocking
+    hint = _ask_form_hint(tool, command)
     if title is None:
         return deny(f"Paused: Askaway question {item_id} is damaged (its file does not read), so it cannot be "
-                    f"answered. The user clears it with `python3 {SCRIPT_PATH} prune`. Do read-only work or end the turn.")
+                    f"answered. The user clears it with `python3 {SCRIPT_PATH} prune`. Do read-only work or end the "
+                    f"turn.{hint}")
     status = f"python3 {SCRIPT_PATH} status {item_id}"
     if event.get("agent_id"):
         return deny(f"Paused: Askaway question {item_id} ({_literal(title)}) needs the user's answer. It holds this "
                     "call: end the turn now. A subagent hands back what it has and says the question is open, and the "
                     "parent session receives the answer. The answer does not arrive by itself once you stop. To look "
-                    f"it up here, run `{status}` once; an answer then appears as hook context after that call.")
+                    f"it up here, run `{status}` once; an answer then appears as hook context after that call.{hint}")
     return deny(f"Paused: Askaway question {item_id} ({_literal(title)}) needs the "
                 "user's answer. It holds this call: end the turn now instead of retrying or polling, because the "
-                f"answer arrives by itself in the context. To look it up once: `{status}`.")
+                f"answer arrives by itself in the context. To look it up once: `{status}`.{hint}")
+
+
+def _ask_form_hint(tool: object, command: str) -> str:
+    """For an ask the pause holds for its form only (a heredoc, a $ or an operator), the form it lets through; else ''."""
+    head = INBOX_HEAD.match(command)
+    if tool != "Bash" or head is None or head[0].split()[-1] != "ask":
+        return ""
+    return (" This ask is held for its form only: file it as one simple call with the JSON in single quotes, "
+            f"`python3 {SCRIPT_PATH} ask --json '<JSON>'`, and write an apostrophe in the JSON as \\u0027.")
 
 
 def hook_pause_guard(event: Mapping[str, Any]) -> HookOutput:
@@ -3154,13 +3277,12 @@ def run_hook(mode: str) -> None:
     handler = HOOK_MODES.get(mode)
     if handler is None:
         return
+    unreadable = deny(UNREADABLE_DENIED) if handler is hook_pause_guard else None  # the pause guard fails closed
     try:
-        event = json.load(sys.stdin)
-        if not isinstance(event, dict):
-            return
-        output = handler(event)
-    except Exception:  # noqa: BLE001 - fail open: a broken hook must never block the session
-        return
+        event = json.loads(sys.stdin.buffer.read().decode("utf-8"))  # Claude Code writes UTF-8, whatever the locale
+        output = handler(event) if isinstance(event, dict) else unreadable
+    except Exception:  # noqa: BLE001 - fail open (a broken hook must never block the session), the pause guard denies
+        output = unreadable
     if output is not None:
         print(json.dumps(output))
 

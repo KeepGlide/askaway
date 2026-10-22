@@ -141,8 +141,13 @@ def ask_item(capsys, **over) -> str:
     return cli(capsys, "ask", "--json", json.dumps(base_entry(**over)))["id"]
 
 
+def utf8_stdin(raw: bytes, encoding: str = "utf-8") -> io.TextIOWrapper:
+    """A stdin whose bytes the hooks read; encoding stands for the locale's, which a hook must not depend on."""
+    return io.TextIOWrapper(io.BytesIO(raw), encoding=encoding)
+
+
 def run_hook(capsys, monkeypatch, mode: str, event: dict) -> str:
-    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(event)))
+    monkeypatch.setattr(sys, "stdin", utf8_stdin(json.dumps(event).encode("utf-8")))
     assert askaway.main(["hook", mode]) == 0
     return capsys.readouterr().out
 
@@ -1332,6 +1337,18 @@ def test_a_deleted_working_directory_does_not_deny_every_call(tmp_path, capsys, 
     assert run_hook(capsys, monkeypatch, "pause-guard", event) == ""
 
 
+def test_a_deleted_working_directory_still_reads_the_command(tmp_path, capsys, monkeypatch):
+    doomed = tmp_path / "doomed"
+    doomed.mkdir()
+    monkeypatch.chdir(doomed)
+    events = [bash_event(f"rm -rf {STATE_FOLDER}"), bash_event("touch notes.md"), edit_event(),
+              {**edit_event(), "tool_input": {"file_path": f"{Path.home()}/.claude/state/askaway/a/q-1-abcdef.json"}}]
+    doomed.rmdir()  # the frozen copy and the scanner both read every relative path as unknown
+    for event in events:
+        out = hook_json(capsys, monkeypatch, "pause-guard", event)
+        assert out["hookSpecificOutput"]["permissionDecisionReason"] == askaway.STATE_DENIED, event["tool_input"]
+
+
 def test_a_failing_pause_lookup_still_denies_the_call(capsys, monkeypatch):
     def broken(session: str, agent_id: str | None = None):
         raise RuntimeError("lookup failed")
@@ -1378,7 +1395,8 @@ def test_pause_guard_matcher_covers_agent_and_mcp_tools_in_hooks_json():
     hooks = json.loads((SCRIPTS.parent / "hooks" / "command-hooks.json").read_text(encoding="utf-8"))
     group = next(group for group in hooks["hooks"]["PreToolUse"] if "pause-guard" in group["hooks"][0]["command"])
     # Claude Code tests a regex matcher with RegExp.test, a match anywhere in the tool name (hooks doc)
-    for name in ("Edit", "Write", "NotebookEdit", "Bash", "PowerShell", "Monitor", "Agent", "mcp__graphify__update_node"):
+    for name in ("Edit", "Write", "NotebookEdit", "MultiEdit", "Bash", "PowerShell", "Monitor", "Agent",
+                 "mcp__graphify__update_node"):
         assert re.search(group["matcher"], name), name
     for name in ("Read", "TodoWrite"):
         assert not re.search(group["matcher"], name), name
@@ -3597,6 +3615,7 @@ def test_a_bare_assignment_is_no_sandbox_because_the_child_never_sees_it(capsys,
     ("Write", "file_path", f"{Path.home()}/.claude/state/askaway/a/q-1-abcdef.json"),
     ("Edit", "file_path", "~/.claude/state/askaway/q/q-1-abcdef.json"),
     ("NotebookEdit", "notebook_path", f"{Path.home()}/.claude/state/askaway/away.json"),
+    ("MultiEdit", "file_path", f"{Path.home()}/.claude/state/askaway/q/q-1-abcdef.json"),
 ])
 def test_write_tools_cannot_touch_the_state_folder(tool, key, path, capsys, monkeypatch):
     event = {"session_id": SESSION, "cwd": os.getcwd(), "hook_event_name": "PreToolUse",
@@ -5314,7 +5333,7 @@ HOME_PATH = str(Path.home())
 CLIMB = f"/tmp/a$x/../..{HOME_PATH}/.claude"  # /tmp/a$x is a name the guard cannot place; the .. climbs back out of /tmp
 
 
-@pytest.mark.usefixtures("scanner_only")
+@pytest.mark.usefixtures("scanner_only")  # no over-deny: the frozen copy denies these too, and would hide a scanner miss
 @pytest.mark.parametrize(("command", "reason"), [
     ("(( ((1)) #)); echo A'\n'; rm -rf ~/.claude/state/askaway; #'", "STATE_DENIED"),
     ('(( ((1)) #)); echo A"\n"; rm -rf ~/.claude/state/askaway; #"', "STATE_DENIED"),
@@ -5337,7 +5356,7 @@ def test_the_scanner_alone_denies_the_gauntlet_6_review_4_inputs(command, reason
     assert bash_denial(capsys, monkeypatch, command) == getattr(askaway, reason)
 
 
-@pytest.mark.usefixtures("scanner_only")
+@pytest.mark.usefixtures("scanner_only")  # the frozen copy over-denies the first: its apostrophe leaves it unreadable there, and an unreadable command naming ASKAWAY_HOME is denied
 @pytest.mark.parametrize("command", [
     f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} answer q-1-abcdef A # it's",
     "echo ${a:-${b}} # it's",
@@ -5379,7 +5398,7 @@ def test_a_deeply_nested_command_is_denied(command, capsys, monkeypatch):
     assert bash_denial(capsys, monkeypatch, command)
 
 
-@pytest.mark.usefixtures("scanner_only")
+@pytest.mark.usefixtures("scanner_only")  # no over-deny: the frozen copy denies these as state writes first, so the scanner's own reason shows only without it
 @pytest.mark.parametrize("command", DEEP_COMMANDS.values(), ids=DEEP_COMMANDS)
 def test_the_scanner_alone_denies_past_its_depth_cap_instead_of_recursing(command, capsys, monkeypatch):
     assert bash_denial(capsys, monkeypatch, command) == askaway.TOO_DEEP_DENIED
@@ -5395,10 +5414,11 @@ def test_unclosed_units_are_read_in_linear_time(command, capsys, monkeypatch):
     assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
 
 
-def test_a_command_over_the_size_limit_is_left_to_the_frozen_guard(monkeypatch):
+def test_a_command_over_the_size_limit_is_denied_without_a_scan(monkeypatch):
     seen: list[str] = []
     monkeypatch.setattr(askaway._ShellScan, "text", lambda _scan, command: seen.append(command))
-    assert askaway.bash_tamper_reason("echo " + "a" * askaway.SCAN_SIZE_LIMIT) is None
+    assert askaway.bash_tamper_reason("echo " + "a" * askaway.SCAN_SIZE_LIMIT) == askaway.TOO_LONG_DENIED
+    assert "Write tool" in askaway.TOO_LONG_DENIED
     assert askaway.bash_tamper_reason(STATE_RM + " " * askaway.SCAN_SIZE_LIMIT) == askaway.STATE_DENIED
     assert seen == []
     assert askaway.bash_tamper_reason("echo a") is None
@@ -5431,7 +5451,7 @@ def test_a_baseline_that_fails_while_deciding_denies(capsys, monkeypatch):
     assert bash_denial(capsys, monkeypatch, "ls") == askaway.UNREADABLE_DENIED
 
 
-@pytest.mark.usefixtures("scanner_only")
+@pytest.mark.usefixtures("scanner_only")  # no over-deny: the frozen copy allows ls; it is stubbed so only the raising scanner decides
 def test_a_scanner_that_raises_denies_instead_of_letting_the_command_through(capsys, monkeypatch):
     monkeypatch.setattr(askaway._ShellScan, "text", raising_scan)
     assert bash_denial(capsys, monkeypatch, "ls") == askaway.UNREADABLE_DENIED
@@ -5442,7 +5462,7 @@ def test_a_baseline_denial_is_returned_before_the_scanner_runs(capsys, monkeypat
     assert bash_denial(capsys, monkeypatch, STATE_RM) == askaway.STATE_DENIED
 
 
-@pytest.mark.usefixtures("scanner_only")
+@pytest.mark.usefixtures("scanner_only")  # the frozen copy over-denies four: it reads a quoted body as commands, so a `.` line untracks the directory and a `>` line is a relative write
 @pytest.mark.parametrize("command", [
     "cat > notes.md <<'EOF'\n`\xa0`).(\"\">X\nEOF",
     "cat > marketing.md <<'EOF'\n# Report\n. next steps follow\nResult > baseline\nEOF",
@@ -5455,7 +5475,7 @@ def test_the_body_of_a_quoted_heredoc_is_data_to_the_scanner(command, capsys, mo
     assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
 
 
-@pytest.mark.usefixtures("scanner_only")
+@pytest.mark.usefixtures("scanner_only")  # no over-deny: the frozen copy denies these too, and would hide a scanner miss
 @pytest.mark.parametrize("command", [
     f"cat <<EOF\nrun $(rm -rf {STATE_FOLDER})\nEOF",
     f"cat <<EOF\nrun `rm -rf {STATE_FOLDER}`\nEOF",
@@ -5467,13 +5487,13 @@ def test_an_unquoted_heredoc_body_still_runs_its_substitutions_for_the_scanner(c
     assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
 
 
-@pytest.mark.usefixtures("scanner_only")
+@pytest.mark.usefixtures("scanner_only")  # no over-deny: the frozen copy denies it too, and would hide a scanner miss
 def test_a_quoted_heredoc_fed_to_an_interpreter_that_writes_the_state_folder_is_denied(capsys, monkeypatch):
     command = f"python3 - <<'EOF'\nopen('{STATE_FOLDER}/q.json', 'w').write('x')\nEOF"
     assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
 
 
-@pytest.mark.usefixtures("scanner_only")
+@pytest.mark.usefixtures("scanner_only")  # no over-deny: the frozen copy denies these too, and would hide a scanner miss
 def test_a_herestring_and_a_quoted_look_alike_do_not_hide_the_commands_after_them(capsys, monkeypatch):
     assert bash_denial(capsys, monkeypatch, f"cat <<< x\nrm -rf {STATE_FOLDER}") == askaway.STATE_DENIED
     assert bash_denial(capsys, monkeypatch, f"echo \"<<'X'\"\nrm -rf {STATE_FOLDER}\nX") == askaway.STATE_DENIED
@@ -5485,6 +5505,182 @@ def test_lone_quote_comments_are_read_in_linear_time(unit):
     start = time.perf_counter()
     finishes_within(2, lambda: askaway.bash_tamper_reason(command))
     assert time.perf_counter() - start < 2
+
+
+@pytest.mark.parametrize(("command", "reason"), [
+    ("cd ~/.claude/st\\\nate && rm -rf ask\\\naway", askaway.STATE_DENIED),
+    (f"python3 {SCRIPT} ans\\\nwer q-1-abcdef A", askaway.ANSWER_DENIED),
+    ("ls # a comment keeps its backslash \\\ncd ~/.claude/st\\\nate && rm -rf ask\\\naway", askaway.STATE_DENIED),
+    ('rm -rf "$HOME/.claude/st\\\nate/ask\\\naway"', askaway.STATE_DENIED),
+], ids=["cd-then-rm", "answer", "after-a-comment", "double-quoted"])
+def test_a_continued_line_is_joined_before_the_scanner_reads_it(command, reason, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == reason  # the frozen copy cannot read these and lets them through
+
+
+def test_a_continued_line_away_from_the_state_folder_still_passes(capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event("ls -la \\\n  build")) == ""
+
+
+def test_a_command_over_the_size_limit_that_names_askaway_is_denied():
+    link = "/tmp/askaway-test-link"
+    command = f"ln -s ~/.claude/state {link} && ASKAWAY_HOME={link}/askaway python3 {SCRIPT} answer q-1-abcdef A"
+    padded = command + " " * askaway.SCAN_SIZE_LIMIT
+    assert askaway._baseline_guard().bash_tamper_reason(padded) is None  # the frozen copy alone lets it through
+    assert askaway.bash_tamper_reason(padded) == askaway.TOO_LONG_DENIED
+
+
+@pytest.mark.parametrize("command", [
+    "cd ~/.claude/st\\\nate && rm -rf ask\\\naway",
+    '`rm -rf ~/.claude/st""ate/ask""away`',
+    "echo hello",
+], ids=["continued-lines", "backticks-and-quotes", "harmless"])
+def test_a_command_over_the_size_limit_is_denied_even_when_no_pattern_names_the_state_folder(command, capsys,
+                                                                                              monkeypatch):
+    padded = command + " " * askaway.SCAN_SIZE_LIMIT
+    assert askaway.STATE_HINT.search(padded) is None and askaway._baseline_guard().bash_tamper_reason(padded) is None
+    assert bash_denial(capsys, monkeypatch, padded) == askaway.TOO_LONG_DENIED
+
+
+def test_a_deleted_working_directory_still_runs_the_frozen_copy(tmp_path, capsys, monkeypatch):
+    command = f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} answer q-1-abcdef A # it's"  # only the frozen copy denies it
+    doomed = tmp_path / "doomed"
+    doomed.mkdir()
+    monkeypatch.chdir(doomed)
+    events = [bash_event(command), bash_event("ls")]  # built while the directory exists: the event carries the cwd
+    doomed.rmdir()
+    assert askaway._ShellScan(os.sep, {}, askaway._state_roots(), cwd_known=False, strict=True).text(command) is None
+    for event, reason in zip(events, [askaway.STATE_DENIED, None], strict=True):
+        out = run_hook(capsys, monkeypatch, "pause-guard", event)
+        assert (json.loads(out)["hookSpecificOutput"]["permissionDecisionReason"] if out else None) == reason
+    broken_guard = type("Broken", (), {"bash_tamper_reason": staticmethod(lambda _command: None)})  # no _ShellScan
+    monkeypatch.setattr(askaway, "_baseline_guard", lambda: broken_guard)
+    out = hook_json(capsys, monkeypatch, "pause-guard", events[1])
+    assert out["hookSpecificOutput"]["permissionDecisionReason"] == askaway.UNREADABLE_DENIED
+
+
+@pytest.mark.parametrize(("command", "reason"), [
+    ("git commit -m \"$(python3 - <<'EOF'\nimport askaway\naskaway.cmd_answer('q-1-abcdef','A','panel',None)\nEOF\n)\"",
+     askaway.ANSWER_DENIED),
+    (f"git log $(python3 - <<'EOF'\nopen('{STATE_FOLDER}/q/x','w')\nEOF\n)", askaway.STATE_DENIED),
+    (f"gh pr create --body \"$(node <<'EOF'\nrequire('fs').writeFileSync('{STATE_FOLDER}/a/x.json', '{{}}')\nEOF\n)\"",
+     askaway.STATE_DENIED),
+], ids=["python-answer", "python-write", "node-write"])
+def test_a_code_heredoc_in_a_substitution_under_git_or_gh_is_read_as_code(command, reason, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == reason  # only a cat heredoc there is commit or PR text
+
+
+@pytest.mark.usefixtures("scanner_only")  # the frozen backstop still denies these: a known over-deny, see SPEC.md
+@pytest.mark.parametrize("body", ["fix(askaway): cmd_prune keeps the pause", "fix: never write into ASKAWAY_HOME state"])
+def test_a_git_commit_reading_its_message_from_a_heredoc_is_prose_to_the_scanner(body, capsys, monkeypatch):
+    command = f"git commit -F - <<'EOF'\n{body}\nEOF"
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+STATE_WRITE_CODE = f"open('{STATE_FOLDER}/a/x.json', 'w').write('{{}}')"
+
+
+@pytest.mark.usefixtures("scanner_only")  # no over-deny: the frozen copy denies the top-level ones, and would hide a scanner miss
+@pytest.mark.parametrize("command", [
+    f"git -c alias.x='!python3 -' x <<'EOF'\n{STATE_WRITE_CODE}\nEOF",
+    f"git --config-env=alias.x=X x -F - <<'EOF'\n{STATE_WRITE_CODE}\nEOF",
+    f"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0='!python3 -' git x <<'EOF'\n{STATE_WRITE_CODE}\nEOF",
+    f"git x -F - <<'EOF'\n{STATE_WRITE_CODE}\nEOF",
+    f"git commit <<'EOF'\n{STATE_WRITE_CODE}\nEOF",
+    f"gh pr create --body x <<'EOF'\n{STATE_WRITE_CODE}\nEOF",
+    f"git -c alias.x='!python3 -c' x \"$(cat <<'EOF'\n{STATE_WRITE_CODE}\nEOF\n)\"",
+], ids=["config-alias", "config-env", "config-variables", "alias", "no-stdin-message", "gh-no-stdin-message",
+        "alias-argument"])
+def test_a_git_or_gh_heredoc_is_code_unless_a_builtin_reads_it_as_its_message(command, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
+
+
+@pytest.mark.usefixtures("scanner_only")  # the frozen copy over-denies these: the empty command after the heredoc's first line is no git or gh to it
+@pytest.mark.parametrize("command", [
+    "git commit -F- <<'EOF'\nfix: never write into ASKAWAY_HOME state\nEOF",
+    "git commit --file=- <<'EOF'\nfix: never write into ASKAWAY_HOME state\nEOF",
+    "git -C repo commit --file - <<'EOF'\nfix: never write into ASKAWAY_HOME state\nEOF",
+    "gh pr create --title x --body-file - <<'EOF'\nfix: never write into ASKAWAY_HOME state\nEOF",
+    "gh issue create --body-file=- <<'EOF'\nfix: never write into ASKAWAY_HOME state\nEOF",
+])
+def test_a_builtin_git_or_gh_reading_its_message_from_stdin_keeps_its_heredoc_as_prose(command, capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+SPLIT_TERMINATOR_TAIL = "EO\\\nF\ntouch ~/.claude/st''ate/ask''away/a/x.json"  # bash joins EO\ and F: the heredoc ends
+
+
+@pytest.mark.parametrize("command", [
+    f"cat <<EOF\nhello\n{SPLIT_TERMINATOR_TAIL}",
+    f"git commit -F - <<EOF\nmsg\n{SPLIT_TERMINATOR_TAIL}",
+    f"cat <<-EOF\n\thello\n\t{SPLIT_TERMINATOR_TAIL}",
+], ids=["cat", "git", "tab-stripped"])
+def test_an_unquoted_heredoc_terminator_split_by_a_continued_line_ends_the_body(command, capsys, monkeypatch):
+    assert askaway._baseline_guard().bash_tamper_reason(command) is None  # the frozen copy alone lets these through
+    assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
+
+
+@pytest.mark.usefixtures("scanner_only")  # the frozen copy over-denies the escaped one: it reads every body line as a command
+@pytest.mark.parametrize("command", [
+    f"cat <<'EOF'\n{SPLIT_TERMINATOR_TAIL}\nEOF",
+    "cat <<EOF\nEO\\\\\nF\ntouch ~/.claude/st''ate/ask''away/a/x.json\nEOF",
+    "cat <<-EOF\n\tEO\\\n\tF\ntouch ~/.claude/st''ate/ask''away/a/x.json\nEOF",
+], ids=["quoted", "escaped-backslash", "tab-after-the-join"])
+def test_a_heredoc_terminator_bash_does_not_join_keeps_the_body_data(command, capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+def test_a_held_ask_is_told_the_inline_json_form_the_pause_lets_through(capsys, monkeypatch):
+    pending_pause(capsys, monkeypatch)
+    heredoc = f"python3 {askaway.SCRIPT_PATH} ask <<'JSON'\n{{\"title\": \"x\"}}\nJSON"
+    assert f"`python3 {askaway.SCRIPT_PATH} ask --json '<JSON>'`" in bash_denial(capsys, monkeypatch, heredoc)
+    assert "--json" not in bash_denial(capsys, monkeypatch, "rm -rf build")
+
+
+@pytest.mark.parametrize("raw", [
+    b"{not json", b"[]", b'"text"', b"\xff\xfe{}",
+    b'{"tool_name": "mcp__x__y", "tool_input": ' + b"[" * 100_000 + b"]" * 100_000 + b"}",
+], ids=["not-json", "a-list", "a-string", "not-utf8", "too-deep"])
+def test_the_pause_guard_denies_an_event_it_cannot_read(raw, capsys, monkeypatch):
+    monkeypatch.setattr(sys, "stdin", utf8_stdin(raw))
+    assert askaway.main(["hook", "pause-guard"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["hookSpecificOutput"]["permissionDecisionReason"] == askaway.UNREADABLE_DENIED
+
+
+@pytest.mark.parametrize("mode", ["deliver", "stamp-asker", "ask-guard"])
+def test_the_other_hook_modes_still_fail_open_on_an_event_they_cannot_read(mode, capsys, monkeypatch):
+    monkeypatch.setattr(sys, "stdin", utf8_stdin(b"{not json"))
+    assert askaway.main(["hook", mode]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_the_pause_guard_reads_its_event_as_utf8_whatever_the_locale(capsys, monkeypatch):
+    raw = json.dumps(bash_event(f"rm -rf {STATE_FOLDER} # café"), ensure_ascii=False).encode("utf-8")
+    monkeypatch.setattr(sys, "stdin", utf8_stdin(raw, encoding="ascii"))
+    assert askaway.main(["hook", "pause-guard"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["hookSpecificOutput"]["permissionDecisionReason"] == askaway.STATE_DENIED
+
+
+@pytest.mark.parametrize("command", [
+    "cp /tmp/q-x.json --target-directory=$HOME/.claude/state/askaway/a",
+    "cp -t$HOME/.claude/state/askaway/a /tmp/q-x.json",
+    "install -t$HOME/.claude/state/askaway/a /tmp/q-x.json",
+    "ln -s --target-directory=$HOME/.claude/state/askaway/a /tmp/x",
+])
+def test_a_target_folder_glued_to_its_option_is_a_write_target(command, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
+
+
+def test_a_suffix_glued_to_mv_s_is_no_target_folder(capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event("mv -St.bak notes.md ~/.claude/")) == ""
+
+
+@pytest.mark.parametrize("tool", ["Bash", "Edit"])
+def test_a_tool_input_that_is_not_a_map_is_denied_as_unreadable(tool, capsys, monkeypatch):
+    event = {**edit_event(tool=tool), "tool_input": ["rm", "-rf", STATE_FOLDER]}
+    out = hook_json(capsys, monkeypatch, "pause-guard", event)
+    assert out["hookSpecificOutput"]["permissionDecisionReason"] == askaway.UNREADABLE_DENIED
 
 
 # ---- ported from a local mirror (answers go to the subagent that asked) ----

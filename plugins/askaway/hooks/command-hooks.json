@@ -56,7 +56,7 @@
         ]
       },
       {
-        "matcher": "^(Edit|Write|NotebookEdit|Bash|PowerShell|Monitor|Agent)$|^mcp__",
+        "matcher": "^(Edit|Write|NotebookEdit|MultiEdit|Bash|PowerShell|Monitor|Agent)$|^mcp__",
         "hooks": [
           {
             "type": "command",
