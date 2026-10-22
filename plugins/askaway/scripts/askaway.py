@@ -2831,10 +2831,15 @@ def _pause_decision(event: Mapping[str, Any]) -> HookOutput:
     if title is None:
         return deny(f"Paused: Askaway question {item_id} is damaged (its file does not read), so it cannot be "
                     f"answered. The user clears it with `python3 {SCRIPT_PATH} prune`. Do read-only work or end the turn.")
+    status = f"python3 {SCRIPT_PATH} status {item_id}"
+    if event.get("agent_id"):
+        return deny(f"Paused: Askaway question {item_id} ({_literal(title)}) needs the user's answer. It holds this "
+                    "call: end the turn now. A subagent hands back what it has and says the question is open, and the "
+                    "parent session receives the answer. The answer does not arrive by itself once you stop. To look "
+                    f"it up here, run `{status}` once; an answer then appears as hook context after that call.")
     return deny(f"Paused: Askaway question {item_id} ({_literal(title)}) needs the "
                 "user's answer. It holds this call: end the turn now instead of retrying or polling, because the "
-                "answer arrives by itself in the context. A subagent hands back what it has and stops. "
-                f"To look it up once: `python3 {SCRIPT_PATH} status {item_id}`.")
+                f"answer arrives by itself in the context. To look it up once: `{status}`.")
 
 
 def hook_pause_guard(event: Mapping[str, Any]) -> HookOutput:
@@ -2991,7 +2996,7 @@ def _lapse_reason(entry: Mapping[str, Any], answer: Mapping[str, Any],
 
 
 def _deliver_one(item_id: str, session: str | None, cwd: object,
-                 released: ReleasedScan | None = None) -> str | None:
+                 released: ReleasedScan | None = None, asker: str | None = None) -> str | None:
     marker = item_path("d", item_id)
     if read_json(marker) is not None:  # a readable marker closed it; an empty or torn one is written again
         return None
@@ -2999,6 +3004,8 @@ def _deliver_one(item_id: str, session: str | None, cwd: object,
     answer = read_json(item_path("a", item_id))
     if entry is None or answer is None:
         return None
+    if asker is not None and entry.get(ASKER_KEY) != asker:
+        return None  # a subagent's hook call takes only the answers its own ask filed
     # A lapsed answer closes for every session, the asking one included: status already says so.
     if not _receives(entry, session, cwd) or answer_lapsed(answer):
         reason = _lapse_reason(entry, answer, released)
@@ -3065,14 +3072,15 @@ def _foreign(item_id: str, session: str | None, cwd: object) -> bool:
     return entry is not None and not _receives(entry, session, cwd)
 
 
-def _deliver_lines(item_ids: Sequence[str], session: str | None, cwd: object, recheck: bool) -> list[str]:
+def _deliver_lines(item_ids: Sequence[str], session: str | None, cwd: object, recheck: bool,
+                   asker: str | None = None) -> list[str]:
     released = ReleasedScan()  # one folder-wide scan for every answer of this run, at most
     lines: list[str] = []
     for item_id in item_ids:
         if not recheck and _foreign(item_id, session, cwd):
             continue  # another session's unread answer: re-checked at most once a minute
         try:
-            line = _deliver_one(item_id, session, cwd, released)
+            line = _deliver_one(item_id, session, cwd, released, asker)
         except OSError:
             continue  # no marker was written, so the next run retries this answer
         if line:
@@ -3080,16 +3088,24 @@ def _deliver_lines(item_ids: Sequence[str], session: str | None, cwd: object, re
     return lines
 
 
+def _is_wait_call(event: Mapping[str, Any]) -> bool:
+    """Is the call one `askaway.py wait`? A subagent's wait prints the line and leaves the marker to the main session."""
+    head = INBOX_HEAD.match(str((event.get("tool_input") or {}).get("command", "")).strip())
+    return event.get("tool_name") == "Bash" and head is not None and head[0].split()[-1] == "wait"
+
+
 def hook_deliver(event: Mapping[str, Any]) -> HookOutput:
-    # Main thread only: a subagent's hook call carries the parent's session_id plus an
-    # agent_id, so delivering there would consume the answer in a transcript the user never reads.
-    if event.get("agent_id"):
+    # A subagent's hook call carries the parent's session_id plus an agent_id. It takes only the answers its own ask
+    # filed (asker == agent_id), as hook context in its own transcript; the main thread takes every answer. Not on its
+    # own wait: that call already printed the line and leaves the marker, and so the hold, to the main session.
+    asker = event.get("agent_id") or None
+    if asker is not None and (not isinstance(asker, str) or _is_wait_call(event)):
         return None
     item_ids = answered_ids()
     event_name = event.get("hook_event_name")
     if not item_ids or not isinstance(event_name, str):
         return None
-    lines = _deliver_lines(item_ids, event.get("session_id") or None, event.get("cwd"), _foreign_recheck_due())
+    lines = _deliver_lines(item_ids, event.get("session_id") or None, event.get("cwd"), _foreign_recheck_due(), asker)
     if lines:
         # Printed and flushed before the daily cleanup: the lines are claimed already, and a kill during the cleanup
         # must not cost them (run_hook prints only what a handler returns, so this run prints its output here).

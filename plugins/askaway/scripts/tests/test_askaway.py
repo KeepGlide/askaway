@@ -5485,3 +5485,49 @@ def test_lone_quote_comments_are_read_in_linear_time(unit):
     start = time.perf_counter()
     finishes_within(2, lambda: askaway.bash_tamper_reason(command))
     assert time.perf_counter() - start < 2
+
+
+# ---- ported from a local mirror (answers go to the subagent that asked) ----
+
+def test_deliver_gives_a_subagent_the_answer_its_own_ask_filed(home, capsys, monkeypatch):
+    item = file_pause(capsys, monkeypatch, agent_id="agent-1")["id"]
+    cli(capsys, "answer", item, "B")
+    text = hook_json(capsys, monkeypatch, "deliver", subagent_event())["hookSpecificOutput"]["additionalContext"]
+    assert item in text
+    assert (home / "d" / f"{item}.json").exists()
+    assert run_hook(capsys, monkeypatch, "deliver", subagent_event()) == ""
+
+
+def test_deliver_keeps_a_subagent_answer_from_other_subagents_and_the_main_thread_still_gets_it(
+        home, capsys, monkeypatch):
+    item = file_pause(capsys, monkeypatch, agent_id="agent-1")["id"]
+    cli(capsys, "answer", item, "B")
+    assert run_hook(capsys, monkeypatch, "deliver", subagent_event(agent_id="agent-2")) == ""
+    assert not (home / "d" / f"{item}.json").exists()
+    text = hook_json(capsys, monkeypatch, "deliver", deliver_event())["hookSpecificOutput"]["additionalContext"]
+    assert item in text
+
+
+def test_deliver_gives_a_subagent_no_answer_of_a_main_thread_ask(home, capsys, monkeypatch):
+    item = file_pause(capsys, monkeypatch)["id"]
+    cli(capsys, "answer", item, "B")
+    assert run_hook(capsys, monkeypatch, "deliver", subagent_event()) == ""
+    assert not (home / "d" / f"{item}.json").exists()
+
+
+def test_pause_reason_for_a_subagent_says_how_to_fetch_the_answer(capsys, monkeypatch):
+    item = file_pause(capsys, monkeypatch, agent_id="agent-1")["id"]
+    reason = hook_json(capsys, monkeypatch, "pause-guard", agent_event("agent-1"))[
+        "hookSpecificOutput"]["permissionDecisionReason"]
+    assert "does not arrive by itself" in reason
+    assert f"`python3 {askaway.SCRIPT_PATH} status {item}`" in reason
+
+
+def test_a_subagent_wait_call_delivers_nothing_and_leaves_the_hold_to_the_main_session(home, capsys, monkeypatch):
+    item = file_pause(capsys, monkeypatch, agent_id="agent-1")["id"]
+    cli(capsys, "answer", item, "B")
+    wait = {**subagent_event(), "tool_name": "Bash",
+            "tool_input": {"command": f"python3 {askaway.SCRIPT_PATH} wait {item}"}}
+    assert run_hook(capsys, monkeypatch, "deliver", wait) == ""
+    assert not (home / "d" / f"{item}.json").exists()
+    assert item in hook_json(capsys, monkeypatch, "deliver", deliver_event())["hookSpecificOutput"]["additionalContext"]

@@ -7,6 +7,9 @@ Commit hashes name the change in `git log`.
 
 ## [Unreleased]
 
+### Fixed
+- A subagent's hook call delivers only the answers whose question its own `ask` filed (`asker == agent_id`, `_deliver_one`), and its pause reason says to end the turn, that the parent session receives the answer, and that one `askaway.py status <id>` call fetches it (`_pause_decision`). The main thread still takes every answer of its session. A subagent's own `wait` call delivers nothing, so it keeps leaving the marker, and the hold, to the main session (`_is_wait_call`). Ported from a local mirror.
+
 ## [0.4.0-beta.38] - 2026-10-22
 
 Askaway 0.4.0-beta.38 hardens the pause guard's shell scanner, keeps an answered card dimmed until its reply is written, and makes the README pair follow the KeepGlide README standard.
