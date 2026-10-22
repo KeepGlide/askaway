@@ -7,6 +7,10 @@ Commit hashes name the change in `git log`.
 
 ## [Unreleased]
 
+### Changed
+- The README pair records the project's decisions (what was chosen, over what, why and since which version), its trade-offs and its limits, explains how it works step by step (the `stamp-asker` hook, the pause guard with its frozen copy and scanner, the panel token, one copy of each answer per recipient in `d/` and `s/`), and gives an overview of the version line (`README.md`, `README.pt-BR.md`). Known issues adds the frozen copy's over-denies and the `delivered` status shown while a subagent is still held, and cites symbol names instead of line numbers.
+- SPEC.md and CHANGELOG.md name only commits of this repository and neutral examples: the frozen guard copy is described as the guard of 0.4.0-beta.36 plus the relaxations of 0.4.0-beta.39 (be7d417).
+
 ## [0.4.0-beta.40] - 2026-10-22
 
 Askaway 0.4.0-beta.40 gives the main session and the asking subagent one copy each of an answer, shows the recommended mark once, and closes the Bash guard gaps gauntlet 7 found.
@@ -35,7 +39,7 @@ Askaway 0.4.0-beta.40 gives the main session and the asking subagent one copy ea
 Askaway 0.4.0-beta.39 delivers each answer to the subagent that asked, and stops the Bash guard denying unrelated commands.
 
 ### Changed
-- The frozen guard `scripts/askaway_guard_baseline.py` is re-extracted from a later revision of the guard: the guard of 0.4.0-beta.36 plus the relaxations listed under Fixed below. It still decides first, so the guard denies at least what the installed one denied, and it no longer denies what those relaxations let through (`bash_tamper_reason`, `_baseline_guard`).
+- The frozen guard `scripts/askaway_guard_baseline.py` is re-extracted from a later revision of the guard: the guard of 0.4.0-beta.36 plus the relaxations listed under Fixed below (be7d417). It still decides first, so the guard denies at least what the installed one denied, and it no longer denies what those relaxations let through (`bash_tamper_reason`, `_baseline_guard`).
 
 ### Fixed
 - A subagent's hook call delivers only the answers whose question its own `ask` filed (`asker == agent_id`, `_deliver_one`), and its pause reason says to end the turn, that the parent session receives the answer, and that one `askaway.py status <id>` call fetches it (`_pause_decision`). The main thread still takes every answer of its session. A subagent's own `wait` call delivers nothing, so it keeps leaving the marker, and the hold, to the main session (`_is_wait_call`). Ported from a local mirror.

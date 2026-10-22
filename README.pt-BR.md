@@ -33,6 +33,9 @@
 - [🧠 Como os agentes registram perguntas](#-como-os-agentes-registram-perguntas)
 - [🧩 Pelo Codex](#-pelo-codex)
 - [🗂️ Pasta de estado](#%EF%B8%8F-pasta-de-estado)
+- [🧾 Decisões](#-decisões)
+- [🔀 Escolhas e renúncias](#-escolhas-e-renúncias)
+- [🚧 Limites](#-limites)
 - [🔒 Segurança e privacidade](#-segurança-e-privacidade)
 - [🩺 Solução de problemas](#-solução-de-problemas)
 - [🐞 Problemas conhecidos](#-problemas-conhecidos)
@@ -121,51 +124,81 @@ Reinicie o Claude Code, ou rode `/reload-plugins` se a sua versão tiver o coman
 
 ## ⚙️ Como funciona
 
-O Askaway tem duas partes. A CLI (`scripts/askaway.py`) registra, responde e informa perguntas como um arquivo JSON por pergunta na pasta de estado. O painel (um mod em `hooks/`) consulta essa pasta a cada 5 segundos (`POLL_MS = 5000` em `hooks/register.tsx`) e grava as respostas só pela CLI. Os ganchos de comando de cada sessão também leem a mesma pasta: entregam cada resposta à sessão que perguntou e seguram o agente que fez uma pergunta de risco `high` até a resposta ser entregue.
+O Askaway tem duas partes que compartilham uma pasta de estado. A CLI (`scripts/askaway.py`) registra e responde perguntas, um arquivo JSON por item, e roda os quatro ganchos de comando de `hooks/command-hooks.json` (`deliver`, `ask-guard`, `pause-guard`, `stamp-asker`). O painel (um mod carregado de `hooks/register.tsx`) consulta a pasta a cada 5 segundos (`POLL_MS = 5000` em `hooks/register.tsx`) e grava respostas só pela CLI.
 
 Componentes e fluxo dos arquivos:
 
 ```mermaid
 flowchart LR
-    agent["Agente precisa de uma decisão"] -->|"ask: grava uma pergunta"| folder[("Pasta de estado: perguntas q/")]
-    folder -->|"consulta a cada 5 s"| band["Botão da faixa e aviso"]
-    band --> panel["Painel: árvore de perguntas por família de sessões, um cartão por vez, Enviar tudo"]
-    panel -->|"Enviar tudo: a CLI grava as respostas a/"| answers[("Pasta de estado: respostas a/")]
-    answers -->|"gancho de entrega ou repasse na ociosidade"| agent
+    agent["Agente: thread principal ou subagente"] -->|"ask --json"| cli["CLI: scripts/askaway.py"]
+    cli -->|"grava a pergunta"| q[("q/ perguntas")]
+    stamp["gancho stamp-asker, depois do Bash"] -->|"grava asker numa pausa nova"| q
+    guard["gancho pause-guard, antes das ferramentas que alteram"] -->|"lê"| q
+    guard -->|"cópia congelada primeiro, depois o leitor, e segura quem perguntou"| agent
+    q -->|"consulta a cada 5 s"| panel["Painel: faixa, aviso, árvore, um cartão"]
+    panel -->|"gera um token de uso único"| tokens[("panel-tokens/")]
+    panel -->|"answer --by panel"| cli
+    cli -->|"vale a primeira gravação"| a[("a/ respostas")]
+    a --> deliver["gancho deliver"]
+    deliver -->|"cópia da sessão principal"| d[("d/ marcas")]
+    deliver -->|"cópia do subagente que perguntou"| s[("s/ marcas")]
+    deliver -->|"linha da resposta como contexto do gancho"| agent
+    panel -->|"sessão ociosa: marca d/, depois um prompt"| agent
 ```
 
-Ciclo de uma pergunta:
+Ciclo de uma pergunta de risco `high`:
 
 ```mermaid
 sequenceDiagram
-    participant Agent as Sessão que perguntou
+    participant Agent as Agente que perguntou
+    participant Hooks as Ganchos de comando
     participant Folder as Pasta de estado
     participant Panel as Painel do Askaway
     participant You as Você
-    Agent->>Folder: ask grava a pergunta
+    Agent->>Folder: ask grava a pergunta em q/
+    Note over Agent: a CLI responde pause
+    Hooks->>Folder: stamp-asker grava asker
+    Agent->>Hooks: próxima chamada de ferramenta que altera algo
+    Hooks-->>Agent: pause-guard a nega enquanto a pausa vale
     Panel->>Folder: consulta a cada 5 s
     Panel-->>You: botão da faixa e aviso
     You->>Panel: escolhe opções e depois Enviar tudo
-    Panel->>Folder: a CLI (answer --by panel) grava as respostas
+    Panel->>Folder: token em panel-tokens/, depois answer --by panel grava a/
     alt sessão ocupada
-        Folder-->>Agent: o gancho deliver lê a resposta no próximo gancho
+        Hooks->>Folder: deliver reivindica d/ para a thread principal ou s/ para o subagente que perguntou
+        Hooks-->>Agent: a linha da resposta como contexto do gancho
     else sessão ociosa
+        Panel->>Folder: grava a marca d/ com via prompt
         Panel-->>Agent: um prompt com as respostas
     end
-    Agent->>Agent: segue com a resposta
+    Agent->>Agent: a pausa termina e o agente segue com a resposta
 ```
+
+Uma pergunta `low` ou `medium` faz o mesmo caminho sem a pausa: a CLI responde `continue`, e o agente trabalha na opção recomendada até a resposta chegar.
+
+Passo a passo:
+
+1. **Teste de ausência.** Uma sessão está ausente com `bypassPermissions`, com o modo ausente ligado ou com `CLAUDE_CODE_SESSION_ATTENDED=0`. Enquanto ausente, `hook ask-guard` nega `AskUserQuestion` e devolve um esqueleto de `ask` por pergunta; nada é guardado.
+2. **Registro.** `ask --json` confere cada campo e cita todas as lacunas num só `refile`. Lê o título da sessão e a família do Desktop e então, sob `.ask.lock`, procura uma duplicata aberta, grava `q/<id>.json` e responde `continue`, `pause`, `open` ou `refile`.
+3. **Marca de autor.** Depois da chamada de `ask`, `hook stamp-asker` grava `asker` (o `agent_id` de quem chamou, ou `main`) na pausa nova, sob `.ask.lock`. Uma pausa sem `asker` segura a sessão inteira.
+4. **Guarda e retenção.** `hook pause-guard` roda antes de Edit, Write, NotebookEdit, MultiEdit, Bash, PowerShell, Monitor, Agent e de toda ferramenta `mcp__`, com timeout de 5 s e `"onFailure": "block"`. Ele tem duas funções:
+   - **O guarda de Bash e de arquivos**, em toda sessão, ausente ou não: uma cópia congelada de um guarda anterior (`scripts/askaway_guard_baseline.py`) decide primeiro, depois o leitor atual, então o guarda nunca nega menos do que aquela cópia negava. Um erro em qualquer dos dois nega, um comando com mais de 64K caracteres é negado, um evento que o gancho não consegue ler é negado, e com o diretório de trabalho apagado todo alvo relativo de gravação é recusado.
+   - **A retenção:** enquanto uma pergunta `high` desta sessão espera a entrega a quem perguntou, as chamadas que alteram algo desse agente são negadas. Uma chamada simples de `ask`, `status`, `list`, `wait` ou `export` e as ferramentas MCP só de leitura passam.
+5. **Resposta.** As escolhas são compartilhadas pelo `draft.json`. No Enviar tudo ou no Enviar resposta de uma linha, o painel gera um token de uso único em `panel-tokens/` (32 caracteres hex, modo 600, válido por 120 s) e roda `answer <id> <key> --by panel --strict` com ele em `ASKAWAY_PANEL_TOKEN`. A CLI publica `a/<id>.json` com um link exclusivo, então vale a primeira resposta, e o cartão fica esmaecido até a resposta ser gravada.
+6. **Entrega, uma cópia por destinatário.** O gancho `deliver` (SessionStart, UserPromptSubmit e PostToolUse) lê e julga todas as respostas primeiro, depois reivindica cada cópia devida com um link que não sobrescreve e imprime a linha da resposta, em inglês, como contexto do gancho. A thread principal reivindica `d/<id>.json` (`"recipient": "main"`); um subagente reivindica só as respostas das perguntas que o próprio `ask` registrou, em `s/<id>.json`, e a pausa dele só termina com essa cópia ou um vencimento. Uma sessão ociosa recebe as respostas pelo painel: ele grava as marcas `d/` (`via: "prompt"`) e envia um prompt por sessão que perguntou. Uma execução do Codex lê a resposta com `wait --strict` ([Pelo Codex](#-pelo-codex)).
+7. **Liberação.** Uma resposta não lida vence quando o Claude Desktop liberou a sessão dela (`session-ended`) ou depois de 7 dias (`ttl`). No máximo uma vez por dia, o gancho deliver remove itens fechados mais antigos que `ASKAWAY_PRUNE_DAYS` (30 dias).
 
 ## 📋 Pré-requisitos
 
 - Claude Code 2.1.295 ou mais recente, que carrega mods e ganchos de plugins (o arquivo de ganchos usa `onFailure`, veja [ganchos](https://code.claude.com/docs/en/hooks)). Testado com o Claude Code 2.1.296 (`claude --version`).
-- Python 3.12 ou mais novo como `python3` no seu `PATH`, só com a biblioteca padrão (o script recusa rodar abaixo de 3.12: `scripts/askaway.py:12`). Testado com o Python 3.12.3.
+- Python 3.12 ou mais novo como `python3` no seu `PATH`, só com a biblioteca padrão (o script recusa rodar abaixo de 3.12: a checagem de `sys.version_info` no topo de `scripts/askaway.py`). Testado com o Python 3.12.3.
 - Nenhuma conta, serviço ou chave de API.
 
 | Plataforma | Status | Observações |
 |---|---|---|
 | Linux | ✅ | Testado com o Claude Code 2.1.296 e o Python 3.12.3. Os passos de shell da spec de instalação foram verificados só aqui. |
 | macOS | ⚠️ | A pasta de sessões do Claude Desktop é `~/Library/Application Support/Claude/claude-code-sessions` desde a 0.4.0-beta.37, coberta só por testes de unidade (`scripts/tests/test_platform_paths.py`). |
-| Windows | ❌ | Não testado. O código não tem caminho para Windows na pasta de sessões do Claude Desktop (`scripts/askaway.py:127-128`). |
+| Windows | ❌ | Não testado. O código não tem caminho para Windows na pasta de sessões do Claude Desktop (`DESKTOP_SESSIONS_ROOT` e `desktop_sessions_root`, `scripts/askaway.py`). |
 
 O painel só roda no Linux: as gravações de estado usam `mv -fT` do GNU, e a checagem de trava antiga usa `find -mmin` do GNU, que trunca a idade. O suporte ao macOS da 0.4.0-beta.37 cobre só a busca da sessão do Claude Desktop pela CLI.
 
@@ -461,6 +494,221 @@ A pasta de estado pertence a um usuário, e todas as sessões do Claude Code que
 - **Limpeza:** no máximo uma vez por dia, `deliver` remove itens fechados (entregues ou expirados) resolvidos há mais de `ASKAWAY_PRUNE_DAYS` dias (padrão 30) e arquivos temporários antigos.
 - **A CLI e os ganchos gravam só dentro da pasta de estado.** Cada arquivo é gravado primeiro num arquivo temporário e depois renomeado. Nada é enviado pela rede, e nada é gravado nos seus projetos ou transcrições.
 
+## 🧾 Decisões
+
+As escolhas por trás do comportamento do Askaway, agrupadas por área. Cada linha diz o que foi decidido, a alternativa que perdeu e o porquê, e **Desde** aponta para a entrada da versão no [CHANGELOG.md](CHANGELOG.md) (as versões anteriores à 0.4.0-beta.6 são de antes do CHANGELOG; uma data indica que a decisão manteve o comportamento como estava). A maioria foi decidida pela dona do projeto nas rodadas de revisão das betas. As regras completas estão no [SPEC.md](plugins/askaway/SPEC.md).
+
+<details>
+<summary>Contrato da pergunta (17)</summary>
+
+| Decisão | Em vez de | Por quê | Desde |
+|---|---|---|---|
+| Todo campo de explicação é obrigatório (`what`, `problem`, `context`, `why`, `how`, `gains`, `losses`, `analogy`, `urgency`, `undo`, e em cada opção `tradeoff`, `does`, `pros`, `cons`); um `ask` incompleto não registra nada. | Campos opcionais | Perguntas rasas chegavam ao painel, e quem estava ausente não conseguia avaliá-las. | 0.4.0-beta.5 |
+| `risk` é obrigatório e não tem padrão. | Um padrão `low` | Só o `risk` decide a pausa. | [beta.9](CHANGELOG.md#040-beta9---2026-10-18) |
+| Texto acima do limite é recusado como `too long (n/limit)`, nunca cortado. | Corte silencioso | Quem lê vê o texto inteiro do agente, e a resposta cita o limite. | [beta.9](CHANGELOG.md#040-beta9---2026-10-18) |
+| Um só pedido de correção (`refile`) cita todas as lacunas, agrupadas por campo e por opção. | Uma lacuna por ida e volta | Um `ask` incompleto voltava com uma lacuna de cada vez. | [beta.9](CHANGELOG.md#040-beta9---2026-10-18) |
+| As chaves das opções são letras maiúsculas seguidas a partir de `A`. | Chaves livres | As teclas de atalho e a letra de Outra saem das chaves. | [beta.8](CHANGELOG.md#040-beta8---2026-10-18) |
+| `fit` é um inteiro de 0 a 100, ou `null` para sem estimativa. | Só inteiros | Um agente sem estimativa ainda consegue registrar. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
+| Os limites de frases e linhas do playbook são orientação; a CLI confere tamanhos, mínimo de palavras e as duas frases de `what`. | Todo limite na CLI | A CLI confere o que consegue contar. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
+| Textos de enchimento são recusados (`TBD`, `todo`, `n/a`, `lorem`, só símbolos, menos de 3 palavras num texto longo; um texto CJK precisa de 6 letras ou dígitos). | Qualquer texto não vazio | Impede explicações vazias. | [beta.31](CHANGELOG.md#040-beta31---2026-10-21) |
+| Chaves de topo desconhecidas são guardadas com a pergunta, até 4096 bytes em JSON; NaN e Infinity voltam para correção. | Recusar chaves desconhecidas pelo nome | Aceitar e guardar, para manter os dados extras do agente. | [beta.32](CHANGELOG.md#040-beta32---2026-10-21) |
+| A resposta de `ask` traz o `title` validado. | Resposta sem título | O agente vê o título que o cartão mostra. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
+| Uma pergunta pode trazer as próprias `translations` (`en`, `pt-BR`); o painel nunca traduz o texto do agente. | Tradução feita pelo painel | Depois de `/askaway lang`, os rótulos trocavam e o texto do agente não. | [beta.34](CHANGELOG.md#040-beta34---2026-10-21) |
+| `urgency_level` opcional (`low`, `medium`, `high`), com a graduação por palavras-chave como reserva. | Só palavras-chave | Uma cor estável; as palavras-chave mudam com o idioma. | [beta.14](CHANGELOG.md#040-beta14---2026-10-18) |
+| Um `ask` repetido (mesma sessão, mesmo texto) devolve o id aberto; uma repetição de risco alto pausa e eleva o risco da gêmea para `high`. | Registrar duplicatas | `ask` idênticos simultâneos; uma repetição de risco alto ainda precisa pausar. | [beta.9](CHANGELOG.md#040-beta9---2026-10-18), [beta.31](CHANGELOG.md#040-beta31---2026-10-21) |
+| Uma pergunta de risco alto que não grava é tentada 4 vezes, com 50 ms entre elas, e então a resposta é `pause` com o erro do sistema. | Pedir correção na falha; uma tentativa | Um pedido de correção deixaria uma pergunta de risco alto seguir sem pausa. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
+| Um `ask` de risco alto que bate num erro interno responde `pause`. | `continue` | Falhar em direção à pausa. | [beta.7](CHANGELOG.md#040-beta7---2026-10-17) |
+| A marca de recomendada aparece uma vez: a CLI tira `(Recommended)`, `[Recomendada]`, `Keep - recommended` e afins do começo e do fim de todo rótulo guardado, e o painel desenha a própria marca. | Rótulos como vieram | Os rótulos mostravam a marca duas vezes. | [beta.40](CHANGELOG.md#040-beta40---2026-10-22) |
+| A skill é `askaway:askaway-question-playbook`, e o modelo pode carregá-la sozinho. | Uma skill chamada `askaway`; uma skill presa a um comando de barra | Uma skill chamada `askaway` tomava o `/askaway`, e execuções sem supervisão precisam do playbook. | [beta.8](CHANGELOG.md#040-beta8---2026-10-18) |
+
+</details>
+
+<details>
+<summary>CLI (10)</summary>
+
+| Decisão | Em vez de | Por quê | Desde |
+|---|---|---|---|
+| Uma linha JSON por comando; um erro de uso sempre sai com 1; `--strict` é opcional (1 num pedido de correção ou erro, 2 num timeout de `wait`). | Códigos de saída por padrão | Os scripts recebem uma resposta estável, e códigos de saída quando pedem. | [beta.7](CHANGELOG.md#040-beta7---2026-10-17) |
+| `<cmd> --help` imprime uma linha JSON de uso e sai com 0. | Ajuda só no nível de cima | Cada comando se explica no mesmo formato. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
+| `list` e `status` aceitam `--table`, em 80 colunas; JSON continua o padrão. | Só JSON; uma tabela sem limite | Uma visão legível no terminal. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20), [beta.32](CHANGELOG.md#040-beta32---2026-10-21) |
+| Abaixo do Python 3.12, toda chamada, ganchos incluídos, imprime um erro JSON no stderr e sai com 0. | Uma saída diferente de zero | Escolha da dona; o custo está em [Limites](#-limites). | [beta.32](CHANGELOG.md#040-beta32---2026-10-21) |
+| `export` continua um histórico completo para auditoria, sem `--redact`. | Um `--redact` opcional | A exportação é o histórico guardado para auditoria. | 2026-10-19 |
+| A exportação CSV põe um apóstrofo no começo das células que começam com `=`, `+`, `-`, `@`, tab ou CR. | Proteger só `=`, `@` e tab | Mais seguro abrir numa planilha. | [beta.15](CHANGELOG.md#040-beta15---2026-10-18) |
+| `prune --id <id> --force` é o modo próprio do usuário para uma pergunta cuja sessão não tem marca de fim; o guarda de Bash o nega ao agente. | Remover só pelo Desktop | Uma sessão de terminal nunca grava marca de fim. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
+| A retenção é de 30 dias (`ASKAWAY_PRUNE_DAYS`), contada do fechamento, nunca da pergunta. | Contar a partir da pergunta | Um item não entregue nunca pode ser limpo. | [beta.7](CHANGELOG.md#040-beta7---2026-10-17) |
+| Respostas não lidas expiram depois de 7 dias; um recuo do relógio nunca estende isso, um salto do relógio pula a limpeza daquele ciclo, e não há uma segunda referência de tempo. | Uma segunda referência de tempo | Simples, com o resíduo documentado. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20), [beta.32](CHANGELOG.md#040-beta32---2026-10-21) |
+| Cada resposta registra `who`: `ASKAWAY_WHO`, senão o usuário do sistema, senão `unknown`; o painel pergunta o nome uma vez; o nome é declarado, não verificado. | Uma identidade verificada | Uma ferramenta de um só usuário, com rótulo honesto. | [beta.7](CHANGELOG.md#040-beta7---2026-10-17), [beta.11](CHANGELOG.md#040-beta11---2026-10-18) |
+
+</details>
+
+<details>
+<summary>Painel e interface (20)</summary>
+
+| Decisão | Em vez de | Por quê | Desde |
+|---|---|---|---|
+| Nada no cartão recolhe: O que acontece, Prós e Contras de cada opção e o bloco de detalhes aparecem sempre, e não há tecla `e`. | Recolher a justificativa | As linhas de cada opção eram a parte mais usada do cartão. | [beta.27](CHANGELOG.md#040-beta27---2026-10-19) |
+| Contexto antes da decisão: a explicação e os detalhes, depois a pergunta e as opções. | Pergunta e opções primeiro | A ordem de cartão aprovada. | 2026-10-19 |
+| Um cartão por vez, a pergunta mais antiga primeiro; os grupos na ordem da sua pergunta mais antiga. | A mais nova primeiro | O mock aprovado. | 0.1.0 |
+| A árvore agrupa pelo grupo da barra lateral do Desktop, senão pela família de sessões, senão pelo projeto. | Agrupar só por projeto | Uma família do Desktop se dividia entre pastas; a árvore segue a barra lateral. | [beta.13](CHANGELOG.md#040-beta13---2026-10-18), [beta.35](CHANGELOG.md#040-beta35---2026-10-21) |
+| As linhas da árvore são links, sem teclas de atalho. | Linhas como botões com dígitos | O Markdown do motor não aceita tecla de atalho. | [beta.27](CHANGELOG.md#040-beta27---2026-10-19) |
+| Enviar tudo manda a rodada de um grupo, o Enviar resposta de uma linha manda uma, e nada é enviado antes de um clique. | Enviar ao escolher | O usuário revisa antes de enviar. | [beta.12](CHANGELOG.md#040-beta12---2026-10-18), [beta.27](CHANGELOG.md#040-beta27---2026-10-19) |
+| As letras das opções são teclas de atalho; Voltar, Próxima e Enviar tudo são `z`, `x`, `w` no terminal e `p`, `f`, `w` no desktop; o Responder da faixa é `1`. | `b`, `n`, `s` | Essas batem com as opções B, N e S. | [beta.8](CHANGELOG.md#040-beta8---2026-10-18), [beta.9](CHANGELOG.md#040-beta9---2026-10-18) |
+| O campo Outra fica sempre aberto; o texto é registrado ao sair do campo, ao navegar e no Enviar tudo, nunca a cada tecla; Aplicar o torna o rótulo do botão Outra. | Registrar a cada tecla; só no Enter | Redesenhar a cada tecla piscava e perdia caracteres. | [beta.15](CHANGELOG.md#040-beta15---2026-10-18), [beta.32](CHANGELOG.md#040-beta32---2026-10-21) |
+| Uma escolha, Próxima ou Voltar inicia uma trava de movimento visível de 350 ms. | Sem trava | Um clique duplo pulava uma pergunta. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
+| Um cartão respondido fica esmaecido até a resposta ser gravada e volta na hora em caso de falha. | Um esmaecimento fixo de 250 ms | O esmaecimento diz a verdade sobre a gravação. | [beta.38](CHANGELOG.md#040-beta38---2026-10-22) |
+| As escolhas são compartilhadas por todas as sessões pelo `draft.json` (mescladas por id, a mais nova vence); um rascunho datado à frente do relógio é trazido de volta. | Escolhas por sessão | Um só quadro de respostas em toda janela. | [beta.24](CHANGELOG.md#040-beta24---2026-10-18) |
+| Uma linha entregue do Histórico fica até o Limpar tudo. | Sumir em 30 s | O usuário decide quando o histórico sai. | [beta.27](CHANGELOG.md#040-beta27---2026-10-19) |
+| As linhas do Histórico são texto simples: o título inteiro, o rótulo da resposta ou o texto de Outra entre aspas, e os horários. | Links nos títulos | Nenhum cartão abre uma pergunta respondida, e o Desktop desenhava um link como um chip de sessão. | [beta.35](CHANGELOG.md#040-beta35---2026-10-21) |
+| Limpar tudo é de mão única e não destrói nada: grava só `cleared.json`, compartilhado por todas as sessões. | Desfazer; apagar arquivos | Os arquivos de resposta ficam, então as sessões ainda os leem. | [beta.25](CHANGELOG.md#040-beta25---2026-10-19) |
+| A opção recomendada é só negrito; a cor de destaque nunca é usada em texto. | Ciano ou magenta | Neutro em qualquer tema; o destaque mediu 3,28:1 no escuro. | [beta.7](CHANGELOG.md#040-beta7---2026-10-17) |
+| O bloco de detalhes é preenchido com a chave de tema do motor `userMessageBackground`, sem borda. | Um hex por família de tema; uma borda | O preenchimento escuro ficava ilegível no Desktop claro. | [beta.28](CHANGELOG.md#040-beta28---2026-10-20) |
+| O rodapé e as sublinhas das opções são desenhados sem esmaecer. | Texto esmaecido | O rodapé esmaecido mediu 3,95:1, abaixo de 4,5:1. | [beta.33](CHANGELOG.md#040-beta33---2026-10-21) |
+| O painel nunca corta um título, e desenha o título de reserva de 60 caracteres da CLI como a pergunta inteira. | Cortes de 24 e 40 caracteres | Uma pergunta cortada não dava para ler. | [beta.35](CHANGELOG.md#040-beta35---2026-10-21) |
+| O cartão de uma sessão encerrada mostra um aviso cujo Dispensar roda `prune --force`; o aviso de uma pausa danificada roda `prune --id --strict` sem `--force`. | `--force` em tudo | O clique do usuário precisa liberar uma pausa, e uma pergunta legível não pode ser apagada. | [beta.11](CHANGELOG.md#040-beta11---2026-10-18), [beta.31](CHANGELOG.md#040-beta31---2026-10-21) |
+| Cada botão mantém o identificador de clique entre as redesenhas (`hooks/held.ts`). | Um botão novo a cada desenho | O primeiro clique no desktop se perdia. | 0.3.4 |
+
+</details>
+
+<details>
+<summary>Guarda de Bash e de arquivos (10)</summary>
+
+| Decisão | Em vez de | Por quê | Desde |
+|---|---|---|---|
+| O guarda nega `askaway.py answer` no shell do próprio agente, em toda sessão. | Só uma regra na skill | Os agentes conseguiam responder a própria pergunta. | [beta.9](CHANGELOG.md#040-beta9---2026-10-18) |
+| A barreira é o guarda de Bash, documentado como um freio, não uma garantia. | Prometer isolamento | Um processo do mesmo usuário sempre alcança a pasta; a documentação diz isso. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
+| O Bash do agente não pode rodar `away on` nem `away off`; quem troca o modo ausente é o usuário. | Permitir | O modo ausente é uma declaração do usuário. | [beta.32](CHANGELOG.md#040-beta32---2026-10-21) |
+| Falhar fechado: uma busca de pausa que falha, uma pasta `q/` ilegível, um evento de gancho ilegível, ou um timeout ou queda do gancho (`onFailure: block`) negam a chamada. | Falhar aberto | Um guarda quebrado não pode liberar uma pausa. | [beta.38](CHANGELOG.md#040-beta38---2026-10-22), [beta.40](CHANGELOG.md#040-beta40---2026-10-22) |
+| Uma cópia congelada de um guarda anterior (`scripts/askaway_guard_baseline.py`) decide primeiro, depois o leitor atual, então o guarda nunca nega menos; a cópia sai depois de uma revisão limpa do leitor. | Mais rodadas de revisão | As revisões seguiam achando regressões no leitor. | [beta.38](CHANGELOG.md#040-beta38---2026-10-22), [beta.39](CHANGELOG.md#040-beta39---2026-10-22) |
+| Uma gravação relativa depois de `cd "$VAR"` só é recusada quando o comando cita askaway, `ASKAWAY_HOME` ou `state`; um heredoc de `git` ou `gh` só é texto de mensagem para um subcomando de mensagem nativo, sem configuração, que lê a mensagem do stdin. | Manter esses excessos | Bloqueavam commits e pull requests e não protegiam nada. | [beta.39](CHANGELOG.md#040-beta39---2026-10-22), [beta.40](CHANGELOG.md#040-beta40---2026-10-22) |
+| Um comando de Bash com mais de 64K caracteres é negado. | Deixar só com a cópia congelada | Uma grafia que nenhum padrão cobre ainda poderia mirar a pasta de estado. | [beta.40](CHANGELOG.md#040-beta40---2026-10-22) |
+| Um diretório de trabalho apagado não libera nada: os dois leitores rodam com o diretório desconhecido, e todo alvo relativo de gravação é recusado. | Liberar a chamada | Era a última liberação sem checagem. | [beta.40](CHANGELOG.md#040-beta40---2026-10-22) |
+| O corpo JSON de uma chamada da caixa de entrada e o texto entre aspas simples são dados, não código. | Ler um heredoc inteiro como código | Uma edição da spec num commit de versão era negada. | [beta.10](CHANGELOG.md#040-beta10---2026-10-18), [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
+| Ferramentas MCP só de leitura passam por uma pausa (prefixos de leitura como `get_`, `list_`, `query_`, sem palavra de escrita). | Segurar toda chamada MCP | Ler não muda nada; aceita-se que um `query_*` genérico passe. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20), [beta.38](CHANGELOG.md#040-beta38---2026-10-22) |
+
+</details>
+
+<details>
+<summary>Entrega a agentes e subagentes (11)</summary>
+
+| Decisão | Em vez de | Por quê | Desde |
+|---|---|---|---|
+| As respostas registram a sessão, e uma resposta `cli` de outra sessão é recusada. | Um comando local confiável | Os scripts seguem funcionando, e as respostas entre sessões param. | [beta.7](CHANGELOG.md#040-beta7---2026-10-17) |
+| Uma resposta de shell a uma pergunta sem sessão (Codex) continua aceita. | Exigir o token do painel | Mantém o caminho dos scripts. | 2026-10-19 |
+| Uma resposta `cli` da própria sessão é marcada `by: agent`, e a linha de entrega diz quem respondeu, em cinco redações. | Só documentar o limite | A resposta de um agente não pode parecer a do usuário. | [beta.10](CHANGELOG.md#040-beta10---2026-10-18) |
+| Um token de uso único do painel protege `--by panel`, `accept_all` e `accept_recommended`, como segunda camada, não isolamento. | Sem token | Uma chamada `--by panel` crua deve falhar. | [beta.11](CHANGELOG.md#040-beta11---2026-10-18) |
+| Uma pausa dura até a resposta ser entregue, não gravada. | Terminar na gravação | Um agente agiu sobre A antes de ler B. | [beta.7](CHANGELOG.md#040-beta7---2026-10-17) |
+| Uma pausa segura só o agente que a registrou (`asker`, gravado pelo `stamp-asker`); uma pausa sem marca segura a sessão inteira. | Segurar a sessão inteira | A pergunta de um subagente em segundo plano travou uma sessão por 13 minutos. | [beta.36](CHANGELOG.md#040-beta36---2026-10-21) |
+| Cada resposta tem uma cópia por destinatário: `d/` para a sessão principal, `s/` para o subagente que perguntou; a pausa de um subagente só termina com a própria cópia ou um vencimento. | Uma marca compartilhada | A resposta chegava ao subagente errado ou a um transcrito que ninguém lia. | [beta.39](CHANGELOG.md#040-beta39---2026-10-22), [beta.40](CHANGELOG.md#040-beta40---2026-10-22) |
+| Uma cópia é reivindicada antes de a linha ser impressa: uma linha pode se perder uma vez, nunca ser enviada duas. | Imprimir primeiro | Uma resposta duplicada depois é pior que uma linha perdida. | [beta.32](CHANGELOG.md#040-beta32---2026-10-21) |
+| A linha de entrega cita `who`, o título e os rótulos como JSON, e marca o texto de Outra como dado, não instrução. | Texto cru | Impede injeção de prompt e linhas forjadas. | [beta.15](CHANGELOG.md#040-beta15---2026-10-18) |
+| As linhas para o modelo são sempre em inglês, idênticas em Python e TypeScript (um fixture compartilhado). | Linhas traduzidas | Um contrato estável para os agentes. | [beta.29](CHANGELOG.md#040-beta29---2026-10-20) |
+| Codex: nenhum gancho o alcança, então o script dele roda `wait --strict` num `pause`. | Nenhuma regra | Nada segura uma execução do Codex. | [beta.9](CHANGELOG.md#040-beta9---2026-10-18) |
+
+</details>
+
+<details>
+<summary>Idioma, pasta de estado e distribuição (11)</summary>
+
+| Decisão | Em vez de | Por quê | Desde |
+|---|---|---|---|
+| Inglês e pt-BR pelo locale, inglês sem locale. | Português por padrão | Um padrão neutro para um plugin público. | 0.1.0 |
+| `/askaway lang` redesenha o cartão aberto na hora. | Esperar a próxima consulta | Um cartão aberto ficava no idioma antigo. | [beta.33](CHANGELOG.md#040-beta33---2026-10-21) |
+| Os rótulos de grupo e de sessão não são traduzidos. | Traduzi-los | São os nomes do próprio usuário. | [beta.35](CHANGELOG.md#040-beta35---2026-10-21) |
+| Um arquivo JSON por item em `q/`, `a/`, `d/` e `s/`, nunca um arquivo compartilhado. | Um arquivo compartilhado | Sem corrida de acréscimo e sem limite de tamanho. | 0.1.0 |
+| A CLI é a única que grava `a/`, e vale a primeira gravação (`os.link`). | O painel gravar `a/` | A API de arquivos do host não tem criação exclusiva. | [beta.8](CHANGELOG.md#040-beta8---2026-10-18) |
+| Só arquivos comuns são lidos (`O_NOFOLLOW`, `S_ISREG`); as pastas são criadas com modo 700. | Seguir links | Impede truques de symlink, FIFO e modo. | [beta.29](CHANGELOG.md#040-beta29---2026-10-20), [beta.31](CHANGELOG.md#040-beta31---2026-10-21) |
+| Uma máquina, um login; a CLI confia em `CLAUDE_CODE_SESSION_ID`, registrado como limite conhecido. | Não registrar | Honesto sobre o modelo de confiança. | 2026-10-19 |
+| Um arquivo `q/` danificado segura a sessão inteira. | Ignorá-lo | Um arquivo danificado não pode liberar uma pausa. | [beta.38](CHANGELOG.md#040-beta38---2026-10-22) |
+| O catálogo fica em `KeepGlide/claude-plugins` (marketplace `keepglide`) e fixa uma tag e um commit. | Um marketplace neste repositório | Um plugin teria dois nomes de marketplace. | 0.4.0-beta.4 |
+| Sem GitHub Actions: as duas suítes rodam localmente. | CI a cada push | O CI gastou a cota mensal de minutos. | [beta.24](CHANGELOG.md#040-beta24---2026-10-18) |
+| É preciso o Claude Code 2.1.295 ou mais recente. | Versões antigas | Os ganchos usam `onFailure` para falhar fechado. | [beta.38](CHANGELOG.md#040-beta38---2026-10-22) |
+
+</details>
+
+## 🔀 Escolhas e renúncias
+
+Cada linha nomeia o valor que o Askaway escolheu e o que ele abriu mão.
+
+- **Continuidade em vez de espera.** O agente segue na opção recomendada e só `high` pausa, então você pode encontrar trabalho já feito no padrão; a sua resposta o troca.
+- **Segurança em vez de velocidade nas escolhas arriscadas.** Uma pausa termina quando a resposta é entregue a quem perguntou, não quando é gravada, então o agente fica retido até o próximo gancho dele lê-la.
+- **Vazão em vez de uma retenção geral.** Só o agente que perguntou pausa; os outros subagentes seguem trabalhando, e uma pausa da thread principal não segura subagentes que já estão rodando.
+- **Falhar fechado em vez de disponibilidade.** Uma pasta `q/` ilegível, um erro de busca, um evento de gancho ilegível, ou um timeout ou queda do gancho bloqueiam toda chamada que altera algo naquela sessão até ser corrigido.
+- **Paridade com o guarda anterior em vez de menos falsos positivos.** A cópia congelada decide primeiro, então o guarda nunca nega menos, e alguns excessos que o leitor tinha corrigido voltaram ([Problemas conhecidos](#-problemas-conhecidos)).
+- **Um guarda limitado em vez de ler tudo.** Um comando com mais de 64K caracteres é negado em vez de lido; divida-o, ou grave conteúdo grande com a ferramenta Write.
+- **Usabilidade em vez de rigor, depois da cópia.** Edições depois de `cd "$VAR"` e heredocs de mensagem de `git` ou `gh` passam, então commits e pull requests funcionam; ali o guarda lê menos.
+- **Honestidade em vez de falsas garantias.** O guarda é documentado como um freio, com a lista do que ele não cobre; um processo determinado do mesmo usuário ainda consegue responder.
+- **Simplicidade em vez de isolamento.** Uma pasta de estado por login, um `CLAUDE_CODE_SESSION_ID` confiável e um `who` declarado: um login compartilhado compartilha a caixa de entrada, e qualquer um assina qualquer nome.
+- **Nunca duas vezes em vez de nunca perdida.** Uma cópia é reivindicada antes de a linha ser impressa: uma interrupção entre as duas perde uma linha, e o Histórico ainda mostra a resposta.
+- **Uma cópia por destinatário em vez de uma marca compartilhada.** A sessão principal e o subagente que perguntou recebem a resposta uma vez cada, e `status` lê `delivered` pela cópia principal enquanto a retenção do subagente pode continuar.
+- **Uma pergunta avaliável em vez de uma barata.** Todo campo de explicação é obrigatório, então os agentes escrevem uma explicação completa e você decide com os mesmos fatos.
+- **Recusar em vez de cortar.** Texto longo é recusado com `too long (n/limit)`, nunca cortado pelas suas costas; o agente registra de novo.
+- **Um arquivo por item em vez de um arquivo compartilhado.** Sem corrida de acréscimo e sem limite de tamanho, ao custo de listar a pasta a cada consulta.
+- **Um gravador em vez de dois.** As respostas do painel passam pela CLI, então o painel precisa de `python3`, e uma execução que falha vira um aviso de erro.
+- **Visibilidade em vez de brevidade.** Nada recolhe, então os cartões são longos e você rola em vez de expandir.
+- **Um histórico de auditoria em vez de privacidade por padrão.** As exportações levam ids de sessão, caminhos de projeto e títulos; limpe-os antes de compartilhar.
+- **Segurança na planilha em vez de células idênticas byte a byte.** Células CSV que começam com `=`, `+`, `-`, `@`, tab ou CR ganham um apóstrofo no começo.
+- **Fidelidade ao tema em vez da cor da marca.** A cor de destaque nunca é usada em texto, e o preenchimento dos detalhes é a própria chave de tema do motor.
+- **Legibilidade medida em vez de estilo sutil.** O rodapé e as sublinhas das opções são normais, não esmaecidos.
+- **Retorno honesto em vez de tempo fixo.** Um cartão fica esmaecido até a resposta ser gravada; uma falha o devolve na hora.
+- **Movimentos deliberados em vez de velocidade.** Uma trava de 350 ms depois de uma escolha, Próxima ou Voltar impede pulos por clique duplo.
+- **Último estado bom em vez de uma tela vazia.** Uma listagem que falha mantém o último quadro e os últimos grupos do Desktop, então a visão pode estar uma consulta atrasada, mas nunca em branco.
+- **TTL simples em vez de robustez ao relógio.** Não há segunda referência de tempo, então uma máquina parada por mais de 7 dias pode entregar uma resposta vencida uma vez.
+- **Um padrão neutro em vez do idioma da dona.** O inglês é o padrão; quem usa pt-BR define um locale ou `/askaway lang`.
+- **Traduções escritas pelo agente em vez de tradução pelo painel.** Uma pergunta sem `translations` fica no próprio idioma.
+- **Links em vez de teclas de atalho nas linhas da árvore.** Não há salto pelo teclado até uma linha.
+- **Linux primeiro em vez de portabilidade.** O painel usa `mv -fT` e `find -mmin` do GNU, então só roda no Linux.
+- **Testes locais em vez de CI.** Nenhum GitHub Actions roda; quem contribui roda as duas suítes.
+
+## 🚧 Limites
+
+O que o Askaway não faz ou não consegue garantir. As limitações que têm contorno estão em [Problemas conhecidos](#-problemas-conhecidos), e os limites de segurança também estão no [SECURITY.md](SECURITY.md#known-limits).
+
+**Ambiente e plataforma**
+
+- **Python 3.12 ou mais novo.** Abaixo dele, toda chamada e todo gancho imprimem um erro de versão no stderr e saem com 0, então a pausa e o guarda de Bash e de arquivos não seguram nada.
+- **Claude Code 2.1.295 ou mais recente.** O guarda de pausa só bloqueia uma chamada no próprio timeout ou queda pelo `"onFailure": "block"`; num Claude Code mais antigo, um guarda de pausa que estoura o tempo ou cai deixa a chamada passar.
+- **POSIX e Linux.** A CLI precisa de POSIX (travas `fcntl`). O painel só roda no Linux (`mv -fT` e `find -mmin` do GNU). No macOS só a busca da sessão do Desktop pela CLI é coberta; o Windows não é tratado.
+- **Os grupos do Desktop** são lidos só do caminho de configuração do Linux ou de `ASKAWAY_DESKTOP_CONFIG`. O formato é o do próprio Desktop, privado e sem documentação, e um arquivo acima de 4 MiB mantém os últimos grupos lidos.
+
+<details>
+<summary>Tamanhos e tempos</summary>
+
+| Item | Limite |
+|---|---|
+| Campos de texto | `question` 400 caracteres; `what` e `context` 600; `problem` e `how` 400; `title` 60; todo outro texto 300 |
+| Forma da pergunta | Pelo menos 2 opções; `what` tem pelo menos 2 frases; um texto longo tem pelo menos 3 palavras (CJK: 6 letras ou dígitos) |
+| Chaves de topo desconhecidas | 4096 bytes em JSON |
+| Texto de Outra e `who` | Texto de Outra 500 pontos de código, sem reticências; `who` 40 caracteres |
+| Títulos de sessão e de família | 80 caracteres |
+| Busca no Desktop | Arquivos de até 2 MB, no máximo 2000 arquivos por busca, no máximo 8 elos de fork ou spawn |
+| Guarda de Bash | 64 níveis de aninhamento; um comando com mais de 64K caracteres é negado |
+| `--table` | 80 colunas |
+| TTL de resposta não lida | 7 dias |
+| Limpeza | 30 dias por padrão (`ASKAWAY_PRUNE_DAYS`), no máximo uma vez por dia; os arquivos de token saem depois de um dia |
+| Token do painel | Uso único, no máximo 120 s de idade |
+| Painel | Consulta a cada 5 s; reconfere sessões encerradas no máximo a cada 30 s; trava de movimento de 350 ms; entrega a uma sessão ociosa respostas com pelo menos 5 s |
+| `wait` | Consulta a cada 0,5 s; timeout padrão de 300 s |
+| Ganchos | Timeout de 5 s cada |
+| Gravação de risco alto | 4 tentativas, com 50 ms entre elas |
+
+</details>
+
+**O que não dá para garantir**
+
+- **O guarda é um freio, não uma garantia.** Ele não cobre `xargs`, `find -exec`, `env -S`, `uv run`, `unset ASKAWAY_HOME`, uma cópia do script em outro caminho, um comando de PowerShell ou uma ferramenta MCP que grave arquivos fora de uma pausa, uma palavra de comando ou um alvo de gravação guardado numa variável, um nome de script montado na execução, um caminho `~user`, uma lista entre chaves, `eval "$X"`, nem uma cópia recursiva, `chmod`, `chown` ou `setfacl` num ancestral da pasta de estado. O shell do próprio usuário não é vigiado.
+- **O token do painel não é isolamento.** Qualquer processo do mesmo usuário que consiga gravar a pasta de estado pode gerar um.
+- **Detecção de ausência.** `CLAUDE_CODE_SESSION_ATTENDED=0` é um sinal não oficial; um host que o define faz toda sessão contar como ausente.
+- **Quem fica retido.** Uma pausa da thread principal não segura subagentes que já estão rodando, e uma pergunta de risco alto sem sessão (Codex) não segura nenhuma sessão: o agente precisa parar sozinho.
+- **Limites do motor.** O campo Outra não tem nome acessível, e não existe evento de janela oculta para registrar o texto de Outra ao ocultar.
+
+**Resíduos aceitos**
+
+- Uma interrupção entre reivindicar uma cópia e imprimir a linha perde essa linha; o Histórico ainda mostra a resposta.
+- Uma máquina parada por mais de 7 dias parece um salto do relógio: nesse primeiro ciclo, uma resposta vencida é entregue uma vez em vez de expirar.
+- Um arquivo `q/` pego no meio da gravação pode mostrar o aviso de danificado por uma consulta.
+- O `wait` de um subagente numa pergunta sem pausa registrada como `main` marca a cópia da sessão principal, então a sessão principal não recebe essa resposta.
+- Quando nenhum de `LOGNAME`, `USER`, `LNAME` e `USERNAME` está definido, a cópia local de uma resposta no painel diz `unknown` como quem respondeu, onde a CLI pode citar a conta (`panelWho`, `hooks/register.tsx`); o registro gravado mostra o nome da CLI assim que é lido de volta.
+
 ## 🔒 Segurança e privacidade
 
 Relate uma vulnerabilidade em privado, não numa issue pública. [SECURITY.md](SECURITY.md) tem o canal de relato, as versões suportadas e o prazo de resposta. Os limites conhecidos da pasta de estado de um só usuário estão nas seções [Security](plugins/askaway/SPEC.md#security) e [Panel credential](plugins/askaway/SPEC.md#panel-credential) da spec.
@@ -484,14 +732,16 @@ Relate uma vulnerabilidade em privado, não numa issue pública. [SECURITY.md](S
 
 ## 🐞 Problemas conhecidos
 
-Nenhuma issue aberta traz o rótulo `bug` em 2026-10-21 (`gh issue list -R KeepGlide/askaway --state open --label bug`). Estas limitações vêm do código, do CHANGELOG e desta página:
+Nenhuma issue aberta traz o rótulo `bug` em 2026-10-22 (`gh issue list -R KeepGlide/askaway --state open --label bug`). Estas limitações vêm do código, do CHANGELOG e desta página; os limites sem contorno estão em [Limites](#-limites):
 
-- **O Windows não é tratado.** A pasta de sessões do Claude Desktop é `$XDG_CONFIG_HOME/Claude/claude-code-sessions` (padrão `~/.config`) no Linux e `~/Library/Application Support/Claude/claude-code-sessions` no macOS (`desktop_sessions_root`, `scripts/askaway.py:977-983`), então no Windows ela aponta para uma pasta que o Claude Desktop não usa. Isso não foi testado lá. Contorno: nenhum.
-- **Grupos do Desktop no macOS podem precisar do caminho da configuração.** O caminho padrão da configuração é `~/.config/Claude/claude_desktop_config.json` em todas as plataformas (`hooks/register.tsx:266`). Se os grupos do Desktop faltarem no macOS, defina `ASKAWAY_DESKTOP_CONFIG` com o caminho do arquivo de configuração. As perguntas continuam agrupadas por família ou projeto.
+- **O Windows não é tratado.** A pasta de sessões do Claude Desktop é `$XDG_CONFIG_HOME/Claude/claude-code-sessions` (padrão `~/.config`) no Linux e `~/Library/Application Support/Claude/claude-code-sessions` no macOS (`desktop_sessions_root`, `scripts/askaway.py`), então no Windows ela aponta para uma pasta que o Claude Desktop não usa. Isso não foi testado lá. Contorno: nenhum.
+- **Grupos do Desktop no macOS podem precisar do caminho da configuração.** O caminho padrão da configuração é `~/.config/Claude/claude_desktop_config.json` em todas as plataformas (`desktopConfigPathOf`, `hooks/register.tsx`). Se os grupos do Desktop faltarem no macOS, defina `ASKAWAY_DESKTOP_CONFIG` com o caminho do arquivo de configuração. As perguntas continuam agrupadas por família ou projeto.
 - **API de acesso antecipado.** A API de mods muda entre as versões do Claude Code, então um Claude Code mais novo pode mudar o painel antes de o Askaway acompanhar. Contorno: fique no Claude Code 2.1.296, que foi testado, ou volte a uma versão com tag ([Fixar e voltar a versão](#fixar-e-voltar-a-versão)).
 - **Uma execução do Codex não pode ser pausada.** Nada segura uma execução do Codex, então o script dela precisa esperar a resposta por conta própria. Contorno: [Pelo Codex](#-pelo-codex).
 - **O guarda de Bash é um desestímulo.** Ele nega `askaway.py answer` na chamada de Bash do próprio agente, mas a chamada de CLI do painel não é uma chamada de ferramenta, e o hook não a vê. A CLI também confia em `CLAUDE_CODE_SESSION_ID`, e um processo do mesmo usuário que consiga gravar a pasta de estado pode gerar um token do painel ([SECURITY.md](SECURITY.md#known-limits)). Contorno: um login por pasta de estado.
 - **O nome `who` é declarado, não verificado.** Quem puder digitar um nome pode assinar uma resposta com ele ([Configuração](#%EF%B8%8F-configuração)). Contorno: dê a cada pessoa o seu próprio login.
+- **A cópia congelada do guarda traz de volta alguns excessos.** Até a cópia sair, o guarda de Bash nega alguns comandos inofensivos: `export CDPATH=...; touch a`; um heredoc entre aspas cujo corpo tem uma linha `source` e um redirecionamento relativo (como `cat > README.md <<'EOF'` com `source .venv/bin/activate` e `pytest > test.log`); e `git commit -F - <<'EOF'` cuja mensagem cita palavras do askaway como `cmd_prune`. A cópia e o leitor negam um `ask` cujo JSON entre aspas simples tem um `askaway.py answer` entre crases, ou um `<<` junto com a palavra away. Contorno: grave arquivos com a ferramenta Write, passe a mensagem de commit por um arquivo (`git commit -F msg.txt`) ou como argumento (`git commit -m "$(cat <<'EOF'` … `EOF` `)"`, sem apóstrofo no corpo), e deixe crases e `<<` fora do JSON do `ask` ([SPEC.md](plugins/askaway/SPEC.md#commands)).
+- **`status` diz `delivered` enquanto um subagente ainda está retido.** `status`, `list`, `export` e o painel leem só a cópia da sessão principal (`d/`), então uma pergunta diz `delivered` assim que a sessão principal a recebe, enquanto a pausa do subagente que perguntou vale até a própria cópia (`s/`). Contorno: o subagente retido roda uma chamada `askaway.py status <id>`, que traz a cópia dele e encerra a retenção.
 
 Encontrou um? [Abra uma issue](https://github.com/KeepGlide/askaway/issues/new).
 
@@ -526,7 +776,19 @@ biome lint plugins/askaway
 
 ## 📝 Changelog
 
-As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md), no formato [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). O Askaway segue o [Versionamento Semântico](https://semver.org/).
+As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md), no formato [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), da 0.4.0-beta.6 em diante; as versões anteriores estão no histórico do git. O Askaway segue o [Versionamento Semântico](https://semver.org/). A linha de versões até aqui:
+
+| Versões | Datas | Temas |
+|---|---|---|
+| 0.1.0 a 0.3.5 | 2026-10-16 a 10-17 | Primeira versão pública: a CLI com um arquivo por item, os ganchos de comando, o painel com uma pergunta por vez, a faixa, o aviso, inglês e pt-BR, o repasse na ociosidade; depois o painel redesenhado como o diálogo de perguntas do próprio Claude Code, a árvore de perguntas e a correção do primeiro clique. |
+| 0.4.0-beta.3 a beta.5 | 2026-10-17 | A marca da KeepGlide, seções de explicação no cartão, o catálogo movido para `KeepGlide/claude-plugins`, todo campo de explicação obrigatório. |
+| beta.6 a beta.8 | 2026-10-17 a 10-18 | Um pacote de segurança (a marca de sessão, a recusa entre sessões, a pausa até a entrega, cobertura de `Agent` e MCP); `wait`, `--strict`, `export` e `who`; a CLI como única gravadora de respostas. |
+| beta.9 a beta.11 | 2026-10-18 | O guarda de Bash nega respostas pelo shell; `risk` obrigatório; `by: agent` e cinco redações de entrega; o token de uso único do painel; o cartão de sessão encerrada; o modo silencioso. |
+| beta.12 a beta.25 | 2026-10-18 a 10-19 | O layout do cartão: detalhes sempre abertos, o campo Outra, o Histórico, agrupamento por família de sessões do Desktop, Limpar tudo; escolhas compartilhadas entre sessões; GitHub Actions removido. |
+| beta.26 a beta.30 | 2026-10-19 a 10-20 | Rodadas de revisão 3 e 4: o preenchimento dos detalhes pelo tema, leitura só de arquivos comuns, `.ask.lock`, o fixture compartilhado das linhas de entrega, `--help`, `--table`, `prune --force`, a trava de movimento. |
+| beta.31 a beta.35 | 2026-10-21 | Rodada de revisão 5: reforço do guarda, o TTL ancorado em `clock_mark`, o aviso de pausa danificada, troca do modo ausente negada ao agente; `translations` na pergunta; grupos da barra lateral do Desktop; títulos inteiros. |
+| beta.36 a beta.39 | 2026-10-21 a 10-22 | A pausa segura só o agente que perguntou (`stamp-asker`); o caminho de sessões do macOS; falhar fechado com `onFailure: block`; a cópia congelada do guarda; esmaecido até gravar; entrega ao subagente que perguntou. |
+| beta.40 | 2026-10-22 | Uma cópia de cada resposta por destinatário (`d/` e `s/`); a marca de recomendada desenhada uma vez; comandos com mais de 64K caracteres negados; um diretório de trabalho apagado não libera mais; `MultiEdit` coberto; um evento de gancho ilegível negado. |
 
 ## 🤝 Contribuição
 

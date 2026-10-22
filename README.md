@@ -33,6 +33,9 @@
 - [🧠 How agents file questions](#-how-agents-file-questions)
 - [🧩 From Codex](#-from-codex)
 - [🗂️ State folder](#%EF%B8%8F-state-folder)
+- [🧾 Decisions](#-decisions)
+- [🔀 Trade-offs](#-trade-offs)
+- [🚧 Limits](#-limits)
 - [🔒 Security and privacy](#-security-and-privacy)
 - [🩺 Troubleshooting](#-troubleshooting)
 - [🐞 Known issues](#-known-issues)
@@ -121,51 +124,81 @@ Restart Claude Code, or run `/reload-plugins` if your version has it, then run `
 
 ## ⚙️ How it works
 
-Askaway has two parts. The CLI (`scripts/askaway.py`) files, answers and reports questions as one JSON file each in the state folder. The panel (a mod in `hooks/`) polls that folder every 5 seconds (`POLL_MS = 5000` in `hooks/register.tsx`) and writes answers only through the CLI. The command hooks of each session read the same folder: they hand each answer to the session that asked, and they hold the agent that asked a `high` risk question until its answer is delivered.
+Askaway has two parts that share one state folder. The CLI (`scripts/askaway.py`) files and answers questions, one JSON file per item, and runs the four command hooks of `hooks/command-hooks.json` (`deliver`, `ask-guard`, `pause-guard`, `stamp-asker`). The panel (a mod loaded from `hooks/register.tsx`) polls the folder every 5 seconds (`POLL_MS = 5000` in `hooks/register.tsx`) and writes answers only through the CLI.
 
 Components and the file flow:
 
 ```mermaid
 flowchart LR
-    agent["Agent needs a decision"] -->|"ask: writes a question"| folder[("State folder: q/ questions")]
-    folder -->|"poll every 5 s"| band["Band button and toast"]
-    band --> panel["Panel: tree of questions by session family, one card at a time, Submit all"]
-    panel -->|"Submit all: the CLI writes a/ answers"| answers[("State folder: a/ answers")]
-    answers -->|"deliver hook or idle hand-off"| agent
+    agent["Agent: main thread or subagent"] -->|"ask --json"| cli["CLI: scripts/askaway.py"]
+    cli -->|"writes the question"| q[("q/ questions")]
+    stamp["stamp-asker hook, after Bash"] -->|"writes asker on a new pause"| q
+    guard["pause-guard hook, before changing tools"] -->|"reads"| q
+    guard -->|"frozen copy first, then the scanner, and holds the asker"| agent
+    q -->|"poll every 5 s"| panel["Panel: band, toast, tree, one card"]
+    panel -->|"mints a one-shot token"| tokens[("panel-tokens/")]
+    panel -->|"answer --by panel"| cli
+    cli -->|"first writer wins"| a[("a/ answers")]
+    a --> deliver["deliver hook"]
+    deliver -->|"main session copy"| d[("d/ markers")]
+    deliver -->|"asking subagent copy"| s[("s/ markers")]
+    deliver -->|"answer line as hook context"| agent
+    panel -->|"idle session: d/ marker, then one prompt"| agent
 ```
 
-Round trip of one question:
+Round trip of one `high` risk question:
 
 ```mermaid
 sequenceDiagram
-    participant Agent as Asking session
+    participant Agent as Asking agent
+    participant Hooks as Command hooks
     participant Folder as State folder
     participant Panel as Askaway panel
     participant You as You
-    Agent->>Folder: ask writes the question
+    Agent->>Folder: ask writes the question to q/
+    Note over Agent: the CLI replies pause
+    Hooks->>Folder: stamp-asker writes asker
+    Agent->>Hooks: next changing tool call
+    Hooks-->>Agent: pause-guard denies it while the pause holds
     Panel->>Folder: poll every 5 s
     Panel-->>You: band button and toast
     You->>Panel: pick options, then Submit all
-    Panel->>Folder: the CLI (answer --by panel) writes the answers
+    Panel->>Folder: token in panel-tokens/, then answer --by panel writes a/
     alt session is busy
-        Folder-->>Agent: deliver hook reads the answer at its next hook
+        Hooks->>Folder: deliver claims d/ for the main thread or s/ for the asking subagent
+        Hooks-->>Agent: the answer line as hook context
     else session is idle
+        Panel->>Folder: writes the d/ marker with via prompt
         Panel-->>Agent: one prompt with the answers
     end
-    Agent->>Agent: continue on the answer
+    Agent->>Agent: the pause ends and the agent continues on the answer
 ```
+
+A `low` or `medium` question takes the same path without the pause: the CLI replies `continue`, and the agent works on the recommended option until the answer arrives.
+
+Step by step:
+
+1. **Away test.** A session is away under `bypassPermissions`, with away mode on, or with `CLAUDE_CODE_SESSION_ATTENDED=0`. While away, `hook ask-guard` denies `AskUserQuestion` and hands back one `ask` skeleton per question; nothing is stored.
+2. **File.** `ask --json` checks every field and names every gap in one `refile`. It reads the session title and the Desktop family, then, under `.ask.lock`, checks for an open duplicate, writes `q/<id>.json` and replies `continue`, `pause`, `open` or `refile`.
+3. **Stamp.** After the `ask` call, `hook stamp-asker` writes `asker` (the caller's `agent_id`, or `main`) onto the new pause, under `.ask.lock`. A pause with no `asker` holds the whole session.
+4. **Guard and hold.** `hook pause-guard` runs before Edit, Write, NotebookEdit, MultiEdit, Bash, PowerShell, Monitor, Agent and every `mcp__` tool, with a 5 s timeout and `"onFailure": "block"`. It has two jobs:
+   - **The Bash and file guard**, in every session, away or not: a frozen copy of an earlier guard (`scripts/askaway_guard_baseline.py`) decides first, then the current scanner, so the guard never denies less than that copy did. An error in either denies, a command over 64K characters is denied, an event the hook cannot read is denied, and with a deleted working directory every relative write target is refused.
+   - **The hold:** while a `high` question of this session waits for delivery to its asker, the asker's changing calls are denied. One simple `ask`, `status`, `list`, `wait` or `export` call and read-only MCP tools pass.
+5. **Answer.** Picks are shared through `draft.json`. On Submit all or a row's Submit Answer, the pane mints a one-shot token in `panel-tokens/` (32 hex characters, mode 600, valid for 120 s) and runs `answer <id> <key> --by panel --strict` with it in `ASKAWAY_PANEL_TOKEN`. The CLI publishes `a/<id>.json` with an exclusive link, so the first answer wins, and the card stays dimmed until the reply is written.
+6. **Deliver, one copy per recipient.** The `deliver` hook (SessionStart, UserPromptSubmit and PostToolUse) reads and judges every answer first, then claims each due copy with a no-clobber link and prints the English answer line as hook context. The main thread claims `d/<id>.json` (`"recipient": "main"`); a subagent claims only the answers to the questions its own `ask` filed, in `s/<id>.json`, and its pause ends only on that copy or a lapse. An idle session gets its answers from the pane: it writes the `d/` markers (`via: "prompt"`) and submits one prompt per asking session. A Codex run reads its answer with `wait --strict` ([From Codex](#-from-codex)).
+7. **Release.** An unread answer lapses when Claude Desktop has released its session (`session-ended`) or after 7 days (`ttl`). At most once a day, the deliver hook removes closed items older than `ASKAWAY_PRUNE_DAYS` (30 days).
 
 ## 📋 Prerequisites
 
 - Claude Code 2.1.295 or later, which loads mods and plugin hooks (the hooks file uses `onFailure`, see [hooks](https://code.claude.com/docs/en/hooks)). Tested with Claude Code 2.1.296 (`claude --version`).
-- Python 3.12 or newer as `python3` on your `PATH`, standard library only (the script refuses to run below 3.12: `scripts/askaway.py:12`). Tested with Python 3.12.3.
+- Python 3.12 or newer as `python3` on your `PATH`, standard library only (the script refuses to run below 3.12: the `sys.version_info` check at the top of `scripts/askaway.py`). Tested with Python 3.12.3.
 - No account, service or API key.
 
 | Platform | Status | Notes |
 |---|---|---|
 | Linux | ✅ | Tested with Claude Code 2.1.296 and Python 3.12.3. The shell steps of the install spec were checked here only. |
 | macOS | ⚠️ | The Claude Desktop session folder is `~/Library/Application Support/Claude/claude-code-sessions` since 0.4.0-beta.37, covered by unit tests only (`scripts/tests/test_platform_paths.py`). |
-| Windows | ❌ | Not tested. The code has no Windows path for the Claude Desktop session folder (`scripts/askaway.py:127-128`). |
+| Windows | ❌ | Not tested. The code has no Windows path for the Claude Desktop session folder (`DESKTOP_SESSIONS_ROOT` and `desktop_sessions_root`, `scripts/askaway.py`). |
 
 The panel is Linux-only: its state writes use GNU `mv -fT`, and its stale-lock check uses GNU `find -mmin` truncation. The macOS support of 0.4.0-beta.37 covers only the CLI's Claude Desktop session lookup.
 
@@ -461,6 +494,221 @@ The state folder belongs to one user, and every Claude Code session that runs as
 - **Prune:** at most once a day, `deliver` removes closed items (delivered or expired) settled more than `ASKAWAY_PRUNE_DAYS` days ago (default 30), and stale temporary files.
 - **The CLI and the hooks write only inside the state folder.** Each file is written to a temporary file first and then renamed. Nothing is sent over the network, and nothing is written to your projects or transcripts.
 
+## 🧾 Decisions
+
+The choices behind Askaway's behaviour, grouped by area. Each row says what was decided, the alternative it won over and why, and **Since** links to the version's entry in [CHANGELOG.md](CHANGELOG.md) (versions before 0.4.0-beta.6 predate the CHANGELOG; a date means the decision kept the behaviour as it was). Most were settled by the owner during the review rounds of the betas. The full rules are in [SPEC.md](plugins/askaway/SPEC.md).
+
+<details>
+<summary>Question contract (17)</summary>
+
+| Decision | Over | Why | Since |
+|---|---|---|---|
+| Every explanation field is required (`what`, `problem`, `context`, `why`, `how`, `gains`, `losses`, `analogy`, `urgency`, `undo`, and each option's `tradeoff`, `does`, `pros`, `cons`); an incomplete ask files nothing. | Optional fields | Thin questions reached the panel, and a user who was away could not weigh them. | 0.4.0-beta.5 |
+| `risk` is required and has no default. | A default of `low` | `risk` alone decides the pause. | [beta.9](CHANGELOG.md#040-beta9---2026-10-18) |
+| Text over its limit is refused as `too long (n/limit)`, never cut. | Silent clipping | The reader sees the agent's whole text, and the reply names the limit. | [beta.9](CHANGELOG.md#040-beta9---2026-10-18) |
+| One refile names every gap, grouped by field and by option. | One gap per round trip | An incomplete ask came back one gap at a time. | [beta.9](CHANGELOG.md#040-beta9---2026-10-18) |
+| Option keys are consecutive uppercase letters from `A`. | Free keys | The hotkeys and the Other letter come from the keys. | [beta.8](CHANGELOG.md#040-beta8---2026-10-18) |
+| `fit` is an integer 0 to 100, or `null` for no estimate. | Integers only | An agent with no estimate can still file. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
+| The playbook's sentence and line limits are guidance; the CLI checks sizes, minimum words and the two sentences of `what`. | Every limit in the CLI | The CLI checks what it can count. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
+| Placeholder texts are refused (`TBD`, `todo`, `n/a`, `lorem`, symbols only, under 3 words in a long text; a CJK text needs 6 letters or digits). | Any non-blank text | Stops empty briefings. | [beta.31](CHANGELOG.md#040-beta31---2026-10-21) |
+| Unknown top-level keys are stored with the question, up to 4096 bytes as JSON; NaN and Infinity are refiled. | Refiling unknown keys by name | Accept and store, so an agent's extra data is kept. | [beta.32](CHANGELOG.md#040-beta32---2026-10-21) |
+| The `ask` reply carries the validated `title`. | No title in the reply | The agent sees the title the card shows. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
+| A question may carry its own `translations` (`en`, `pt-BR`); the pane never translates agent text. | Pane-side translation | After `/askaway lang` the labels switched but the agent's text did not. | [beta.34](CHANGELOG.md#040-beta34---2026-10-21) |
+| Optional `urgency_level` (`low`, `medium`, `high`), with keyword grading as the fallback. | Keyword grading only | A stable colour grade; keyword grading changes with the language. | [beta.14](CHANGELOG.md#040-beta14---2026-10-18) |
+| A repeat ask (same session, same text) returns the open id; a high-risk repeat pauses and raises the twin's risk to `high`. | Filing duplicates | Concurrent identical asks; a high-risk repeat must still pause. | [beta.9](CHANGELOG.md#040-beta9---2026-10-18), [beta.31](CHANGELOG.md#040-beta31---2026-10-21) |
+| A high-risk question that fails to write is tried 4 times, 50 ms apart, then the reply is `pause` with the OS error. | Refile on failure; one try | A refile would let a high-risk question go on unpaused. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
+| A high-risk ask that hits an internal error replies `pause`. | `continue` | Fail toward the pause. | [beta.7](CHANGELOG.md#040-beta7---2026-10-17) |
+| The recommended mark is drawn once: the CLI takes `(Recommended)`, `[Recomendada]`, `Keep - recommended` and the like off the start and end of every stored label, and the pane draws its own mark. | Labels kept as sent | Labels showed the mark twice. | [beta.40](CHANGELOG.md#040-beta40---2026-10-22) |
+| The skill is `askaway:askaway-question-playbook`, and the model may load it on its own. | A skill named `askaway`; a skill locked to a slash command | A skill named `askaway` took over `/askaway`, and unattended runs need the playbook. | [beta.8](CHANGELOG.md#040-beta8---2026-10-18) |
+
+</details>
+
+<details>
+<summary>CLI (10)</summary>
+
+| Decision | Over | Why | Since |
+|---|---|---|---|
+| One JSON line per command; a usage error always exits 1; `--strict` is opt-in (1 on a refile or error, 2 on a `wait` timeout). | Exit codes by default | Scripts get one stable reply, and exit codes when they ask for them. | [beta.7](CHANGELOG.md#040-beta7---2026-10-17) |
+| `<cmd> --help` prints a JSON usage line and exits 0. | Top-level help only | Every command explains itself in the same format. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
+| `list` and `status` take `--table`, fitted to 80 columns; JSON stays the default. | JSON only; an unbounded table | A readable view in a terminal. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20), [beta.32](CHANGELOG.md#040-beta32---2026-10-21) |
+| Below Python 3.12, every call, hooks included, prints a JSON error on stderr and exits 0. | A non-zero exit | The owner's choice; the cost is in [Limits](#-limits). | [beta.32](CHANGELOG.md#040-beta32---2026-10-21) |
+| `export` stays a full audit trail, with no `--redact`. | An opt-in `--redact` | The export is the history kept for an audit. | 2026-10-19 |
+| The CSV export puts a leading apostrophe on cells that start with `=`, `+`, `-`, `@`, a tab or a CR. | Guarding only `=`, `@` and tab | Safer to open in a spreadsheet. | [beta.15](CHANGELOG.md#040-beta15---2026-10-18) |
+| `prune --id <id> --force` is the user's own mode for a question whose session has no end marker; the Bash guard denies it to the agent. | Removal from the Desktop only | A terminal session never writes an end marker. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
+| Retention is 30 days (`ASKAWAY_PRUNE_DAYS`), counted from the closing time, never from the ask. | Counting from the ask | An undelivered item must never be pruned. | [beta.7](CHANGELOG.md#040-beta7---2026-10-17) |
+| Unread answers expire after 7 days; a backward clock step never extends that, a clock jump skips that cycle's cleanup, and no second time reference is kept. | A second time reference | Simple, with its residual documented. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20), [beta.32](CHANGELOG.md#040-beta32---2026-10-21) |
+| Each answer records `who`: `ASKAWAY_WHO`, else the OS user, else `unknown`; the panel asks for the name once; the name is declared, not verified. | A verified identity | A single-user tool, labelled honestly. | [beta.7](CHANGELOG.md#040-beta7---2026-10-17), [beta.11](CHANGELOG.md#040-beta11---2026-10-18) |
+
+</details>
+
+<details>
+<summary>Pane and UI (20)</summary>
+
+| Decision | Over | Why | Since |
+|---|---|---|---|
+| Nothing in the card folds: each option's What happens, Pros and Cons and the details block are always drawn, and there is no `e` key. | Folding the rationale | The per-option lines were the most used part of the card. | [beta.27](CHANGELOG.md#040-beta27---2026-10-19) |
+| Context before the decision: the explanation and details, then the question and the options. | Question and options first | The approved card order. | 2026-10-19 |
+| One card at a time, oldest question first; groups in the order of their oldest question. | Newest first | The approved mock. | 0.1.0 |
+| The tree groups by Desktop sidebar Group, else session family, else project. | Grouping by project only | One Desktop family was split across folders; the tree follows the sidebar. | [beta.13](CHANGELOG.md#040-beta13---2026-10-18), [beta.35](CHANGELOG.md#040-beta35---2026-10-21) |
+| Tree rows are links, with no hotkeys. | Rows as buttons with digits | The engine's Markdown takes no hotkey. | [beta.27](CHANGELOG.md#040-beta27---2026-10-19) |
+| Submit all sends one group's round, a row's Submit Answer sends one, and nothing is sent before a press. | Sending on pick | The user reviews before sending. | [beta.12](CHANGELOG.md#040-beta12---2026-10-18), [beta.27](CHANGELOG.md#040-beta27---2026-10-19) |
+| Option letters are hotkeys; Back, Next and Submit all are `z`, `x`, `w` on the terminal and `p`, `f`, `w` on the desktop; the band's Answer is `1`. | `b`, `n`, `s` | Those clash with options B, N and S. | [beta.8](CHANGELOG.md#040-beta8---2026-10-18), [beta.9](CHANGELOG.md#040-beta9---2026-10-18) |
+| The Other field is always open; its text is recorded on blur, on navigation and on Submit all, never per keystroke; Apply makes it the Other button's label. | Recording per keystroke; on Enter only | Keystroke redraws flickered and dropped characters. | [beta.15](CHANGELOG.md#040-beta15---2026-10-18), [beta.32](CHANGELOG.md#040-beta32---2026-10-21) |
+| A pick, Next or Back starts a visible 350 ms move lock. | No lock | A double click skipped a question. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
+| An answered card stays dimmed until its reply is written and undims at once on failure. | A fixed 250 ms fade | The dim tells the truth about the write. | [beta.38](CHANGELOG.md#040-beta38---2026-10-22) |
+| Picks are shared by every session through `draft.json` (merged per id, newest wins); a draft stamped ahead of the clock is pulled back. | Per-session picks | One answer board in every window. | [beta.24](CHANGELOG.md#040-beta24---2026-10-18) |
+| A delivered History line stays until Clear all. | A 30 s fade | The user decides when the history goes. | [beta.27](CHANGELOG.md#040-beta27---2026-10-19) |
+| History rows are plain text: the whole title, the reply's label or quoted Other text, and the times. | Links on titles | No card opens an answered question, and the Desktop drew a link as a session chip. | [beta.35](CHANGELOG.md#040-beta35---2026-10-21) |
+| Clear all is one-way and non-destructive: it writes only `cleared.json`, shared by every session. | An undo; deleting files | Answer files stay, so sessions still read them. | [beta.25](CHANGELOG.md#040-beta25---2026-10-19) |
+| The recommended option is plain bold; the accent colour is never used for text. | Cyan or magenta | Neutral in any theme; the accent measured 3.28:1 on dark. | [beta.7](CHANGELOG.md#040-beta7---2026-10-17) |
+| The details block is filled with the engine theme key `userMessageBackground`, with no border. | A hex fill per theme family; a border | The dark fill was unreadable on the light Desktop. | [beta.28](CHANGELOG.md#040-beta28---2026-10-20) |
+| The footer and option sub-rows are drawn without dim. | Dim text | The dim footer measured 3.95:1, under 4.5:1. | [beta.33](CHANGELOG.md#040-beta33---2026-10-21) |
+| The pane never cuts a title, and draws the CLI's 60-character fallback as the whole question. | 24- and 40-character cuts | A cut question could not be read. | [beta.35](CHANGELOG.md#040-beta35---2026-10-21) |
+| An ended session's card shows a notice whose Dismiss runs `prune --force`; a damaged pause's notice runs `prune --id --strict` without `--force`. | `--force` everywhere | The user's press must lift a pause, and a readable question must not be deleted. | [beta.11](CHANGELOG.md#040-beta11---2026-10-18), [beta.31](CHANGELOG.md#040-beta31---2026-10-21) |
+| Every button keeps its press handle across redraws (`hooks/held.ts`). | A fresh button per draw | The first click on the desktop was dropped. | 0.3.4 |
+
+</details>
+
+<details>
+<summary>Bash and file guard (10)</summary>
+
+| Decision | Over | Why | Since |
+|---|---|---|---|
+| The guard denies `askaway.py answer` in the agent's own shell, in every session. | A skill rule only | Agents could answer their own question. | [beta.9](CHANGELOG.md#040-beta9---2026-10-18) |
+| The barrier is the Bash guard, documented as a deterrent, not a guarantee. | Claiming isolation | A same-user process can always reach the folder; the docs say so. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
+| The agent's Bash may not run `away on` or `away off`; the user switches away mode. | Allowing it | Away mode is the user's statement. | [beta.32](CHANGELOG.md#040-beta32---2026-10-21) |
+| Fail closed: a raising pause lookup, an unreadable `q/` folder, an unreadable hook event, or a hook timeout or crash (`onFailure: block`) denies the call. | Fail open | A broken guard must not free a pause. | [beta.38](CHANGELOG.md#040-beta38---2026-10-22), [beta.40](CHANGELOG.md#040-beta40---2026-10-22) |
+| A frozen copy of an earlier guard (`scripts/askaway_guard_baseline.py`) decides first, then the current scanner, so the guard never denies less; the copy goes after a clean review of the scanner. | More review loops | Reviews kept finding scanner regressions. | [beta.38](CHANGELOG.md#040-beta38---2026-10-22), [beta.39](CHANGELOG.md#040-beta39---2026-10-22) |
+| A relative write after `cd "$VAR"` is refused only when the command names askaway, `ASKAWAY_HOME` or `state`; a `git` or `gh` heredoc is message text only for a builtin message subcommand, with no config set, that reads its message from stdin. | Keeping those over-denies | They blocked commits and pull requests and protected nothing. | [beta.39](CHANGELOG.md#040-beta39---2026-10-22), [beta.40](CHANGELOG.md#040-beta40---2026-10-22) |
+| A Bash command longer than 64K characters is denied. | Leaving it to the frozen copy alone | A spelling no pattern names could still aim at the state folder. | [beta.40](CHANGELOG.md#040-beta40---2026-10-22) |
+| A deleted working directory is no allow: both readers run with the directory unknown, and every relative write target is refused. | Allowing the call | It was the last allow without a check. | [beta.40](CHANGELOG.md#040-beta40---2026-10-22) |
+| The JSON body of an inbox call and single-quoted text are data, not code. | Reading a whole heredoc as code | A spec edit in a release commit was denied. | [beta.10](CHANGELOG.md#040-beta10---2026-10-18), [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
+| Read-only MCP tools pass a pause (read prefixes such as `get_`, `list_`, `query_`, with no write word). | Holding every MCP call | Reading changes nothing; a generic `query_*` passing is accepted. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20), [beta.38](CHANGELOG.md#040-beta38---2026-10-22) |
+
+</details>
+
+<details>
+<summary>Delivery to agents and subagents (11)</summary>
+
+| Decision | Over | Why | Since |
+|---|---|---|---|
+| Answers record their session, and a `cli` answer from another session is refused. | A trusted local command | Scripts keep working, and cross-session answers stop. | [beta.7](CHANGELOG.md#040-beta7---2026-10-17) |
+| A shell answer to a question with no session (Codex) stays accepted. | Requiring the panel token | Keeps the scripting path. | 2026-10-19 |
+| An own-session `cli` answer is stamped `by: agent`, and the delivery line names who answered, in five wordings. | Documenting the limit | An agent's answer must not read as the user's. | [beta.10](CHANGELOG.md#040-beta10---2026-10-18) |
+| A one-shot panel token guards `--by panel`, `accept_all` and `accept_recommended`, as a second layer, not isolation. | No token | A bare `--by panel` call should fail. | [beta.11](CHANGELOG.md#040-beta11---2026-10-18) |
+| A pause lasts until the answer is delivered, not written. | Ending at the write | An agent acted on A before it read B. | [beta.7](CHANGELOG.md#040-beta7---2026-10-17) |
+| A pause holds only the agent that filed it (`asker`, written by `stamp-asker`); an unstamped pause holds the whole session. | Holding the whole session | A background subagent's question froze a session for 13 minutes. | [beta.36](CHANGELOG.md#040-beta36---2026-10-21) |
+| Each answer has one copy per recipient: `d/` for the main session, `s/` for the asking subagent; a subagent's pause ends only on its own copy or a lapse. | One shared marker | The answer reached the wrong subagent or a transcript no one read. | [beta.39](CHANGELOG.md#040-beta39---2026-10-22), [beta.40](CHANGELOG.md#040-beta40---2026-10-22) |
+| A copy is claimed before its line is printed: a line can be lost once, never sent twice. | Printing first | A duplicate answer later is worse than a lost line. | [beta.32](CHANGELOG.md#040-beta32---2026-10-21) |
+| The delivery line quotes `who`, the title and the labels as JSON, and marks Other text as data, not instructions. | Raw text | Stops prompt injection and forged lines. | [beta.15](CHANGELOG.md#040-beta15---2026-10-18) |
+| Model-facing lines are always English, identical in Python and TypeScript (one shared fixture). | Translated lines | A stable contract for agents. | [beta.29](CHANGELOG.md#040-beta29---2026-10-20) |
+| Codex: no hook reaches it, so its script runs `wait --strict` on a `pause`. | No rule | Nothing holds a Codex run. | [beta.9](CHANGELOG.md#040-beta9---2026-10-18) |
+
+</details>
+
+<details>
+<summary>Language, state folder and distribution (11)</summary>
+
+| Decision | Over | Why | Since |
+|---|---|---|---|
+| English and pt-BR from the locale, English with no locale. | Portuguese by default | A neutral default for a public plugin. | 0.1.0 |
+| `/askaway lang` redraws the open card at once. | Waiting for the next poll | An open card kept its old language. | [beta.33](CHANGELOG.md#040-beta33---2026-10-21) |
+| Group and session labels are not translated. | Translating them | They are the user's own names. | [beta.35](CHANGELOG.md#040-beta35---2026-10-21) |
+| One JSON file per item under `q/`, `a/`, `d/` and `s/`, never one shared file. | One shared file | No append races and no size limit. | 0.1.0 |
+| The CLI is the only writer of `a/`, and the first writer wins (`os.link`). | The pane writing `a/` | The host file API has no exclusive create. | [beta.8](CHANGELOG.md#040-beta8---2026-10-18) |
+| Only regular files are read (`O_NOFOLLOW`, `S_ISREG`); folders are made with mode 700. | Following links | Stops symlink, FIFO and mode tricks. | [beta.29](CHANGELOG.md#040-beta29---2026-10-20), [beta.31](CHANGELOG.md#040-beta31---2026-10-21) |
+| One machine, one login; the CLI trusts `CLAUDE_CODE_SESSION_ID`, recorded as a known limit. | Leaving it unrecorded | Honest about the trust model. | 2026-10-19 |
+| A damaged `q/` file holds its whole session. | Ignoring it | A damaged file must not free a pause. | [beta.38](CHANGELOG.md#040-beta38---2026-10-22) |
+| The catalog lives in `KeepGlide/claude-plugins` (marketplace `keepglide`) and pins a tag and a commit. | A marketplace in this repository | One plugin would have two marketplace names. | 0.4.0-beta.4 |
+| No GitHub Actions: both suites run locally. | CI on every push | CI spent the monthly minutes quota. | [beta.24](CHANGELOG.md#040-beta24---2026-10-18) |
+| Claude Code 2.1.295 or later is required. | Older versions | The hooks use `onFailure` to fail closed. | [beta.38](CHANGELOG.md#040-beta38---2026-10-22) |
+
+</details>
+
+## 🔀 Trade-offs
+
+Each line names the value Askaway chose and the one it gave up.
+
+- **Continuity over waiting.** The agent keeps working on its recommended option and only `high` pauses, so you may find work already done on the default; your answer switches it.
+- **Safety over speed for risky choices.** A pause ends when the answer is delivered to the asker, not when it is written, so the agent stays held until its next hook reads it.
+- **Throughput over a blanket hold.** Only the asking agent pauses; the other subagents keep working, and a main-thread pause does not hold subagents already running.
+- **Fail closed over availability.** An unreadable `q/` folder, a lookup error, an unreadable hook event, or a hook timeout or crash blocks every changing call of that session until it is fixed.
+- **Parity with the previous guard over fewer false positives.** The frozen copy decides first, so the guard never denies less, and some over-denies the scanner had fixed came back ([Known issues](#-known-issues)).
+- **A bounded guard over reading everything.** A command over 64K characters is denied instead of read; split it, or write large content with the Write tool.
+- **Usability over strictness, after the copy.** `cd "$VAR"` edits and `git` or `gh` message heredocs pass, so commits and pull requests work; the guard reads less there.
+- **Honesty over false guarantees.** The guard is documented as a deterrent with a list of what it does not model; a determined process of the same user can still answer.
+- **Simplicity over isolation.** One state folder per login, a trusted `CLAUDE_CODE_SESSION_ID` and a declared `who`: a shared login shares the inbox, and anyone can sign any name.
+- **Never twice over never lost.** A copy is claimed before its line is printed: a kill between the two loses one line, and History still shows the answer.
+- **One copy per recipient over one shared marker.** The main session and the asking subagent each get the answer once, and `status` reads `delivered` from the main copy while the subagent's hold can remain.
+- **A weighable question over a cheap one.** Every explanation field is required, so agents write a full briefing and you decide with the same facts.
+- **Refuse over clip.** Long text is refused with `too long (n/limit)`, never cut behind your back; the agent files again.
+- **One file per item over one shared file.** No append races and no size limit, for a folder listing on every poll.
+- **One writer over two.** Panel answers go through the CLI, so the panel needs `python3`, and a failed run is an error toast.
+- **Visibility over brevity.** Nothing folds, so cards are long and you scroll instead of expanding.
+- **An audit trail over privacy by default.** Exports carry session ids, project paths and titles; scrub them before sharing.
+- **Spreadsheet safety over byte-exact cells.** CSV cells that start with `=`, `+`, `-`, `@`, a tab or a CR get a leading apostrophe.
+- **Theme fidelity over brand colour.** The accent colour is never used for text, and the details fill is the engine's own theme key.
+- **Measured readability over subtle styling.** The footer and option sub-rows are plain, not dim.
+- **Honest feedback over fixed timing.** A card stays dimmed until its reply is written; a failure undims it at once.
+- **Deliberate moves over speed.** A 350 ms lock after a pick, Next or Back stops double-click skips.
+- **Last good state over an empty screen.** A failed listing keeps the last board and the last Desktop Groups, so the view can be one poll stale but never blank.
+- **TTL simplicity over clock robustness.** No second time reference is kept, so a machine idle for more than 7 days may deliver an overdue answer once.
+- **A neutral default over the owner's language.** English is the default; pt-BR users set a locale or `/askaway lang`.
+- **Agent-written translations over pane translation.** A question without `translations` stays in its own language.
+- **Links over hotkeys for tree rows.** There is no keyboard jump to a row.
+- **Linux first over portability.** The panel uses GNU `mv -fT` and `find -mmin`, so it is Linux-only.
+- **Local tests over CI.** No GitHub Actions run; contributors run both suites themselves.
+
+## 🚧 Limits
+
+What Askaway does not do or cannot guarantee. The limitations that have a workaround are in [Known issues](#-known-issues), and the security limits are also in [SECURITY.md](SECURITY.md#known-limits).
+
+**Runtime and platform**
+
+- **Python 3.12 or newer.** Below it, every call and every hook prints a version error on stderr and exits 0, so the pause and the Bash and file guard hold nothing.
+- **Claude Code 2.1.295 or newer.** The pause guard blocks a call on its own timeout or crash only through `"onFailure": "block"`; on an older Claude Code a timed-out or crashed pause guard lets the call through.
+- **POSIX and Linux.** The CLI needs POSIX (`fcntl` locks). The panel is Linux-only (GNU `mv -fT`, `find -mmin`). On macOS only the CLI's Desktop session lookup is covered; Windows is not handled.
+- **Desktop Groups** are read only from the Linux config path or `ASKAWAY_DESKTOP_CONFIG`. The format is the Desktop's private, undocumented one, and a file over 4 MiB keeps the last Groups read.
+
+<details>
+<summary>Sizes and timers</summary>
+
+| Item | Limit |
+|---|---|
+| Text fields | `question` 400 characters; `what` and `context` 600; `problem` and `how` 400; `title` 60; every other text 300 |
+| Question shape | At least 2 options; `what` has at least 2 sentences; a long text has at least 3 words (CJK: 6 letters or digits) |
+| Unknown top-level keys | 4096 bytes as JSON |
+| Other text and `who` | Other text 500 code points, no ellipsis; `who` 40 characters |
+| Session and family titles | 80 characters |
+| Desktop lookup | Files up to 2 MB, at most 2000 files per lookup, at most 8 fork or spawn links |
+| Bash guard | 64 levels of nesting; a command over 64K characters is denied |
+| `--table` | 80 columns |
+| Unread-answer TTL | 7 days |
+| Prune | 30 days by default (`ASKAWAY_PRUNE_DAYS`), at most once a day; token files are cleared after a day |
+| Panel token | One use, at most 120 s old |
+| Pane | Polls every 5 s; re-checks ended sessions at most every 30 s; 350 ms move lock; hands an idle session answers at least 5 s old |
+| `wait` | Polls every 0.5 s; 300 s timeout by default |
+| Hooks | 5 s timeout each |
+| High-risk write | 4 attempts, 50 ms apart |
+
+</details>
+
+**What it cannot guarantee**
+
+- **The guard is a deterrent, not a guarantee.** It does not model `xargs`, `find -exec`, `env -S`, `uv run`, `unset ASKAWAY_HOME`, a copy of the script at another path, a PowerShell command or an MCP tool that writes files outside a pause, a command word or write target held in a variable, a script name built at run time, a `~user` path, a brace list, `eval "$X"`, or a recursive copy, `chmod`, `chown` or `setfacl` on an ancestor of the state folder. The user's own shell is not guarded.
+- **The panel token is not isolation.** Any process of the same user that can write the state folder can mint one.
+- **Away detection.** `CLAUDE_CODE_SESSION_ATTENDED=0` is an unofficial signal; a host that sets it makes every session count as away.
+- **Who is held.** A main-thread pause does not hold subagents already running, and a high-risk question with no session (Codex) holds no session: the agent must stop on its own.
+- **Engine limits.** The Other field has no accessible name, and no window-hide event exists to record Other text on hide.
+
+**Accepted residuals**
+
+- A kill between claiming a copy and printing its line loses that line; History still shows the answer.
+- A machine idle for more than 7 days looks like a clock jump: in that first cycle an overdue answer is delivered once instead of expiring.
+- A `q/` file caught mid-write can show the damaged notice for one poll.
+- A subagent's `wait` on a non-pause question filed as `main` marks the main session's copy, so the main session does not receive that answer.
+- When none of `LOGNAME`, `USER`, `LNAME` and `USERNAME` is set, the pane's local copy of a reply names `unknown` as who answered, where the CLI may name the account (`panelWho`, `hooks/register.tsx`); the written record shows the CLI's name once it reads back.
+
 ## 🔒 Security and privacy
 
 Report a vulnerability privately, not in a public issue. [SECURITY.md](SECURITY.md) has the reporting channel, the supported versions and the response time. The known limits of the single-user state folder are in the [Security](plugins/askaway/SPEC.md#security) and [Panel credential](plugins/askaway/SPEC.md#panel-credential) sections of the spec.
@@ -484,14 +732,16 @@ Report a vulnerability privately, not in a public issue. [SECURITY.md](SECURITY.
 
 ## 🐞 Known issues
 
-No open issue carries the `bug` label as of 2026-10-21 (`gh issue list -R KeepGlide/askaway --state open --label bug`). These limitations come from the code, the CHANGELOG and this page:
+No open issue carries the `bug` label as of 2026-10-22 (`gh issue list -R KeepGlide/askaway --state open --label bug`). These limitations come from the code, the CHANGELOG and this page; the limits without a workaround are in [Limits](#-limits):
 
-- **Windows is not handled.** The Claude Desktop session folder is `$XDG_CONFIG_HOME/Claude/claude-code-sessions` (default `~/.config`) on Linux and `~/Library/Application Support/Claude/claude-code-sessions` on macOS (`desktop_sessions_root`, `scripts/askaway.py:977-983`), so on Windows it points at a folder Claude Desktop does not use. It is not tested there. Workaround: none.
-- **Desktop Groups on macOS may need the config path set.** The default config path is `~/.config/Claude/claude_desktop_config.json` on every platform (`hooks/register.tsx:266`). If Desktop Groups are missing on macOS, set `ASKAWAY_DESKTOP_CONFIG` to the config file's path. Questions still group by family or project.
+- **Windows is not handled.** The Claude Desktop session folder is `$XDG_CONFIG_HOME/Claude/claude-code-sessions` (default `~/.config`) on Linux and `~/Library/Application Support/Claude/claude-code-sessions` on macOS (`desktop_sessions_root`, `scripts/askaway.py`), so on Windows it points at a folder Claude Desktop does not use. It is not tested there. Workaround: none.
+- **Desktop Groups on macOS may need the config path set.** The default config path is `~/.config/Claude/claude_desktop_config.json` on every platform (`desktopConfigPathOf`, `hooks/register.tsx`). If Desktop Groups are missing on macOS, set `ASKAWAY_DESKTOP_CONFIG` to the config file's path. Questions still group by family or project.
 - **Early access API.** The mod API moves between Claude Code releases, so a newer Claude Code can change the panel before Askaway follows. Workaround: stay on the tested Claude Code 2.1.296, or roll back to a tagged version ([Pin and roll back](#pin-and-roll-back)).
 - **A Codex run cannot be paused.** Nothing holds a Codex run, so its script must wait for the answer itself. Workaround: [From Codex](#-from-codex).
 - **The Bash guard is a deterrent.** It denies `askaway.py answer` in an agent's own Bash call, but the panel's CLI call is not a tool call and the hook does not see it. The CLI also trusts `CLAUDE_CODE_SESSION_ID`, and a process of the same user that can write the state folder can mint a panel token ([SECURITY.md](SECURITY.md#known-limits)). Workaround: one login per state folder.
 - **The `who` name is declared, not verified.** Anyone who can type a name can sign an answer with it ([Configuration](#%EF%B8%8F-configuration)). Workaround: give each person their own login.
+- **The frozen guard copy brings back some over-denies.** Until the copy is removed, the Bash guard denies a few harmless commands: `export CDPATH=...; touch a`; a quoted heredoc whose body holds a `source` line and a relative redirect (such as `cat > README.md <<'EOF'` with `source .venv/bin/activate` and `pytest > test.log`); and `git commit -F - <<'EOF'` whose message names askaway words such as `cmd_prune`. The copy and the scanner both deny an `ask` whose single-quoted JSON holds a backquoted `askaway.py answer`, or a `<<` together with the word away. Workaround: write files with the Write tool, pass a commit message from a file (`git commit -F msg.txt`) or as an argument (`git commit -m "$(cat <<'EOF'` … `EOF` `)"`, with no apostrophe in the body), and keep backquotes and `<<` out of the `ask` JSON ([SPEC.md](plugins/askaway/SPEC.md#commands)).
+- **`status` reads `delivered` while a subagent is still held.** `status`, `list`, `export` and the pane read only the main session's copy (`d/`), so a question reads `delivered` once the main session has it, while the asking subagent's pause holds until its own copy (`s/`). Workaround: the held subagent runs one `askaway.py status <id>` call, which brings its copy and ends the hold.
 
 Found one? [Open an issue](https://github.com/KeepGlide/askaway/issues/new).
 
@@ -526,7 +776,19 @@ biome lint plugins/askaway
 
 ## 📝 Changelog
 
-The changes of each version are in [CHANGELOG.md](CHANGELOG.md), in the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. Askaway follows [Semantic Versioning](https://semver.org/).
+The changes of each version are in [CHANGELOG.md](CHANGELOG.md), in the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format, from 0.4.0-beta.6 on; earlier versions are in the git history. Askaway follows [Semantic Versioning](https://semver.org/). The version line so far:
+
+| Versions | Dates | Themes |
+|---|---|---|
+| 0.1.0 to 0.3.5 | 2026-10-16 to 10-17 | First public version: the CLI with one file per item, the command hooks, the pane with one question at a time, the band, the toast, English and pt-BR, the idle hand-off; then the pane redrawn like Claude Code's own question dialog, the question tree and the first-click fix. |
+| 0.4.0-beta.3 to beta.5 | 2026-10-17 | The KeepGlide mark, inline explanation sections, the catalog moved to `KeepGlide/claude-plugins`, every explanation field required. |
+| beta.6 to beta.8 | 2026-10-17 to 10-18 | A security patch set (the session stamp, the cross-session refusal, the pause until delivery, `Agent` and MCP coverage); `wait`, `--strict`, `export` and `who`; the CLI as the only answer writer. |
+| beta.9 to beta.11 | 2026-10-18 | The Bash guard denies shell answers; `risk` required; `by: agent` and five delivery wordings; the one-shot panel token; the ended-session card; quiet mode. |
+| beta.12 to beta.25 | 2026-10-18 to 10-19 | The card layout: details always open, the Other field, History, grouping by Desktop session family, Clear all; picks shared across sessions; GitHub Actions removed. |
+| beta.26 to beta.30 | 2026-10-19 to 10-20 | Review rounds 3 and 4: the details fill from the theme, regular-file reads, `.ask.lock`, the shared delivery-line fixture, `--help`, `--table`, `prune --force`, the move lock. |
+| beta.31 to beta.35 | 2026-10-21 | Review round 5: guard hardening, the TTL anchored on `clock_mark`, the damaged-pause notice, away switches denied to the agent; question `translations`; Desktop sidebar Groups; whole titles. |
+| beta.36 to beta.39 | 2026-10-21 to 10-22 | The pause holds only the asking agent (`stamp-asker`); the macOS session path; fail closed with `onFailure: block`; the frozen guard copy; dim until written; delivery to the asking subagent. |
+| beta.40 | 2026-10-22 | One copy of each answer per recipient (`d/` and `s/`); the recommended mark drawn once; commands over 64K characters denied; a deleted working directory no longer allows; `MultiEdit` covered; an unreadable hook event denied. |
 
 ## 🤝 Contributing
 
