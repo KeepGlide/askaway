@@ -590,6 +590,29 @@ function timeOf(timestamp: number, now: number): string {
   return `${padTwoDigits(date.getDate())}/${padTwoDigits(date.getMonth() + 1)} ${clockOf(timestamp)}`
 }
 
+// The recommended markers an agent may write at the end of an option label, one or more, in English or Portuguese and in any
+// case: in brackets ("(Recommended)", "[Recomendada]", "{recomendado}"), or after a dash or a colon ("Keep - Recommended",
+// "Keep — recomendada", "Keep: Recomendado"). A hyphen counts only after a space, so "non-recommended" stays a word. The label
+// has been through singleLine first, so a no-break space or a run of spaces is one plain space by then.
+const RECOMMENDED_MARKERS = /(?: ?(?:[([{] ?(?:recommended|recomendad[oa]) ?[)\]}]|(?:(?<= )-|[–—:]) ?(?:recommended|recomendad[oa])))+$/iu
+// The same markers at the start of a label, one or more: in brackets ("(Recommended) Keep", "[Recomendada] Manter"), or the
+// word followed by a dash or a colon ("Recommended: Keep", "Recomendada — Manter", "Recommended - Keep"). A hyphen counts
+// only before a space, so "Recommended-only" stays a word; a word with no bracket and no dash or colon after it
+// ("Recommended settings") is part of the label and stays.
+const LEADING_RECOMMENDED_MARKERS = /^(?:(?:[([{] ?(?:recommended|recomendad[oa]) ?[)\]}]|(?:recommended|recomendad[oa]) ?(?:-(?= )|[–—:])) ?)+/iu
+
+// The mark the pane draws on the recommended option, in the pane's language: "(Recommended)", "(Recomendada)".
+export const recommendedMarkOf = (lang: Lang): string => `(${t(lang, 'option.recommended')})`
+
+// An option's label as the pane draws it (its button, the History and the footer): one line, with the recommended markers the
+// agent wrote at its start or its end taken off, so the mark the pane draws itself (recommendedMarkOf) is the only one
+// (own-1). An old stored label that is only markers (the CLI now refiles one as missing) draws that mark, once.
+export function optionLabelOf(lang: Lang, option: QuestionOption): string {
+  const line = singleLine(option.label)
+  const label = line.replace(LEADING_RECOMMENDED_MARKERS, '').replace(RECOMMENDED_MARKERS, '')
+  return label === '' && line !== '' ? recommendedMarkOf(lang) : label
+}
+
 // The answer as its History row and footer name it: the label of the option it chose, in the pane's language; an Other reply
 // its whole typed text, in typographic quotes so it is told apart from an option label, or the Other label when it has none.
 // A key the question no longer lists (its question is gone) is drawn as its letter.
@@ -599,7 +622,7 @@ function answerNameOf(lang: Lang, answer: Answer, question: Question | undefined
     return text === undefined ? t(lang, 'option.other') : `“${text}”`
   }
   const option = question === undefined ? undefined : localizedQuestion(question, lang).options.find(one => one.key === answer.key)
-  return option === undefined ? answer.key.toUpperCase() : singleLine(option.label)
+  return option === undefined ? answer.key.toUpperCase() : optionLabelOf(lang, option)
 }
 
 // Who answered, when it was not the person: the agent itself, or the name a CLI answer carries (ANSWER_WORDING).

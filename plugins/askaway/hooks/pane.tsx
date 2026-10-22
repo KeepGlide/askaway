@@ -23,11 +23,13 @@ import {
   isRootSession,
   leadOf,
   localizedQuestion,
+  optionLabelOf,
   otherButtonKey,
   otherInputKey,
   otherLetterOf,
   piecesOf,
   questionLabel,
+  recommendedMarkOf,
   riskLabel,
   sectionsOf,
   sessionLabelOf,
@@ -596,8 +598,10 @@ function renderFirstBlock(ui: Ui, question: Question, isLeaving: boolean): Rende
 
 // A full-width option, headed by its key letter ("A · label"), its tradeoff and fit under it, then what happens, its pros
 // and its cons. The picked one is the primary button and its label starts "✓ " (the pick is not colour alone); the
-// recommended one, the one whose key is the recommended key, when not picked, is bold and says "(Recommended)" in its text.
-// The key and the label are one line each (singleLine), so a line break in a label cannot draw a fake option row.
+// recommended one, the one whose key is the recommended key, when not picked, is bold and says "(Recommended)" in its text,
+// once: a marker the agent wrote at the start or the end of the label is not drawn (optionLabelOf, own-1), and a label that is
+// only a marker already draws the mark ("A · (Recommended)"). The key and the label are one line each (singleLine), so a line
+// break in a label cannot draw a fake option row.
 function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, option: QuestionOption): RenderElement {
   const { Box, Button, Text } = ui
   const { question, isLeaving, isMoveLocked, wizard, held } = card
@@ -607,7 +611,9 @@ function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContex
   const isPicked = wizard.picks[question.id]?.key === option.key
   const isRecommended = option.key === question.recommended
   const pickMark = isPicked ? '✓ ' : ''
-  const text = `${singleLine(option.key)} · ${pickMark}${singleLine(option.label)}${isRecommended ? ` (${t(lang, 'option.recommended')})` : ''}`
+  const label = optionLabelOf(lang, option)
+  const mark = recommendedMarkOf(lang)
+  const text = `${singleLine(option.key)} · ${pickMark}${label}${isRecommended && label !== mark ? ` ${mark}` : ''}`
   const isBold = isRecommended && !isPicked
   const key = `opt-${question.id}-${option.key}`
   const hotkey = optionHotkey(option.key)

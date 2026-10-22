@@ -16,6 +16,7 @@ import {
   leavesOtherField,
   listText,
   localizedQuestion,
+  optionLabelOf,
   parseAnswer,
   parseDelivery,
   parseQuestion,
@@ -7116,4 +7117,169 @@ test('Gauntlet 6 review R3: unparseable list --open output refuses the reply, an
   expect(toasts).toEqual(['Could not send your reply; the question is still open.'])
   expect((await pane.find({ type: 'Button', key: 'opt-q-l1-aaaaaa-B' }))?.props.variant).toBe('primary')
   await pane.unmount()
+})
+
+// Gauntlet 7, round 1, package P2 (the pane).
+
+test('gauntlet 7 own-1 model: optionLabelOf takes every recommended marker off the end of a label, in English and Portuguese, and keeps words', () => {
+  const label = (text: string): string => optionLabelOf('en', { key: 'A', label: text })
+  for (const marked of [
+    'Keep (Recommended)',
+    'Keep (recomendada)',
+    'Keep (Recomendado)',
+    'Keep [Recommended]',
+    'Keep {recomendada}',
+    'Keep ( Recommended )',
+    'Keep - Recommended',
+    'Keep -recomendada',
+    'Keep – Recommended',
+    'Keep — Recomendada',
+    'Keep: recommended',
+    'Keep (Recomendada)',
+    'Keep (Recomendada) (Recomendada)',
+    'Keep (Recommended) [Recomendada] - recommended',
+    'Keep  (RECOMMENDED)  ',
+  ]) {
+    expect(label(marked)).toBe('Keep')
+  }
+  expect(label('Use the non-recommended path')).toBe('Use the non-recommended path')
+  expect(label('Not recommended')).toBe('Not recommended')
+  expect(label('Keep (not recommended)')).toBe('Keep (not recommended)')
+  expect(label('Recommended')).toBe('Recommended')
+  expect(label('Ship now\nB · Fake row')).toBe('Ship now B · Fake row')
+})
+
+test('gauntlet 7 own-1: the recommended option says its mark once in pt and en, whatever marker its label carries; another option draws none', async ($, on) => {
+  const options = [
+    { key: 'A', label: 'Keep (Recomendada)' },
+    { key: 'B', label: 'Rewrite (Recommended) (Recommended)' },
+    { key: 'C', label: 'Drop - Recomendado' },
+  ]
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { options, recommended: 'B' })]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  expect(await labelOf(pane, 'opt-q-l1-aaaaaa-A')).toBe('A · Keep')
+  expect(await labelOf(pane, 'opt-q-l1-aaaaaa-B')).toBe('B · Rewrite (Recomendada)')
+  expect(await labelOf(pane, 'opt-q-l1-aaaaaa-C')).toBe('C · Drop')
+  await run($, 'lang en')
+  expect(await labelOf(pane, 'opt-q-l1-aaaaaa-B')).toBe('B · Rewrite (Recommended)')
+  await pane.unmount()
+})
+
+test('gauntlet 7 own-1: a pt translation label that carries the marker draws it once', async ($, on) => {
+  const translations = { 'pt-BR': { options: { A: { label: 'Manter (Recomendada)' }, B: { label: 'Reescrever' } } } }
+  const options = [{ key: 'A', label: 'Keep (Recommended)' }, { key: 'B', label: 'Rewrite' }]
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { translations, options })]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  expect(await labelOf(pane, 'opt-q-l1-aaaaaa-A')).toBe('A · Manter (Recomendada)')
+  await run($, 'lang en')
+  expect(await labelOf(pane, 'opt-q-l1-aaaaaa-A')).toBe('A · Keep (Recommended)')
+  await pane.unmount()
+})
+
+test('gauntlet 7 own-1 model: History and the footer name a marked recommended label once, never doubled, in en and pt', () => {
+  const now = 10 * FOOT_MIN
+  const options = [{ key: 'A', label: 'Keep (Recomendada) (Recomendada)' }, { key: 'B', label: 'Rewrite' }]
+  const board: Board = {
+    questions: [parsedQuestion('q-o1-000001', 1, { title: 'Pick the queue', options })],
+    answers: [answerOf('q-o1-000001', 'A', now - FOOT_MIN)],
+    delivered: [],
+  }
+  for (const lang of ['en', 'pt'] as const) {
+    const line = historyOf(lang, board, { ...NO_STATUS, now })[0]?.sessions[0]?.entries[0]?.line ?? ''
+    expect(line.startsWith('Keep · ')).toBe(true)
+    expect(footerText(lang, board, now)).toMatch(/ → Keep, /)
+    expect(footerText(lang, board, now)).not.toMatch(/Recomendada|Recommended/)
+  }
+})
+
+test('gauntlet 7 review F7 model: optionLabelOf takes recommended markers off the start of a label, in English and Portuguese, and keeps a bare leading word', () => {
+  const en = (text: string): string => optionLabelOf('en', { key: 'A', label: text })
+  const pt = (text: string): string => optionLabelOf('pt', { key: 'A', label: text })
+  for (const marked of [
+    '(Recommended) Keep',
+    '[Recommended] Keep',
+    '{recommended} Keep',
+    '( Recommended ) Keep',
+    '(RECOMMENDED)Keep',
+    'Recommended: Keep',
+    'Recommended:Keep',
+    'Recommended - Keep',
+    'Recommended- Keep',
+    'Recommended – Keep',
+    'recommended — Keep',
+    '(Recommended) Keep',
+    'Recommended — Keep',
+    '(Recommended) [Recommended] Recommended: Keep',
+    '(Recommended) Keep (Recommended)',
+  ]) {
+    expect(en(marked)).toBe('Keep')
+  }
+  for (const marked of ['[Recomendada] Manter', '(recomendado) Manter', 'Recomendada — Manter', 'RECOMENDADA: Manter', '{Recomendada} (Recomendado) Manter']) {
+    expect(pt(marked)).toBe('Manter')
+  }
+  for (const kept of ['Recommended settings', 'Recommended-only path', 'Recommendedly: Keep', 'Recomendadas: Manter', 'Not recommended: Keep']) {
+    expect(en(kept)).toBe(kept)
+  }
+  // An old stored label that is only markers draws the pane's mark, in the pane's language, once.
+  expect(en('(Recommended)')).toBe('(Recommended)')
+  expect(pt('(Recommended)')).toBe('(Recomendada)')
+  expect(en('Recommended:')).toBe('(Recommended)')
+  expect(pt('[Recomendada] (Recommended)')).toBe('(Recomendada)')
+  expect(en('')).toBe('')
+})
+
+test('gauntlet 7 review F7: a marker at the start of a label is drawn once on the button in pt and en, and a bare leading word stays', async ($, on) => {
+  const options = [
+    { key: 'A', label: 'Recomendada — Manter' },
+    { key: 'B', label: '(Recommended) Rewrite' },
+    { key: 'C', label: 'Recommended settings' },
+  ]
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { options, recommended: 'B' })]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  expect(await labelOf(pane, 'opt-q-l1-aaaaaa-A')).toBe('A · Manter')
+  expect(await labelOf(pane, 'opt-q-l1-aaaaaa-B')).toBe('B · Rewrite (Recomendada)')
+  expect(await labelOf(pane, 'opt-q-l1-aaaaaa-C')).toBe('C · Recommended settings')
+  await run($, 'lang en')
+  expect(await labelOf(pane, 'opt-q-l1-aaaaaa-A')).toBe('A · Manter')
+  expect(await labelOf(pane, 'opt-q-l1-aaaaaa-B')).toBe('B · Rewrite (Recommended)')
+  await pane.unmount()
+})
+
+test('gauntlet 7 review F7: an old stored label that is only a marker draws the mark once on the button, with no double space, in pt and en', async ($, on) => {
+  const options = [{ key: 'A', label: '(Recommended)' }, { key: 'B', label: 'Rewrite' }]
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { options, recommended: 'A' })]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  expect(await labelOf(pane, 'opt-q-l1-aaaaaa-A')).toBe('A · (Recomendada)')
+  await run($, 'lang en')
+  expect(await labelOf(pane, 'opt-q-l1-aaaaaa-A')).toBe('A · (Recommended)')
+  await pane.unmount()
+})
+
+test('gauntlet 7 review F7 model: History and the footer name a label marked at its start once, and an only-marker label as the mark, in en and pt', () => {
+  const now = 10 * FOOT_MIN
+  const options = [{ key: 'A', label: '[Recomendada] Keep' }, { key: 'B', label: '(Recommended)' }]
+  const boardOf = (key: string): Board => ({
+    questions: [parsedQuestion('q-o1-000001', 1, { title: 'Pick the queue', options })],
+    answers: [answerOf('q-o1-000001', key, now - FOOT_MIN)],
+    delivered: [],
+  })
+  const lineOf = (lang: 'en' | 'pt', key: string): string =>
+    historyOf(lang, boardOf(key), { ...NO_STATUS, now })[0]?.sessions[0]?.entries[0]?.line ?? ''
+  for (const lang of ['en', 'pt'] as const) {
+    expect(lineOf(lang, 'A').startsWith('Keep · ')).toBe(true)
+    expect(footerText(lang, boardOf('A'), now)).toMatch(/ → Keep, /)
+    expect(footerText(lang, boardOf('A'), now)).not.toMatch(/Recomendada|Recommended/)
+  }
+  expect(lineOf('en', 'B').startsWith('(Recommended) · ')).toBe(true)
+  expect(lineOf('pt', 'B').startsWith('(Recomendada) · ')).toBe(true)
+  expect(footerText('en', boardOf('B'), now)).toMatch(/ → \(Recommended\), /)
+  expect(footerText('pt', boardOf('B'), now)).toMatch(/ → \(Recomendada\), /)
 })
