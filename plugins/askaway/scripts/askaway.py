@@ -673,7 +673,7 @@ def _clean_text(name: str, raw: object) -> str:
 
 
 def unmarked_label(raw: str) -> str:
-    """An option label on one line with the recommended marks at its end taken off: the pane draws its own mark for the
+    """An option label on one line with the recommended marks at its start and end taken off: the pane draws its own mark for the
     recommended option, so a mark the agent wrote would show twice (own-1). Every label the CLI stores goes through it."""
     return RECOMMENDED_MARKER.sub("", _one_line(raw)).strip()
 

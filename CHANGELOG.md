@@ -2,10 +2,14 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.39, set by the beta.39 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.40, set by the beta.40 release commit.
 Commit hashes name the change in `git log`.
 
 ## [Unreleased]
+
+## [0.4.0-beta.40] - 2026-10-22
+
+Askaway 0.4.0-beta.40 gives the main session and the asking subagent one copy each of an answer, shows the recommended mark once, and closes the Bash guard gaps gauntlet 7 found.
 
 ### Changed
 - Each answer has one copy per recipient. `d/<id>.json` is the main session's copy and carries `"recipient": "main"`; the new `s/<id>.json` is the copy of the subagent whose own `ask` filed the question, with its `agent_id` (`_claim_copy`, `_copy_closed`). A subagent's high-risk pause ends only on its own copy or a lapse, never on the main session's copy (`_pause_holds`). A marker written by 0.4.0-beta.39 or older, with no `recipient`, still closes every copy (`_closes_every_copy`). A subagent's `wait` marks its own copy from the line it printed (`_mark_waited`). `prune` removes `s/` files with their item and as orphans.
@@ -15,7 +19,7 @@ Commit hashes name the change in `git log`.
 
 ### Fixed
 - An option shows the recommended mark once. The CLI takes the recommended marks off the start and the end of every label it stores, in English and Portuguese, in brackets or after a dash or a colon (`RECOMMENDED_MARKER`, `unmarked_label`): `ask --json`, `ask` on stdin, translations, the AskUserQuestion skeleton and the CSV label column. A label that is only a mark is refiled as missing. The pane takes them off too and draws its own mark once, on the button, in History and in the footer (`optionLabelOf`, `recommendedMarkOf`, `hooks/model.ts`).
-- Pane: Other text typed under a kept label stays pending on a blur while its field is on screen, so Submit all sends the text the field shows (`recordPendingOther`). A reply press runs its own `list --open` and decides on its own result (`refreshEnded`). A failed `list --open` run is logged with its exit code and stderr, once per failure text, cut to 500 characters (`logEndedListFailure`). A written reply whose file does not read back yet stays off the board as a local copy that names who answered (`panelWho`). The poll after a Dismiss waits for the poll in flight (`pollAfterRunning`), and the draft retry waits for a save in flight (`draftSaves`). The footer names a question that is gone "Question closed", not its id (`hooks/register.tsx`, `hooks/model.ts`).
+- Pane: Other text typed under a kept label stays pending on a blur while its field is on screen, so Submit all sends the text the field shows (`recordPendingOther`). A reply press runs its own `list --open` and decides on its own result (`refreshEnded`). A failed `list --open` run is logged with its exit code and stderr, once per failure text, cut to 500 characters (`logEndedListFailure`). A written reply whose file does not read back yet stays on the board as a local copy that names who answered (`panelWho`). The poll after a Dismiss waits for the poll in flight (`pollAfterRunning`), and the draft retry waits for a save in flight (`draftSaves`). The footer names a question that is gone "Question closed", not its id (`hooks/register.tsx`, `hooks/model.ts`).
 - A failed directory fsync after `write_atomic`'s replace is a warning on stderr, as after `create_once`'s link (`_sync_published`). A `q/` file whose name is not an inbox id is skipped by `list`, `prune` and `export` (`_question_matches`).
 
 ### Security
@@ -697,5 +701,6 @@ Third gauntlet round (40 personas over betas 14 to 25): 150 findings, 64 adopted
 - The README describes the away flow and what each card carries, matches every claim to the plugin, and adds a screenshot (150ad49, 6020300).
 - SPEC.md records the 0.4.0-beta.5 live check of the pane layout (0f43a9f).
 
-[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.39...HEAD
+[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.40...HEAD
+[0.4.0-beta.40]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.39...v0.4.0-beta.40
 [0.4.0-beta.39]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.38...v0.4.0-beta.39
