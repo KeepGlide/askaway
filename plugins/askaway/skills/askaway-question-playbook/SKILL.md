@@ -46,7 +46,7 @@ Write each question in this order. The reader has not seen the conversation.
 
 ## Fields
 
-The CLI refuses longer text as `too long (n/limit)` and names the field, so keep each field within its limit. An absent, null or blank title falls back to the question, cut to 60. The CLI stores any top-level key it does not read with the question as sent; the fields it writes win over a key of the same name.
+The CLI refuses longer text as `too long (n/limit)` and names the field, so keep each field within its limit. An absent, null or blank title falls back to the question, cut to 60. The CLI stores any top-level key it does not read with the question as sent, except `asker`, which is dropped; the fields it writes win over a key of the same name.
 
 | Field | Required | Limit | Rule |
 |---|---|---|---|
@@ -108,10 +108,9 @@ The CLI prints one JSON line: `{"id":"q-...","recommended":"A","title":"...","ac
 
 - Continue on `recommended` unless `action` is `pause`.
 - `"action":"pause"` is printed for `risk` `high` and for a repeat of a paused
-  question (see below). Do read-only work, or end
-  the turn, until the answer is delivered to your session. The pause ends at
-  delivery, not when the user writes the answer. Check with a plain `status <id>`
-  command (no shell operators), which the pause guard lets through.
+  question (see below). End the turn instead of retrying or polling, until the answer
+  is delivered to your session. The pause ends at delivery, not when the user writes
+  the answer.
   A `pause` on a question filed without a session holds no session's pause: no hook
   stops your calls, so you stop on your own and treat the `pause` reply as a stop.
 - `low` and `medium` never pause a new question; a repeat of a paused question does.
@@ -120,9 +119,13 @@ The CLI prints one JSON line: `{"id":"q-...","recommended":"A","title":"...","ac
 - `"action":"pause"` with `"duplicate":true`: the same question is already open and
   paused. A high-risk repeat of an open question sets its pause and raises its risk to
   `high`, and a repeat of a paused question gets `pause` whatever its own risk. Do not
-  file it again; keep waiting as for a pause (read-only work, or end the turn, then
-  `status <id>`).
-- A subagent learns the reply with the plugin script's wait command
+  file it again; end the turn as for a pause (a subagent hands back instead, see the next rule).
+- A subagent that files a `pause` question hands back what it has and stops: its final
+  report names the open question id and what remains. Unlike the main thread, it does not
+  poll `status <id>` and does not run `wait` while paused. The pause guard holds its calls,
+  and `wait` writes no delivery marker, so it would stay held. The answer reaches the main
+  thread, whose delivery hook passes it on.
+- A subagent that files a non-pause question learns the reply with the plugin script's wait command
   (`wait <id> --timeout <s>`) and uses its `line` field, since the delivery hook skips subagents.
 - An answer arrives as a line in your context. It opens with who answered, then the
   chosen part, then the question. `<who>`, `<label>` and `<title>` are JSON string literals,

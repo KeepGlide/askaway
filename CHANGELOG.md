@@ -9,6 +9,31 @@ Commit hashes name the change in `git log`.
 
 ### Changed
 - The README pair follows the KeepGlide README standard: banner, badges, contents, status, screenshots, known issues, uninstall and maintainer sections (`README.md`, `README.pt-BR.md`).
+- Claude Code 2.1.295 or later is required, because the hooks file sets `onFailure` (README pair, SPEC.md).
+- The pause guard passes a read-only MCP tool whose only write word is `merge`, `commit` or `archive` right after the read verb, such as `get_commit`, `get_merge_request` or `list_merge_requests` (`is_read_only_mcp`, `READ_EXEMPT_WORDS`); another write word in its name still holds it, as `search_and_merge` is held. The word list is in SPEC.md.
+- A subagent asker hands back during a pause instead of polling or running `wait` (`skills/askaway-question-playbook/SKILL.md`).
+- The pane reads an option key only when it is one uppercase letter (`OPTION_KEY_PATTERN`, `hooks/model.ts`).
+- An answered card stays dimmed until its reply is written, not for a fixed 250 ms: the written record takes it off, and a refused or failed reply undims it at once (`writeAnswer`, `hooks/register.tsx`).
+
+### Fixed
+- Linux: the Desktop session folder follows `$XDG_CONFIG_HOME` (default `~/.config`), as Claude Desktop does (`desktop_sessions_root`, `scripts/askaway.py`).
+- An unknown risk value is drawn as the medium warning, never as its raw text (`riskLabel`, `hooks/model.ts`).
+- Other text typed in the pane is recorded as the answer when Submit all is pressed (`submittedTypedOther`, `hooks/wizard.ts`).
+- Titles of the session, family and project are drawn on one line (`singleLine`, `hooks/model.ts`).
+- A Desktop Group with an empty name is skipped, so the family root's group still applies (`hooks/model.ts`).
+- A Desktop config change that moves a question's group keeps that question on screen, and is not counted as a group switch (`groupOnScreen`, `hooks/register.tsx`).
+- A History row whose question is gone reads "Question closed" (`hooks/model.ts`, `hooks/i18n.ts`).
+
+### Security
+- The pause guard matcher covers `Monitor` and `PowerShell` calls, anchored as `^(Edit|Write|NotebookEdit|Bash|PowerShell|Monitor|Agent)$|^mcp__` (`hooks/command-hooks.json`).
+- The pause guard blocks the call when its hook times out, fails to start or exits unexpectedly (`"onFailure": "block"`).
+- A damaged `q/` file holds the whole session, since its asker cannot be read (`_holds_caller`, `_holding_question`, `scripts/askaway.py`).
+- The shell guard reads `#` as a comment only at the start of the text or after a space, tab, newline, `;`, `&`, `|` or `(`, so `echo a#b` and `(1)#` are checked as words, as in bash (`SHELL_TOKEN`, `scripts/askaway.py`). The text of a comment is read once more as a command (`_comment_reason`), so a `#` the scan misreads cannot hide a delete or a write, and a comment that only mentions the state folder still passes.
+- The shell guard reads `$$`, a backquote with escapes and `((...))` as one word each, and a `..` after a `$`, a brace or a backquote no longer climbs back into the state folder (`SHELL_PIECE`, `_word_end`, `_hits_state`).
+- The shell guard never denies less than it did at commit a312550: `bash_tamper_reason` returns the reason of a frozen copy of that commit's guard first, or else the current scanner's reason; each runs in its own try, so an exception or a missing copy denies instead of letting the command through, and the scanner denies past 64 levels of nesting instead of recursing, reads in linear time and is skipped over 64 KB (`SCAN_DEPTH_LIMIT`, `SCAN_SIZE_LIMIT`, `_Brackets`, `BACKSTOP_DENIED`, `UNREADABLE_DENIED`, `TOO_DEEP_DENIED`). The copy (`scripts/askaway_guard_baseline.py`, loaded by path from beside `askaway.py`) brings back two false positives the scanner had fixed (a sandboxed `answer` followed by a comment with a lone quote, and a bare `export CDPATH=...; touch a`); remove it once the scanner has a clean review. The scanner itself now reads `$(...)`, `${...}` and `((...))` down to 64 levels of nesting (an arithmetic `((...))` at a command's start is one word), checks the text from a `#` with a lone quote to the end of the command, and judges a glob by the directory before it even after a `$`, and a delete by the folder a `..` climbs to (`_unit_end`, `_comment_reason`, `_hits_state`).
+- The shell guard refuses `mv` of a folder at or above the state folder when that folder is a source operand. `mv -t DIR`, `-tDIR` and `--target-directory[=]DIR` are read too, and make every other operand a source (`_move_targets`).
+- The shell guard does not trust a sandboxed `ASKAWAY_HOME` when an earlier command on the same line made a link at or above it: an `ln`, a `cp -s`, `-a` or `-d` (or a copy of a symlink already on disk), or an `mv` into place. A name with `$`, a backtick, `{` or a glob counts as the folder before its first such mark; `mkdir` and a plain `cp` that copies no link are fine (`_links_made`, `_sandbox_value`).
+- Fail closed on an unreadable `q/` folder: when `q/` exists but cannot be listed, `load_questions` raises, so the pause guard denies every call and a pane press is refused. A missing `q/` folder still reads as no questions (`load_questions`, `scripts/askaway.py`).
 
 ## [0.4.0-beta.37] - 2026-10-21
 
@@ -181,7 +206,7 @@ Owner replies to the 21 questions of Gauntlet round 4 (20 filed on 2026-10-20 pl
 - `askaway.py <cmd> --help` or `-h` prints one JSON line `{"usage": ..., "options": [...]}` for every command, `hook` included, and exits 0, except `hook deliver -h` with nothing to deliver, which prints nothing (`_exit_if_idle` runs before the parser); the top-level help is unchanged (`command_help`, `help_reply`; `scripts/askaway.py`).
 - `list --table` and `status <id> --table` print an aligned table with `id`, `status`, `title` (cut to 40 code points), `risk` and `age`; `status --table` adds `reply: <key>` after it; alignment counts code points, so wide (CJK) or combining characters misalign (`_table_text`, `_age_text`, `_status_command`; `scripts/askaway.py`).
 - `prune --id <id> --force` removes an open question whose session has not ended, such as a terminal session, which never writes an end marker, or a Desktop session still running; an answered question is still refused. It is the user's manual mode: the agent cannot run it (`cmd_prune_id`, `_prune_command`; `scripts/askaway.py`).
-- Keep on Other works as a draft label: the typed text becomes the label of the Other button and is kept as a pick; typing again replaces the label and needs a new click. While a kept label exists, text typed and not kept is not recorded as an Other pick on blur, Next or Back; it stays pending until Keep (`keptOther`, `submittedOther`; `hooks/wizard.ts`, `hooks/register.tsx`).
+- Keep on Other works as a draft label: the typed text becomes the label of the Other button and is picked by a click on the button; typing again replaces the label and needs a new click. While a kept label exists, text typed and not kept is not recorded as an Other pick on blur, Next or Back; it stays pending until Keep (`keptOther`, `submittedOther`; `hooks/wizard.ts`, `hooks/register.tsx`).
 - `labels` in `draft.json`: the kept Other labels are shared by every session with the picks (`parseDraft`; `hooks/model.ts`, `hooks/register.tsx`).
 - The move lock is visible: while a pick, Next or Back holds it for 350 ms, Next and Back are drawn disabled and a second press does nothing; Submit all and the row Submit are not locked (`moveOnce`, `MOVE_LOCK_MS`; `hooks/register.tsx`).
 - `/askaway lang` registers `/askaway` again with the chosen language's description (`setLang`, `registerCommand`; `hooks/register.tsx`). The engine's handling of a second registration is not verified; a refused one is logged once, and the old description stays until the next session.

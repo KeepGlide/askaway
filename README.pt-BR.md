@@ -75,7 +75,7 @@ O Askaway não:
 
 - responde por você: os agentes são orientados a não responder perguntas. A CLI tem um comando `answer`, e a skill orienta os agentes a não chamá-lo. O hook `pause-guard` nega uma chamada de Bash, no shell do próprio agente, que o rode. É um freio, não uma garantia: o painel chama a CLI diretamente, o que não é uma chamada de ferramenta, então o hook não a vê;
 - faz chamadas de rede: perguntas e respostas são arquivos na sua máquina;
-- para o trabalho a cada pergunta: só uma pergunta arriscada pausa uma sessão, e só a sessão cujo id a pergunta traz.
+- para o trabalho a cada pergunta: só uma pergunta arriscada pausa uma sessão, e só o agente que perguntou (a sessão inteira quando a pergunta ainda não tem autor).
 
 ### Termos usados nesta página
 
@@ -157,8 +157,8 @@ sequenceDiagram
 
 ## 📋 Pré-requisitos
 
-- Claude Code que carrega mods e ganchos de plugins. Testado com o Claude Code 2.1.296 (`claude --version`).
-- Python 3.12 ou mais novo como `python3` no seu `PATH`, só com a biblioteca padrão (o script usa o comando `type`). Testado com o Python 3.12.3.
+- Claude Code 2.1.295 ou mais recente, que carrega mods e ganchos de plugins (o arquivo de ganchos usa `onFailure`, veja [ganchos](https://code.claude.com/docs/en/hooks)). Testado com o Claude Code 2.1.296 (`claude --version`).
+- Python 3.12 ou mais novo como `python3` no seu `PATH`, só com a biblioteca padrão (o script recusa rodar abaixo de 3.12: `scripts/askaway.py:12`). Testado com o Python 3.12.3.
 - Nenhuma conta, serviço ou chave de API.
 
 | Plataforma | Status | Observações |
@@ -166,6 +166,8 @@ sequenceDiagram
 | Linux | ✅ | Testado com o Claude Code 2.1.296 e o Python 3.12.3. Os passos de shell da spec de instalação foram verificados só aqui. |
 | macOS | ⚠️ | A pasta de sessões do Claude Desktop é `~/Library/Application Support/Claude/claude-code-sessions` desde a 0.4.0-beta.37, coberta só por testes de unidade (`scripts/tests/test_platform_paths.py`). |
 | Windows | ❌ | Não testado. O código não tem caminho para Windows na pasta de sessões do Claude Desktop (`scripts/askaway.py:127-128`). |
+
+O painel só roda no Linux: as gravações de estado usam `mv -fT` do GNU, e a checagem de trava antiga usa `find -mmin` do GNU, que trunca a idade. O suporte ao macOS da 0.4.0-beta.37 cobre só a busca da sessão do Claude Desktop pela CLI.
 
 ## 🚀 Instalação
 
@@ -254,7 +256,7 @@ rm -r ~/.claude/state/askaway
 > [!CAUTION]
 > Apagar a pasta de estado apaga cada pergunta e resposta dentro dela. Use o caminho do seu `ASKAWAY_HOME` se você definiu um.
 
-**O que fica:** a pasta de estado com as perguntas, respostas e marcas de entrega, e a entrada do marketplace, até você removê-las como acima. O Askaway grava só dentro da pasta de estado ([O que o Askaway lê e grava](#o-que-o-askaway-lê-e-grava)), então nada mais na sua máquina muda.
+**O que fica:** a pasta de estado com as perguntas, respostas e marcas de entrega, e a entrada do marketplace, até você removê-las como acima. O Askaway grava só dentro da pasta de estado ([O que o Askaway lê e grava](#o-que-o-askaway-lê-e-grava)), e o painel guarda quatro chaves no armazenamento do mod (`lang`, `who`, `quiet` e `cleared`) fora dela; os passos de desinstalação acima não removem essas chaves.
 
 ## 🧭 Uso
 
@@ -267,7 +269,7 @@ Enquanto há perguntas abertas, uma faixa fica acima do prompt: `2 perguntas agu
 1. Aperte `1` com o prompt vazio, ou clique em **Responder** na faixa, para abrir o painel. O cabeçalho mostra o logo do Askaway, o título **Perguntas aguardando** e o contador, como `2 pendentes · 1 grupo`.
 2. A árvore lista cada grupo do Desktop e cada família de sessões com perguntas abertas, uma abaixo da outra, com o nome em negrito: o nome do grupo na barra lateral do Desktop, ou o título da raiz da família. Embaixo de um grupo, cada sessão desenha a sua própria linha com as suas perguntas. Embaixo do título da raiz de uma família, as perguntas da própria sessão raiz ficam logo abaixo desse título (o título nunca se repete como linha de sessão); embaixo delas, as sessões derivadas da família (`├` ou `└`) guardam as suas perguntas. Uma marca mostra em que ponto está cada pergunta: `●` a que está na tela, `○` aguardando. Uma pergunta com opção escolhida mostra depois do texto `✓ - ▪ Enviar resposta`: esse **Enviar resposta** manda só a resposta dela, na hora, e o cartão fica na pergunta que está na tela; as demais escolhas esperam o **Enviar tudo**, que volta o cartão para a primeira pergunta do grupo. Nada é enviado antes de um dos dois. Os nomes de família e de sessão são texto, não botões; cada linha de pergunta é um link, desenhado pontilhado e sublinhado no Desktop, e apertar uma leva ao cartão dela.
 3. Clique numa opção para registrá-la. O painel avança para a próxima pergunta sem resposta, voltando ao início se preciso, ou para a última pergunta quando todas já têm resposta. Nada é enviado ainda.
-4. Para responder com as suas palavras, o campo embaixo de **Outra…** fica sempre aberto: clique nele e digite. Aperte Enter (o botão do campo diz **Aplicar**) para registrar o texto como sua resposta; o cartão fica onde está, então aperte **Próxima →** ou **Enviar tudo** quando quiser. O texto também é registrado quando o campo perde o foco e em **Enviar tudo**. Um campo em branco tira a resposta. O link **Outra…** só leva o foco ao campo.
+4. Para responder com as suas palavras, o campo embaixo de **Outra…** fica sempre aberto: clique nele e digite. Aperte Enter (o botão do campo diz **Aplicar**) para pôr o texto no botão **Outra** como rótulo; o cartão fica onde está, então aperte **Próxima →** ou **Enviar tudo** quando quiser. Enquanto não há rótulo mantido, o texto é registrado como sua resposta quando o campo perde o foco e em **Enviar tudo**, e um campo em branco tira a resposta. Com um rótulo mantido, sair do campo, **Próxima →** ou **← Voltar** não registra o texto dele, um campo em branco não muda nada, e o rótulo só é escolhido com um clique no botão; **Enviar tudo** ainda registra o texto digitado no campo. O link **Outra…** só leva o foco ao campo.
 5. **← Voltar** vai para a pergunta anterior. **Próxima →** vai para a seguinte, com ou sem resposta. Ele aparece em todas as perguntas, menos na última.
 6. Na última pergunta do grupo, o botão de avançar é **Enviar tudo (N)**, em que N é o número de perguntas do grupo na tela. Ele só fica disponível quando todas as perguntas têm resposta. Ao apertá-lo, todas as respostas do grupo vão para as sessões que perguntaram. Nada é enviado antes desse botão.
 
@@ -358,7 +360,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache b
 ```
 
 ```text
-{"id": "q-…", "recommended": "A", "action": "continue"}
+{"id": "q-…", "recommended": "A", "title": "Cache backend", "action": "continue"}
 ```
 
 | Campo | Obrigatório | Observações |
@@ -375,8 +377,10 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache b
 | `gains` | sim | Uma ou duas frases sobre o que o usuário ganha com ela. Até 300 caracteres. |
 | `losses` | sim | Uma ou duas frases sobre o que o usuário abre mão ou arrisca com ela. Até 300 caracteres. |
 | `analogy`, `urgency`, `undo` | sim | `analogy` é uma comparação que deixa a troca clara; `urgency` é o prazo, como `Can wait` ou `Blocks in ~8 min`; `undo` é o custo de reverter a escolha, como `changing later ≈ 10 min`. Até 300 caracteres cada. |
-| `risk` | sim | O risco de aceitar a opção recomendada: `low` é seguro de aceitar e fácil de mudar depois; `medium` é reversível, mas mudar custa retrabalho; `high` é irreversível, ou toca arquivos reais, credenciais ou dinheiro, e pausa a sessão até a resposta ser entregue a ela. Não há padrão: um `risk` faltando faz a entrada voltar como `refile`. |
-| `pause` | não | Só é verificado quanto ao tipo; não pausa nada. Uma pergunta pausa a sessão quando `risk` é `high`, e nunca em outro caso. |
+| `risk` | sim | O risco de aceitar a opção recomendada: `low` é seguro de aceitar e fácil de mudar depois; `medium` é reversível, mas mudar custa retrabalho; `high` é irreversível, ou toca arquivos reais, credenciais ou dinheiro, e pausa o agente que perguntou até a resposta ser entregue a ele (a sessão inteira quando a pergunta não tem autor). Não há padrão: um `risk` faltando faz a entrada voltar como `refile`. |
+| `pause` | não | Só é verificado quanto ao tipo; não pausa nada. Uma pergunta pausa o agente que perguntou quando `risk` é `high` (a sessão inteira quando ainda não tem autor), e nunca em outro caso. |
+| `urgency_level` | não | `low`, `medium` ou `high` (qualquer caixa): o grau pelo qual o painel colore a urgência. Sem ele, o painel gradua o texto da urgência por palavras-chave. Qualquer outro valor volta como `refile`. |
+| `translations` | não | O texto da pergunta no outro idioma do painel, com as chaves `en` e `pt-BR` só (outra chave volta como `refile`), para que `/askaway lang` troque o cartão inteiro. Cada idioma tem um subconjunto não vazio dos campos de texto e dos campos das opções. |
 | `run_kind` | não | `main`, `subagent`, `goal`, `loop`, `bash` ou `codex`. |
 
 Não passe `session` nem `project`: a CLI os preenche a partir do ambiente e do diretório de trabalho. Texto acima do limite é recusado, não cortado: a resposta de refile traz `too long (n/limit)`; encurte o texto e registre a entrada de novo.
@@ -395,12 +399,12 @@ Todo comando imprime uma linha JSON, exceto `export`, que imprime o seu document
 |---|---|
 | `ask --json '<entry>'` | Registra uma pergunta com os campos acima. `--strict` sai com 1 numa recusa (refile) ou num erro. Uma repetição de pergunta aberta (mesma sessão, mesma pergunta) devolve o id da aberta. |
 | `answer <id> <key> [--by <source>] [--text <text>]` | Registra uma resposta (agentes não devem chamá-lo). `--strict` sai com 1 quando a resposta é recusada ou inválida. |
-| `status <id>` | Imprime o estado (`open`, `answered`, `delivered`, `expired`, `damaged` ou `damaged answer`), a chave e, quando houver, `who`. `--strict` como em `ask`. |
-| `list [--open or --answered] [--since <when>]` | Lista as perguntas com o estado. `--since` precisa de `--answered` e mantém as respostas dadas desde `<quando>`. |
-| `wait <id> [--timeout 300] [--strict]` | Consulta a cada 0,5 s até a resposta existir, e então imprime `"status": "answered"` com a chave, ou `"status": "timeout"` quando os segundos acabam. `--strict` sai com 0 quando respondida, 2 no timeout e 1 num erro; sem ele, um timeout sai com 0. Um id desconhecido sai com 1 de qualquer modo. |
+| `status <id>` | Imprime o estado (`open`, `answered`, `delivered`, `expired`, `damaged` ou `damaged answer`), a chave e, quando houver, `who` e `by`, e `text` numa resposta Other. `--table` imprime uma tabela alinhada. `--strict` como em `ask`. |
+| `list [--open or --answered] [--since <when>]` | Lista as perguntas com o estado. `--since` precisa de `--answered` e mantém as respostas dadas desde `<quando>`. `--table` imprime uma tabela alinhada. |
+| `wait <id> [--timeout 300] [--strict]` | Consulta a cada 0,5 s até a resposta existir, e então imprime `"status": "answered"` com a chave, ou `"status": "timeout"` quando os segundos acabam. `--strict` sai com 0 quando respondida ou entregue, 2 no timeout e 1 num erro ou em qualquer outro estado, como `expired` ou `damaged`; sem ele, a saída é 0. Um id desconhecido sai com 1 de qualquer modo. |
 | `export [--since <when>] [--format json, jsonl or csv]` | Grava cada pergunta com a sua resposta, da mais nova para a mais antiga. `--since` mantém as perguntas feitas desde `<quando>`. |
 | `away on`, `away off` or `away status` | Liga ou desliga o modo ausente, ou informa o estado. O Bash do agente não consegue rodar `away on` nem `away off`: o guarda do Bash nega. Você liga ou desliga pelo painel ou por `/askaway away`. |
-| `prune [--days N] [--dry-run]` | Remove itens entregues e expirados mais antigos que N dias. O padrão é `ASKAWAY_PRUNE_DAYS`, senão 30. Com `--dry-run`, imprime os ids que removeria (`would_remove_ids`) e não remove nada. |
+| `prune [--days N] [--dry-run]` | Remove itens entregues e expirados mais antigos que N dias. O padrão é `ASKAWAY_PRUNE_DAYS`, senão 30. Com `--dry-run`, imprime os ids que removeria (`would_remove_ids`) e não remove nada. Seja qual for N, também remove arquivos `q/` danificados, respostas ilegíveis sem marca de entrega e respostas órfãs. `--id <id>` remove uma pergunta aberta cuja sessão já terminou, com os seus arquivos; `--id <id> --force` remove também uma cuja sessão não tem marca de fim. `--strict` sai com 1 numa recusa de `--id`. |
 
 O estado `damaged` quer dizer que o arquivo da pergunta não lê como objeto JSON; `damaged answer` quer dizer que o arquivo da resposta não lê, então a pergunta está respondida, mas a chave é desconhecida. As colunas do CSV de `export --format csv` são `asked_at`, `project`, `title`, `recommended`, `answered_key`, `label`, `who`, `by`, `answered_at`, `delivered` e `id`.
 
@@ -418,13 +422,13 @@ python3 "<askaway>/scripts/askaway.py" wait <id> --strict
 ```
 
    `<askaway>` é a pasta `plugins/askaway` instalada, e `<id>` é o `id` que a saída de `ask` trouxe. `--timeout` define os segundos de espera (padrão 300).
-3. Leia o código de saída: `0` respondida (a saída traz a `key`, e o `text` para a chave `other`); `2` sem resposta até o timeout; `1` erro.
+3. Leia o código de saída: `0` respondida ou entregue (a saída traz a `key`, e o `text` para a chave `other`); `2` sem resposta até o timeout; `1` erro, ou uma resposta expirada ou danificada.
 
 ## 🗂️ Pasta de estado
 
 ```text
 ~/.claude/state/askaway/
-├── q/<id>.json   a pergunta, gravada uma vez
+├── q/<id>.json   a pergunta, gravada por ask; o hook stamp-asker acrescenta `asker` uma vez
 ├── a/<id>.json   a resposta, vale a primeira gravação
 ├── d/<id>.json   a marca de entrega
 ├── away.json     modo ausente: {"on": true, "ts": ...}
@@ -447,11 +451,12 @@ A pasta de estado pertence a um usuário, e todas as sessões do Claude Code que
 - **Ganchos** (`plugins/askaway/hooks/command-hooks.json`) leem a entrada do hook pela entrada padrão: id da sessão, modo de permissão, diretório de trabalho, nome e entrada da ferramenta.
   - `SessionStart` (em `startup`, `resume`, `clear` ou `compact`), `UserPromptSubmit` e `PostToolUse` rodam `hook deliver`: ele lê `q/`, `a/` e `d/`, grava uma marca de entrega em `d/` para cada resposta que entrega, e coloca o texto da resposta no contexto daquela sessão.
   - `PreToolUse` em `AskUserQuestion` roda `hook ask-guard`: lê o estado ausente e não grava nada.
-  - `PreToolUse` em `Edit|Write|NotebookEdit|Bash|Agent|mcp__.*` roda `hook pause-guard`: lê `q/`, `a/` e `d/` e não grava nada.
+  - `PreToolUse` em `^(Edit|Write|NotebookEdit|Bash|PowerShell|Monitor|Agent)$|^mcp__` roda `hook pause-guard`: lê `q/`, `a/` e `d/`; a única gravação dele é a marca `clock_mark` na pasta de estado, quando uma pausa tem uma resposta ainda sem marca.
   - `PostToolUse` em `Bash` roda `hook stamp-asker`: depois de uma chamada de `ask`, grava `asker` (o `agent_id` de quem chamou, ou `main`) na pausa que a chamada registrou, e não altera outro campo.
-- **Títulos de sessão:** ao registrar uma pergunta, `ask` lê o transcrito da sessão que perguntou, `~/.claude/projects/<pasta do projeto>/<sessão>.jsonl`, e guarda só as suas entradas de título (`custom-title`, `agent-name`, `ai-title`). Não lê prompts nem respostas. O título dá nome à sessão no cartão.
-- **Marcadores de liberação do Claude Desktop:** `deliver` procura `<sessão>.desktop-released.json` na mesma pasta do projeto, para fechar as respostas de uma sessão que o Claude Desktop liberou.
-- **Painel (mod):** lê `q/`, `a/` e `d/`; grava respostas só pela CLI (`answer --by panel`), pelo alternador do modo ausente, em `draft.json` e `cleared.json` na pasta de estado, e nas próprias chaves de armazenamento (a escolha de idioma).
+- **Títulos de sessão:** ao registrar uma pergunta, `ask` procura o transcrito da sessão que perguntou, `<sessão>.jsonl`, em qualquer pasta de projeto sob `~/.claude/projects/`, e guarda só as suas entradas de título (`custom-title`, `agent-name`, `ai-title`). Não lê prompts nem respostas. O título dá nome à sessão no cartão.
+- **Registros de sessão do Claude Desktop:** a cada `ask`, lê os registros `$XDG_CONFIG_HOME/Claude/claude-code-sessions/*/*/local_*.json` (`~/.config` quando `XDG_CONFIG_HOME` não está definido; no macOS, em `~/Library/Application Support`) para achar a sessão e a família do Desktop da sessão que perguntou.
+- **Marcadores de liberação do Claude Desktop:** `deliver` procura `<sessão>.desktop-released.json` em qualquer pasta de projeto (uma varredura por execução de `deliver`), para fechar as respostas de uma sessão que o Claude Desktop liberou.
+- **Painel (mod):** lê `q/`, `a/` e `d/`; grava respostas só pela CLI (`answer --by panel`); na pasta de estado grava o alternador do modo ausente (`away.json`), `draft.json` e `cleared.json` (com uma pasta `draft.lock` em volta de cada gravação do rascunho), uma marca de entrega `d/<id>.json` com `via: "prompt"` para cada resposta que entrega a uma sessão, e um arquivo em `panel-tokens/` para cada token do painel que emite; as chaves do armazenamento dele são `lang`, `who`, `quiet` e `cleared`.
 - **Limpeza:** no máximo uma vez por dia, `deliver` remove itens fechados (entregues ou expirados) resolvidos há mais de `ASKAWAY_PRUNE_DAYS` dias (padrão 30) e arquivos temporários antigos.
 - **A CLI e os ganchos gravam só dentro da pasta de estado.** Cada arquivo é gravado primeiro num arquivo temporário e depois renomeado. Nada é enviado pela rede, e nada é gravado nos seus projetos ou transcrições.
 
@@ -471,7 +476,7 @@ Relate uma vulnerabilidade em privado, não numa issue pública. [SECURITY.md](S
 |---|---|---|
 | Sem botão na faixa e sem aviso | Nenhuma pergunta está aberta, ou esta versão do Claude Code não carrega mods | Rode `/askaway`. Se não estiver disponível, confira a versão do Claude Code (veja Pré-requisitos). |
 | A CLI imprime `"action": "refile"` com um `error` | A entrada é inválida ou está incompleta, por exemplo falta um campo, `fit` não é um inteiro de 0 a 100, ou há menos de duas opções | Complete os campos citados em `error` e registre a pergunta de novo. |
-| A CLI imprime `"error": "internal error"` | Falha interna; nada foi registrado | Siga com a opção recomendada e informe o texto do erro. |
+| A CLI imprime `"error": "internal error"` | Falha interna; nada foi registrado | Pare se `action` for `pause`; senão, siga com a opção recomendada e informe o texto do erro. |
 | O painel está no idioma errado | As variáveis de locale dizem outra coisa | Rode `/askaway lang en` ou `/askaway lang pt-BR`. |
 | Uma resposta nunca chega à sessão | A sessão ainda não leu, ou a resposta expirou sem ser lida depois de 7 dias | Confira com `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" status <id>`; a linha de estado no painel mostra o estado da entrega. |
 | A CLI imprime `"error": "answer refused: ..."` | Uma resposta `cli` a uma pergunta de outra sessão, ou a partir de um shell sem id de sessão | Responda pelo painel do Askaway, ou pela sessão que perguntou. |
@@ -480,7 +485,7 @@ Relate uma vulnerabilidade em privado, não numa issue pública. [SECURITY.md](S
 
 Nenhuma issue aberta traz o rótulo `bug` em 2026-10-21 (`gh issue list -R KeepGlide/askaway --state open --label bug`). Estas limitações vêm do código, do CHANGELOG e desta página:
 
-- **O Windows não é tratado.** A pasta de sessões do Claude Desktop é `~/.config/Claude/claude-code-sessions` em todas as plataformas, exceto macOS (`scripts/askaway.py:127-128`), então no Windows ela aponta para uma pasta que o Claude Desktop não usa. Isso não foi testado lá. Contorno: nenhum.
+- **O Windows não é tratado.** A pasta de sessões do Claude Desktop é `$XDG_CONFIG_HOME/Claude/claude-code-sessions` (padrão `~/.config`) no Linux e `~/Library/Application Support/Claude/claude-code-sessions` no macOS (`desktop_sessions_root`, `scripts/askaway.py:977-983`), então no Windows ela aponta para uma pasta que o Claude Desktop não usa. Isso não foi testado lá. Contorno: nenhum.
 - **Grupos do Desktop no macOS podem precisar do caminho da configuração.** O caminho padrão da configuração é `~/.config/Claude/claude_desktop_config.json` em todas as plataformas (`hooks/register.tsx:266`). Se os grupos do Desktop faltarem no macOS, defina `ASKAWAY_DESKTOP_CONFIG` com o caminho do arquivo de configuração. As perguntas continuam agrupadas por família ou projeto.
 - **API de acesso antecipado.** A API de mods muda entre as versões do Claude Code, então um Claude Code mais novo pode mudar o painel antes de o Askaway acompanhar. Contorno: fique no Claude Code 2.1.296, que foi testado, ou volte a uma versão com tag ([Fixar e voltar a versão](#fixar-e-voltar-a-versão)).
 - **Uma execução do Codex não pode ser pausada.** Nada segura uma execução do Codex, então o script dela precisa esperar a resposta por conta própria. Contorno: [Pelo Codex](#-pelo-codex).
@@ -493,8 +498,8 @@ Encontrou um? [Abra uma issue](https://github.com/KeepGlide/askaway/issues/new).
 
 | Categoria | Testes |
 |---|---|
-| Mod (TypeScript), `plugins/askaway/tests/` | 469 |
-| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 901 |
+| Mod (TypeScript), `plugins/askaway/tests/` | 487 |
+| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 1065 |
 
 Contagem Python de `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts`, no commit `f29c76d`, em 2026-10-21. A contagem do mod vem de uma execução nova de `claude plugin test plugins/askaway` no mesmo commit (o runner não tem modo de coleta).
 
