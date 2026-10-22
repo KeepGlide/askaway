@@ -56,12 +56,13 @@
         ]
       },
       {
-        "matcher": "Edit|Write|NotebookEdit|Bash|Agent|mcp__.*",
+        "matcher": "^(Edit|Write|NotebookEdit|Bash|PowerShell|Monitor|Agent)$|^mcp__",
         "hooks": [
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py\" hook pause-guard",
-            "timeout": 5
+            "timeout": 5,
+            "onFailure": "block"
           }
         ]
       }

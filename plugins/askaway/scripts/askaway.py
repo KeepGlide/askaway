@@ -57,7 +57,9 @@ import argparse
 import contextlib
 import csv
 import fcntl
+import functools
 import getpass
+import importlib.util
 import io
 import json
 import math
@@ -72,6 +74,7 @@ from datetime import datetime, timezone
 from fnmatch import fnmatchcase
 from itertools import islice
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Final, NamedTuple, NoReturn
 
 HookOutput = dict[str, Any] | None
@@ -183,7 +186,9 @@ READ_ONLY_PREFIXES: Final = ("get_", "list_", "read_", "search_", "find_", "desc
 WRITE_WORDS: Final = frozenset({
     "add", "apply", "create", "delete", "edit", "exec", "execute", "insert", "keep", "kill", "move",
     "patch", "post", "purge", "push", "put", "register", "remove", "reset", "run", "save", "send",
-    "set", "start", "stop", "update", "write"})
+    "set", "start", "stop", "update", "write", "replace", "rename", "drop", "upload", "merge", "commit", "archive",
+    "restore", "upsert", "append"})
+READ_EXEMPT_WORDS: Final = frozenset({"merge", "commit", "archive"})  # the object right after a read verb: get_commit
 # One simple `askaway.py ask|status|list|wait|export` call of the installed script: its path is SCRIPT_PATH
 # (symlinks resolved), its mirror under ~/.claude/mods (spelled out, or with ~, $HOME or ${HOME}), or the
 # plugin-root form the Askaway skill teaches (a quoted path only). A planted path such as /x/askaway.py never matches.
@@ -192,9 +197,9 @@ _MIRROR_PATH: Final = rf"(?:{re.escape(str(MIRROR_SCRIPT))}|{_HOME_PREFIX}/\.cla
 _FIXED_SCRIPTS: Final = "|".join([re.escape(str(SCRIPT_PATH)), _MIRROR_PATH])
 _PLUGIN_ROOT_SCRIPT: Final = re.escape("${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py")
 _INBOX_HEAD: Final = (
-    r"^\s*(?:/usr/bin/)?python3(?:\.\d+)?\s+"
+    r"^\s*(?:/usr/bin/)?python3(?:\.\d+)?[ \t]+"
     rf"(?:(?:{_FIXED_SCRIPTS})|\"(?:{_FIXED_SCRIPTS}|{_PLUGIN_ROOT_SCRIPT})\")"
-    r"\s+(?:ask|status|list|wait|export)\b"
+    r"[ \t]+(?:ask|status|list|wait|export)\b"
 )
 INBOX_HEAD: Final = re.compile(_INBOX_HEAD)
 INBOX_UNSAFE: Final = re.compile(r"[$`;&|<>]")  # outside single quotes these expand, run or redirect
@@ -213,17 +218,31 @@ AWAY_DENIED: Final = ("Denied: the Askaway away mode is switched only by the use
 AWAY_SWITCHES: Final = frozenset({"on", "off"})
 STATE_DENIED: Final = ("Denied: the Askaway state folder is written only by askaway.py itself. The user answers "
                        "in the Askaway panel, so a shell command or a file edit must not write into that folder.")
+UNREADABLE_DENIED: Final = ("Denied: the Askaway guard could not read this command (an internal error). Split it into "
+                            "simpler commands, or keep working without it.")
+TOO_DEEP_DENIED: Final = ("Denied: the Askaway guard could not read this command: its $(...), `...`, (...) or eval "
+                          "nesting goes deeper than 64 levels. Split it into simpler commands.")
+BACKSTOP_DENIED: Final = "Askaway guard backstop missing: reinstall the plugin (scripts/askaway_guard_baseline.py)."
+SCAN_DEPTH_LIMIT: Final = 64  # nested scans (command substitutions, eval, sh -c, comments) the scanner follows
+SCAN_SIZE_LIMIT: Final = 64 * 1024  # characters: a longer command is decided by the frozen guard alone
 FORCE_PRUNE_DENIED: Final = ("Denied: prune --force is for the user's own terminal only. It removes an open question "
                              "whose session has not ended, which frees that session's pause. Do read-only work or "
                              "end the turn.")
 FORCE_FLAG: Final = "--force"  # argparse takes any unambiguous prefix of a long option, so a prefix counts too
 FILE_TOOLS: Final = frozenset({"Edit", "Write", "NotebookEdit"})
+SHELL_TOOLS: Final = frozenset({"Bash", "Monitor"})  # Monitor runs its command under the Bash rules (tools reference)
 SHELL_OPERATORS: Final = frozenset({";", "&&", "||", "|", "&", "(", ")", "\n"})
 WRITE_REDIRECTS: Final = frozenset({">", ">>", ">&", ">|", "&>", "<>"})
-SHELL_WORD: Final = (r"(?:\$\((?:[^()]|\([^()]*\))*\)|\\.|'[^']*'|\"(?:\\.|[^\"\\])*\""
-                     r"|[^\s;&|<>()'\"\\]|\\.)+")
+SHELL_PIECE: Final = re.compile(  # one piece of a word that holds no bracket unit; the $(, ${ and (( units are read by _unit_end
+    r"\$\$"  # the shell's pid: it ends before a quote, so $$'a\' is $$ and a plain 'a\'
+    r"|\$'(?:\\.|[^'\\])*'"  # $'...' keeps its \' and \\ escapes: the quote does not end early
+    r"|`(?:\\.|[^`\\])*`|\\.|'[^']*'|\"(?:\\.|[^\"\\])*\""
+    r"|[^\s;&|<>()'\"\\]")
+BRACE_ITEM: Final = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"|\\.|[^}'\"\\]")  # one item of a ${...} that is no nested ${
+SHELL_BLANKS: Final = re.compile(r"[ \t]*")
 SHELL_TOKEN: Final = re.compile(
-    rf"[ \t]*(?:(?P<op>&&|\|\||>>|>&|>\||<<-?|<>|&>|[;&|<>()\n])|(?P<word>{SHELL_WORD}))")
+    r"&&|\|\||>>|>&|>\||<<-?|<>|&>|(?P<comment>(?<![^ \t\n;&|(])#[^\n]*)"  # a # is a comment only at text start or after
+    r"|[;&|<>()\n]")  # these, never after )
 WRITE_COMMANDS: Final = frozenset({"cp", "mv", "tee", "touch", "ln", "install", "truncate", "rsync",
                                  "mkfifo", "mknod", "mkdir", "chmod", "chown", "chgrp", "setfacl", "chattr"})
 DELETE_COMMANDS: Final = frozenset({"rm", "unlink", "shred", "rmdir"})
@@ -238,16 +257,23 @@ DIRECTORY_STACK_INDEX: Final = re.compile(r"[+-]\d+")  # pushd's rotation of the
 DIRECTORY_WORD: Final = re.compile(r"\b(?:cd|pushd|popd)\b")
 SOURCE_NAMES: Final = frozenset({"source", "."})  # run in this shell, and the scan cannot read the file they run
 CDPATH_VAR: Final = "CDPATH"  # cd searches these folders for a relative operand
+SHELL_VAR_NAMES: Final = frozenset({"declare", "typeset", "readonly"})  # set shell variables; only CDPATH matters to cd
+MOVE_TARGET_LONG: Final = re.compile(r"--t[\w-]*(?:=(.*))?", re.DOTALL)  # --target-directory, or a prefix of it
+MOVE_TARGET_SHORT: Final = re.compile(r"-[A-Za-z]*t(.*)", re.DOTALL)  # mv -t DIR, -tDIR, -vtDIR
+LINK_COPY: Final = re.compile(r"-[A-Za-z]*[sadlP][A-Za-z]*|--(?:symbolic-link|archive|no-dereference|links)")  # cp, rsync keep links
+SUFFIX_OPTION: Final = re.compile(r"-[A-Za-z]*S|--su[\w-]*")  # mv and ln take the next word as a suffix, which is no operand
 PREFIX_WORDS: Final = frozenset({"!", "{", "do", "elif", "else", "if", "then", "until", "while"})
 WRAPPER_ARG: Final = re.compile(r"-\S*|[0-9.]+[smhd]?")
 ASSIGNMENT: Final = re.compile(r"([A-Za-z_]\w*)=(.*)", re.DOTALL)
-SUBSTITUTION: Final = re.compile(r"\$\(((?:[^()]|\([^()]*\))*)\)|`([^`]*)`")
 SED_IN_PLACE: Final = re.compile(r"-[A-Za-z]*i|--in-place")
 PY_VALUE_OPTIONS: Final = frozenset({"-W", "-X"})
 MKTEMP_HOME: Final = re.compile(r"\$\(mktemp(?:\s[^()]*)?\)")
 EXPANSION: Final = re.compile(r"[$`*?\[{]")
-GLOB: Final = re.compile(r"[*?\[]")
+GLOB: Final = re.compile(r"[*?\[]")  # the expansion a write above a state folder is judged by (any one only when deleting)
+STATE_PIECES: Final = re.compile(  # the words state and askaway as one path, split only by quotes or separators
+    r"/[\"']*(?:state\W{0,3}askaway|askaway\W{0,3}state)|(?:state\W{0,3}askaway|askaway\W{0,3}state)[\"']*/")
 STATE_MENTION: Final = re.compile(r"state[\W_]*askaway|ASKAWAY_HOME")
+STATE_FOLDER_PATH: Final = re.compile(r"\.claude[\W_]*state")  # ~/.claude/state, spelled out or with $HOME
 WRITE_CODE: Final = re.compile(r"open\(.*?(?:['\"][wax+]|>)|write|unlink|remove|rename|os\.replace\(|rmtree|copy|move"
                                r"|os\.(?:symlink|link)\(|symlink_to|hardlink_to"
                                r"|touch|truncate|\b(?:rm|mv|cp|tee)\b")
@@ -414,7 +440,12 @@ def load_questions() -> tuple[list[dict[str, Any]], list[str]]:
     A file is damaged when it does not read as an object, or its id is not its name, or its ts is not an integer."""
     loaded: list[dict[str, Any]] = []
     damaged: list[str] = []
-    for path in (state_home() / "q").glob("*.json"):
+    try:
+        with os.scandir(state_home() / "q") as entries:
+            paths = [Path(entry.path) for entry in entries if entry.name.endswith(".json")]
+    except FileNotFoundError:  # no q/ folder yet; any other OSError propagates, and the pause check denies on it
+        paths = []
+    for path in paths:
         if not _is_regular(path):  # a FIFO, a symlink or a folder is not a question: skipped silently
             continue
         entry = read_json(path)
@@ -696,9 +727,14 @@ def _option(raw: Mapping[str, Any], key: str, gaps: Gaps) -> dict[str, Any]:
 
 
 def _options(raw_options: object, gaps: Gaps) -> list[dict[str, Any]]:
-    if not isinstance(raw_options, list) or len(raw_options) < MIN_OPTIONS:
+    if raw_options is None:
+        gaps.top["options"] = MISSING
+        return []
+    if not isinstance(raw_options, list):
         gaps.notes.append(f"options must be a list of at least {MIN_OPTIONS} items")
         return []
+    if len(raw_options) < MIN_OPTIONS:  # a short list is still checked option by option, so one refile names every gap
+        gaps.notes.append(f"options must be a list of at least {MIN_OPTIONS} items")
     objects: list[tuple[dict[str, Any], str]] = []  # each option with its key; a keyless one is shown as #<position>
     keys: list[str] = []
     for position, raw in enumerate(raw_options, start=1):
@@ -757,11 +793,16 @@ def _translated_options(path: str, raw: object, option_keys: list[str], gaps: Ga
     return cleaned
 
 
+def _unset_title(name: str, value: object) -> bool:
+    """A translated title that is null or blank counts as absent, as the main title does: the question is the fallback."""
+    return name == "title" and (value is None or (isinstance(value, str) and not value.strip()))
+
+
 def _translated_language(path: str, raw: object, option_keys: list[str], gaps: Gaps) -> dict[str, Any]:
     if not isinstance(raw, dict) or not raw:
         gaps.notes.append(f"{path}: must be a non-empty object")
         return {}
-    texts = {name: value for name, value in raw.items() if name != "options"}
+    texts = {name: value for name, value in raw.items() if name != "options" and not _unset_title(name, value)}
     language: dict[str, Any] = _translated_fields(path, texts, TRANSLATION_TOP_LIMITS, gaps)
     if "title" not in texts and "question" in language:  # the main title's rule when absent: the question, clipped
         language["title"] = _clip(language["question"], TITLE_MAX)
@@ -793,12 +834,12 @@ ENTRY_FIELDS: Final = frozenset({"question", "title", "risk", "urgency_level", "
 UNKNOWN_KEYS_MAX_BYTES: Final = 4096  # the unknown keys as JSON: a little over the largest text field (600 code points)
 
 
-def _unknown_keys(raw: Mapping[str, Any]) -> dict[str, Any]:
+def _unknown_keys(raw: Mapping[str, Any], gaps: Gaps) -> dict[str, Any]:
     """The top-level keys the CLI does not read, kept with the question as the agent sent them (SPEC: unknown keys).
     Over UNKNOWN_KEYS_MAX_BYTES as JSON the entry is refiled: a blob is not a field the pane can show."""
     unknown = {key: value for key, value in raw.items() if key not in ENTRY_FIELDS and key != ASKER_KEY}
     if len(json.dumps(unknown)) > UNKNOWN_KEYS_MAX_BYTES:  # ASCII by default, so the length is the byte count
-        raise ValueError(f"the unknown keys are over {UNKNOWN_KEYS_MAX_BYTES} bytes as JSON: keep them short or drop them")
+        gaps.notes.append(f"the unknown keys are over {UNKNOWN_KEYS_MAX_BYTES} bytes as JSON: keep them short or drop them")
     return unknown
 
 
@@ -820,12 +861,13 @@ def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
     what = texts["what"]
     if what is not None and _sentence_count(what) < MIN_SENTENCES:
         gaps.notes.append(f"what needs at least {MIN_SENTENCES} sentences")
+    unknown = _unknown_keys(raw, gaps)  # before the refusal, so an oversized unknown key is named with the other gaps
     if gaps.failed():
         raise EntryError(gaps)
     now = now_ms()
     desktop = desktop_session(origin.session)  # one Desktop scan serves both the title and the family
     return {
-        **_unknown_keys(raw),  # first, so every field below wins over a key of the same name the agent sent
+        **unknown,  # first, so every field below wins over a key of the same name the agent sent
         "v": 1, "id": new_id(now), "ts": now,
         "project": origin.project, "session": origin.session, "run_kind": run_kind,
         "session_title": session_title(origin.session, origin.project, desktop),
@@ -956,7 +998,12 @@ def session_title(session: str | None, project: str | None = None,
 
 
 def desktop_sessions_root() -> Path:
-    return Path(os.environ.get(DESKTOP_SESSIONS_ENV) or DESKTOP_SESSIONS_ROOT)
+    if os.environ.get(DESKTOP_SESSIONS_ENV):
+        return Path(os.environ[DESKTOP_SESSIONS_ENV])
+    if sys.platform == "darwin":
+        return DESKTOP_SESSIONS_ROOT
+    # Linux: appData follows XDG_CONFIG_HOME, as Electron's app.getPath("appData") does
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "Claude" / "claude-code-sessions"
 
 
 def _nonempty(value: object) -> str | None:
@@ -1558,8 +1605,9 @@ def _closed_ids(days: int, entries: Sequence[Mapping[str, Any]]) -> list[str]:
 
 
 def _remove_all(item_ids: Sequence[str]) -> list[str]:
-    """Remove each item once, in order; returns the ids removed."""
-    return [item_id for item_id in dict.fromkeys(item_ids) if _remove_item(item_id)]
+    """Remove each item once, in order, under the ask lock; returns the ids removed."""
+    with _ask_lock():  # an ask's stamp reads and rewrites a question under this lock: a removal cannot race it
+        return [item_id for item_id in dict.fromkeys(item_ids) if _remove_item(item_id)]
 
 
 def _would_remove(item_ids: Sequence[str]) -> list[str]:
@@ -1596,6 +1644,11 @@ def cmd_prune_id(item_id: str, force: bool) -> dict[str, Any]:
     force also removes one whose session has not ended, or one that holds a pause: a terminal session never writes
     an end marker, and only the user lifts a pause. A released-session marker alone never lifts a pause.
     """
+    with _ask_lock():  # held over the check and the removal: a stamp cannot re-file this question's pause between them
+        return _prune_id(item_id, force)
+
+
+def _prune_id(item_id: str, force: bool) -> dict[str, Any]:
     entry = read_json(item_path("q", item_id))
     if entry is None or not _question_matches(item_id, entry):
         return _prune_damaged_id(item_id)
@@ -1929,11 +1982,15 @@ def hook_ask_guard(event: Mapping[str, Any]) -> HookOutput:
 
 
 def is_read_only_mcp(tool_name: object) -> bool:
-    """An MCP tool whose own name starts with a read prefix and has no write word, e.g. mcp__graphify__get_node."""
+    """An MCP tool whose own name starts with a read prefix and has no write word, e.g. mcp__graphify__get_node.
+    merge, commit and archive are not write words right after the read verb: get_commit, list_merge_requests."""
     if not isinstance(tool_name, str) or not tool_name.startswith("mcp__"):
         return False
     tool = tool_name.rsplit("__", 1)[-1]
-    return tool.startswith(READ_ONLY_PREFIXES) and not (set(tool.split("_")) & WRITE_WORDS)
+    words = tool.split("_")
+    if len(words) > 1 and words[1] in READ_EXEMPT_WORDS:
+        del words[1]
+    return tool.startswith(READ_ONLY_PREFIXES) and not (set(words) & WRITE_WORDS)
 
 
 def _without_single_quoted(text: str) -> str:
@@ -1983,32 +2040,184 @@ def _command_name(argv: Sequence[str]) -> str:
     return os.path.basename(_unquote(argv[0])) if argv else ""
 
 
+class _Brackets:
+    """The bracket pairs of one text, found in one pass each, so a text of unclosed units is read in linear time."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.parens: dict[int, int] = {}  # index of a ( -> index of the ) that closes it
+        open_parens: list[int] = []
+        for index, char in enumerate(text):
+            if char == "(":
+                open_parens.append(index)
+            elif char == ")" and open_parens:
+                self.parens[open_parens.pop()] = index
+        self.braces: dict[int, int | None] = {len(text): None}  # position -> index after the first } left open there
+
+    def brace_end(self, start: int) -> int | None:
+        """The index after the } that closes the ${ at start, whatever the ${ nesting; None when it never closes.
+
+        The positions the scan visits do not depend on the depth, so the end of every position walked is kept: a
+        position walked once is never walked again, and the walk is iterative."""
+        walked: list[int] = []
+        pos = start + 2
+        while pos not in self.braces:
+            walked.append(pos)
+            if self.text.startswith("${", pos):
+                pos += 2
+            elif self.text[pos] == "}":
+                pos += 1
+            elif (item := BRACE_ITEM.match(self.text, pos)) is None:
+                self.braces[pos] = None
+                break
+            else:
+                pos = item.end()
+        for position in reversed(walked):
+            self.braces.setdefault(position, self._after(position))
+        return self.braces[start + 2]
+
+    def _after(self, pos: int) -> int | None:
+        """The first unmatched } at or after pos, as an index after it, from the ends of the positions after pos."""
+        if self.text[pos] == "}":
+            return pos + 1
+        if self.text.startswith("${", pos):
+            inner = self.braces[pos + 2]
+            return None if inner is None else self.braces[inner]
+        item = BRACE_ITEM.match(self.text, pos)
+        return None if item is None else self.braces[item.end()]
+
+
+@functools.lru_cache(maxsize=16)
+def _brackets(text: str) -> _Brackets:
+    return _Brackets(text)
+
+
+def _paren_end(text: str, start: int) -> int | None:
+    """The index after the ) that closes the ( at start, whatever the nesting; None when it never closes."""
+    close = _brackets(text).parens.get(start)
+    return None if close is None else close + 1
+
+
+def _brace_end(text: str, start: int) -> int | None:
+    """The index after the } that closes the ${ at start, whatever the ${ nesting; None when it never closes."""
+    return _brackets(text).brace_end(start)
+
+
+def _arithmetic_end(text: str, start: int) -> int | None:
+    """The index after a (( ... )) at start whose inner ( closes right before its outer one; ((a)(b)) is two subshells."""
+    if not text.startswith("((", start):
+        return None
+    parens = _brackets(text).parens
+    outer = parens.get(start)
+    return outer + 1 if outer is not None and parens.get(start + 1) == outer - 1 else None
+
+
+def _unit_end(text: str, pos: int) -> int | None:
+    """The index after the $(...), ${...} or ((...)) unit at pos, or None when none starts there or it never closes."""
+    if text.startswith("$(", pos):
+        return _paren_end(text, pos + 1)
+    if text.startswith("${", pos):
+        return _brace_end(text, pos)
+    return _arithmetic_end(text, pos)
+
+
+def _word_end(text: str, pos: int) -> int:
+    """The index where the word that starts at pos ends (pos itself when no word starts there)."""
+    while pos < len(text):
+        unit = _unit_end(text, pos)
+        piece = SHELL_PIECE.match(text, pos) if unit is None else None
+        if unit is None and piece is None:
+            break
+        pos = unit if unit is not None else piece.end()  # type: ignore[union-attr]
+    return pos
+
+
+HEREDOC_QUOTES: Final = re.compile(r"['\"\\]")  # quoting a heredoc delimiter makes its body data
+HEREDOC_BODY_UNIT: Final = re.compile(r"`(?:\\.|[^`\\])*`")  # a backtick unit in an unquoted heredoc body
+
+
+def _heredoc_units(body: str) -> list[str]:
+    """The $(...), ${...} and `...` units an unquoted heredoc body runs; its other text is data (a \\-escaped $ or ` is too)."""
+    units: list[str] = []
+    pos = 0
+    while pos < len(body):
+        if body[pos] == "\\":
+            pos += 2
+            continue
+        unit = body[pos] == "`" and HEREDOC_BODY_UNIT.match(body, pos)
+        end = unit.end() if unit else _unit_end(body, pos) if body.startswith(("$(", "${"), pos) else None
+        if end is None:
+            pos += 1
+            continue
+        units.append(body[pos:end])
+        pos = end
+    return units
+
+
+def _heredoc_body(text: str, pos: int, opened: tuple[str, bool, bool]) -> tuple[list[str], int]:
+    """(the units the body runs, the index of its terminator line's end) for the heredoc (word, quoted, tab-stripped)
+    whose body starts at pos. A quoted delimiter makes the body data: _heredoc_code reads it when an interpreter runs it."""
+    word, quoted, dashed = opened
+    lines = text[pos:].split("\n")
+    stop = next((index for index, line in enumerate(lines) if (line.lstrip("\t") if dashed else line) == word), None)
+    body = lines if stop is None else lines[:stop]
+    end = len(text) if stop is None else pos + len("\n".join(lines[:stop + 1]))
+    return ([] if quoted else _heredoc_units("\n".join(body))), end
+
+
 def _shell_tokens(text: str) -> list[tuple[str, str]] | None:
-    """(kind, value) pairs, kind "op" or "word"; None when a quote or a bracket is left open."""
+    """(kind, value) pairs, kind "op", "word" or "comment" (its text after the #); None when a quote or a bracket is left
+    open. A heredoc body is no command line: only the units an unquoted body runs come out, each after a newline op."""
     found: list[tuple[str, str]] = []
+    pending: list[tuple[str, bool, bool]] = []  # heredocs opened on this line: (delimiter, quoted, tab-stripped)
+    heredoc: str | None = None  # the <<, or <<-, whose delimiter word is next
     pos = 0
     while True:
-        match = SHELL_TOKEN.match(text, pos)
-        if match is None:
-            return found if not text[pos:].strip(" \t") else None
-        found.append(("op", match["op"]) if match["op"] else ("word", match["word"]))
-        pos = match.end()
+        pos = SHELL_BLANKS.match(text, pos).end()  # type: ignore[union-attr]
+        if pos == len(text):
+            return found
+        arithmetic = _arithmetic_end(text, pos)  # (( ... )) at a command's start is one word, not two subshell brackets
+        match = None if arithmetic is not None else SHELL_TOKEN.match(text, pos)
+        if match is not None:
+            found.append(("comment", match[0][1:]) if match["comment"] else ("op", match[0]))
+            pos = match.end()
+            heredoc = match[0] if match[0] in ("<<", "<<-") and not text.startswith("<", pos) else None  # <<< is no heredoc
+            if match[0] == "\n":
+                for opened in pending:
+                    units, pos = _heredoc_body(text, pos, opened)
+                    found.extend(token for unit in units for token in (("op", "\n"), ("word", unit)))
+                pending = []
+            continue
+        end = _word_end(text, pos if arithmetic is None else arithmetic)
+        if end == pos:
+            return None
+        found.append(("word", text[pos:end]))
+        if heredoc is not None:
+            raw = text[pos:end]
+            delimiter = HEREDOC_QUOTES.sub("", raw)
+            pending.append((delimiter, delimiter != raw, heredoc == "<<-"))
+            heredoc = None
+        pos = end
 
 
 class _Simple(NamedTuple):
     words: list[str]  # raw words of one simple command: assignments, wrappers, the command and its arguments
     writes: list[str]  # raw targets of its write redirections
+    comments: list[str]  # text after a # the scan reads as a comment: also read as a command, in case the shell does
 
 
 def _simple_commands(tokens: Sequence[tuple[str, str]]) -> list[_Simple]:
     commands: list[_Simple] = []
     words: list[str] = []
     writes: list[str] = []
+    comments: list[str] = []
     redirect: str | None = None  # the redirection operator whose target is the next word
     for kind, value in tokens:
         if kind == "op" and value in SHELL_OPERATORS:
-            commands.append(_Simple(words, writes))
-            words, writes, redirect = [], [], None
+            commands.append(_Simple(words, writes, comments))
+            words, writes, comments, redirect = [], [], [], None
+        elif kind == "comment":
+            comments.append(value)
         elif kind == "op":
             redirect = value
         elif redirect is None:
@@ -2017,7 +2226,7 @@ def _simple_commands(tokens: Sequence[tuple[str, str]]) -> list[_Simple]:
             if redirect in WRITE_REDIRECTS and not value.isdigit():
                 writes.append(value)
             redirect = None
-    commands.append(_Simple(words, writes))
+    commands.append(_Simple(words, writes, comments))
     return commands
 
 
@@ -2057,8 +2266,22 @@ def _assignments(words: Sequence[str]) -> dict[str, str]:
 
 
 def _substitutions(raw: str) -> list[str]:
-    """The text of each $(...) and `...` in a word: the shell runs it as a command too."""
-    return [match[1] if match[1] is not None else (match[2] or "") for match in SUBSTITUTION.finditer(raw)]
+    """The text of each $(...), `...` and ((...)) in a word: the text is read as a command too (an arithmetic body
+    only runs the substitutions inside it, but a ((a)(b)) of two subshells is one the shell does run)."""
+    found: list[str] = []
+    pos = 0
+    while pos < len(raw):
+        end = None
+        if raw.startswith("$(", pos) and (end := _paren_end(raw, pos + 1)) is not None:
+            found.append(raw[pos + 2:end - 1])
+        elif (end := _arithmetic_end(raw, pos)) is not None:
+            found.append(raw[pos + 2:end - 2])
+        elif raw[pos] == "`" and (end := raw.find("`", pos + 1) + 1) > 0:
+            found.append(raw[pos + 1:end - 1])
+        else:
+            end = pos + 1
+        pos = end
+    return found
 
 
 def _script_texts(argv: Sequence[str]) -> list[str]:
@@ -2201,20 +2424,48 @@ def _edits_in_place(name: str, args: Sequence[str]) -> bool:
     return name == "sed" and any(SED_IN_PLACE.fullmatch(arg) for arg in args)
 
 
-def _command_targets(name: str, args: Sequence[str]) -> list[str]:
-    """The operands a command writes to: a write or delete command's operands, sed -i's and dd's of= targets."""
+def _operands_and_folder(args: Sequence[str]) -> tuple[list[str], str | None]:
+    """The operands of a mv or ln, and the folder that -t or --target-directory names (None without one). A -S or
+    --suffix takes the next word as its value, so that word is no operand."""
+    operands: list[str] = []
+    folder: str | None = None
+    words = iter(args)
+    for arg in words:
+        if not arg.startswith("-"):
+            operands.append(arg)
+        elif SUFFIX_OPTION.fullmatch(arg):
+            next(words, "")
+        elif (match := MOVE_TARGET_LONG.fullmatch(arg) or MOVE_TARGET_SHORT.fullmatch(arg)) is not None:
+            folder = match[1] or next(words, "")  # the folder is the rest of the word, or the next word
+    return operands, folder
+
+
+def _move_targets(args: Sequence[str]) -> list[tuple[str, bool]]:
+    """A mv's sources, each removed from where it is, and its destination: the last operand, or the folder that -t or
+    --target-directory names, which makes every operand a source."""
+    operands, folder = _operands_and_folder(args)
+    if folder is None:
+        return [(arg, True) for arg in operands[:-1]] + [(arg, False) for arg in operands[-1:]]
+    return [(arg, True) for arg in operands] + [(folder, False)]
+
+
+def _command_targets(name: str, args: Sequence[str]) -> list[tuple[str, bool]]:
+    """The operands a command writes to, each with whether the command removes what it names: a delete's operands,
+    a mv's sources (moved away, so a folder above a state folder counts), sed -i's and dd's of= targets."""
     if name == "dd":
-        return [arg[3:] for arg in args if arg.startswith("of=")]
+        return [(arg[3:], False) for arg in args if arg.startswith("of=")]
+    if name == "mv":
+        return _move_targets(args)
+    operands = [arg for arg in args if not arg.startswith("-")]
     if name in WRITE_COMMANDS or name in DELETE_COMMANDS or _edits_in_place(name, args):
-        return [arg for arg in args if not arg.startswith("-")]
+        return [(arg, name in DELETE_COMMANDS) for arg in operands]
     return []
 
 
-def _write_targets(argv: Sequence[str], writes: Sequence[str]) -> tuple[list[str], bool]:
-    """The unquoted words a command writes to (redirections and operands), and whether it deletes."""
+def _write_targets(argv: Sequence[str], writes: Sequence[str]) -> list[tuple[str, bool]]:
+    """The unquoted words a command writes to (redirections and operands), each with whether it removes what it names."""
     name = _command_name(argv)
-    targets = [_unquote(word) for word in writes]
-    return targets + _command_targets(name, [_unquote(word) for word in argv[1:]]), name in DELETE_COMMANDS
+    return [(_unquote(word), False) for word in writes] + _command_targets(name, [_unquote(word) for word in argv[1:]])
 
 
 def _state_roots() -> tuple[str, ...]:
@@ -2227,7 +2478,7 @@ def _state_roots() -> tuple[str, ...]:
 
 
 def _inside(path: str, roots: Sequence[str]) -> bool:
-    return any(path == root or path.startswith(root + os.sep) for root in roots)
+    return any(path == root or path.startswith(root.rstrip(os.sep) + os.sep) for root in roots)
 
 
 def _above(path: str, roots: Sequence[str]) -> bool:
@@ -2244,18 +2495,21 @@ def _expand(text: str, askaway_home: str) -> str:
     return re.sub(r"^~(?=/|$)", lambda _: home, text)
 
 
-def _sandbox_value(value: str, cwd: str) -> bool:
-    """A value that keeps ASKAWAY_HOME in a scratch folder: $(mktemp ...), or a literal path under /tmp."""
+def _sandbox_value(value: str, cwd: str, written: Sequence[str]) -> bool:
+    """A value that keeps ASKAWAY_HOME in a scratch folder: $(mktemp ...), or a literal path under /tmp that no earlier
+    command of the same line wrote at or above (a symlink made in the line is not on disk yet when the line is read)."""
     if MKTEMP_HOME.fullmatch(value):
         return True
     if "$" in value or "`" in value:
         return False
-    return os.path.realpath(os.path.join(cwd, value)).startswith(TMP_ROOT + os.sep)
+    path = os.path.realpath(os.path.join(cwd, value))
+    return path.startswith(TMP_ROOT + os.sep) and not _inside(path, written)
 
 
 def _unreadable_reason(command: str) -> str | None:
-    """A command that does not read (an open quote): refused when it names the state folder, an answer or an away switch."""
-    if STATE_MENTION.search(command):
+    """A command that does not read (an open quote): refused when it names the state folder in any piece, an answer or an away switch."""
+    names_state = STATE_MENTION.search(command) or STATE_PIECES.search(command)
+    if names_state or ("askaway" in command and STATE_FOLDER_PATH.search(command)):
         return STATE_DENIED
     if "askaway" in command and "answer" in command:
         return ANSWER_DENIED
@@ -2266,13 +2520,22 @@ class _ShellScan:
     """One Bash command read as the shell runs it: the working directory, whether the guard knows it, and the
     ASKAWAY_HOME it exports."""
 
-    def __init__(self, cwd: str, exported: Mapping[str, str], roots: tuple[str, ...], cwd_known: bool = True) -> None:
+    def __init__(self, cwd: str, exported: Mapping[str, str], roots: tuple[str, ...], cwd_known: bool = True,
+                 written: list[str] | None = None, depth: int = 0) -> None:
+        self.depth = depth  # how many scans enclose this one; past SCAN_DEPTH_LIMIT the scan denies instead of recursing
         self.cwd = cwd
         self.cwd_known = cwd_known  # False once a directory change the guard cannot follow has run
         self.exported = dict(exported)
         self.roots = roots
+        # real paths the line's earlier commands wrote, at or above which no sandbox is trusted; nested scans share it
+        self.written: list[str] = [] if written is None else written
+        self.command = ""  # the text being scanned, for a comment that cannot be read alone
+        self.tail_checked = False  # whether a lone-quote comment's tail was already read as an unreadable command
 
     def text(self, command: str) -> str | None:
+        if self.depth > SCAN_DEPTH_LIMIT:
+            return TOO_DEEP_DENIED
+        self.command = command
         tokens = _shell_tokens(command)
         if tokens is None:
             return _unreadable_reason(command)
@@ -2287,6 +2550,10 @@ class _ShellScan:
             exported = _assignments(argv[1:])
             self.exported.update(exported)
             env = {**env, **exported}
+        elif name in SHELL_VAR_NAMES:  # a child never sees these, so only CDPATH (read by cd in this shell) is recorded
+            self.exported.update({key: value for key, value in _assignments(argv[1:]).items() if key == CDPATH_VAR})
+        if not argv and CDPATH_VAR in env:  # a loose assignment stays in this shell: every later cd searches CDPATH
+            self.exported[CDPATH_VAR] = env[CDPATH_VAR]
         if HOME_VAR in env and self._hits_state(env[HOME_VAR], str(DEFAULT_HOME), delete=False):
             return STATE_DENIED
         reason = self._checks(simple, argv, env, env.get(HOME_VAR, self.exported.get(HOME_VAR, "")))
@@ -2294,19 +2561,38 @@ class _ShellScan:
             self.cwd_known = False
         if reason is None and name in DIRECTORY_CHANGERS:
             self._change_directory(name, argv)
-        return reason
+        return reason or self._comment_reason(simple)
+
+    def _comment_reason(self, simple: _Simple) -> str | None:
+        """A comment is no command to the shell, but a # the scan misreads would hide one: deny when its text, read as a
+        command line of its own, or as more words of the command it follows, would be denied. A comment with a lone
+        quote (it's) cannot follow the command, but its quote may open one that closes further on: the text from the #
+        to the end of the whole command is then checked as an unreadable command."""
+        for comment in simple.comments:
+            if _shell_tokens(comment) is None:
+                if self.tail_checked:
+                    continue  # the first lone-quote comment's tail holds every later one: read once per scan, not per comment
+                self.tail_checked = True
+                if (reason := _unreadable_reason(self.command[max(self.command.find("#" + comment), 0):])) is not None:
+                    return reason
+                continue
+            for text in (comment, " ".join([*simple.words, comment])):
+                scan = _ShellScan(self.cwd, self.exported, self.roots, self.cwd_known, self.written, self.depth + 1)
+                if (reason := scan.text(text)) is not None:
+                    return reason
+        return None
 
     def _directory_untracked(self, name: str, argv: Sequence[str], env: Mapping[str, str]) -> bool:
         """Does the command move this shell's directory where the scan cannot follow it?
 
         CDPATH sends a relative cd to another folder. A sourced file, and an eval whose text holds a cd, run in this
         shell, and the scan of their text does not carry the directory back."""
-        if CDPATH_VAR in env or name in SOURCE_NAMES:
+        if name in SOURCE_NAMES or (name in DIRECTORY_CHANGERS and (CDPATH_VAR in env or CDPATH_VAR in self.exported)):
             return True
         return name == "eval" and any(DIRECTORY_WORD.search(text) for text in _script_texts(argv))
 
     def _checks(self, simple: _Simple, argv: Sequence[str], env: Mapping[str, str], home: str) -> str | None:
-        sandboxed = bool(home) and (self.cwd_known or os.path.isabs(home)) and _sandbox_value(home, self.cwd)
+        sandboxed = bool(home) and (self.cwd_known or os.path.isabs(home)) and _sandbox_value(home, self.cwd, self.written)
         askaway_home = home if sandboxed else str(DEFAULT_HOME)
         checks = [_answer_reason(argv, sandboxed), _away_reason(argv, sandboxed), _forced_prune_reason(argv),
                   self._write_reason(simple, argv, askaway_home), self._nested(simple, env, argv)]
@@ -2316,28 +2602,78 @@ class _ShellScan:
         return next((reason for reason in checks if reason is not None), None)
 
     def _write_reason(self, simple: _Simple, argv: Sequence[str], askaway_home: str) -> str | None:
-        targets, delete = _write_targets(argv, simple.writes)
-        hit = any(self._hits_state(target, askaway_home, delete=delete) for target in targets)
+        targets = _write_targets(argv, simple.writes)
+        hit = any(self._hits_state(target, askaway_home, delete=removes) for target, removes in targets)
+        self.written += [self._resolved(_expand(target, askaway_home)) for target in self._links_made(argv, askaway_home)]
         return STATE_DENIED if hit else None
 
-    def _hits_state(self, text: str, askaway_home: str, *, delete: bool) -> bool:
-        """Does an unquoted word name a path inside a state folder, or above one when it deletes or globs?
+    def _links_made(self, argv: Sequence[str], askaway_home: str) -> list[str]:
+        """The words a command may leave as a symlink, or move into place, for the sandbox check: the places an ln's links
+        land, a cp's or rsync's operands when they keep links or copy one, and a mv's destination. A mkdir, a touch, a
+        plain copy and a redirection leave no link, so they record nothing."""
+        name = _command_name(argv)
+        args = [_unquote(word) for word in argv[1:]]
+        if name == "ln":
+            return self._link_places(args)
+        operands = [arg for arg in args if not arg.startswith("-")]
+        if name in ("cp", "rsync") and self._copies_link(args, operands, askaway_home):
+            return operands
+        if name == "mv":
+            return [target for target, removes in _move_targets(args) if not removes]
+        return []
 
-        A glob reaches every path under the directory before its first wildcard, so that directory is checked."""
+    def _link_places(self, args: Sequence[str]) -> list[str]:
+        """Where an ln leaves its links: the folder that -t names (each link takes its source's name there), else the
+        last operand, or the cwd for one operand (its link takes the source's basename there). An unknown cwd may be any
+        folder, so every path counts."""
+        if not self.cwd_known:
+            return [os.sep]
+        operands, folder = _operands_and_folder(args)
+        if folder is not None:
+            return [folder, *operands]
+        return operands if len(operands) > 1 else [os.curdir, *operands]
+
+    def _copies_link(self, args: Sequence[str], operands: Sequence[str], askaway_home: str) -> bool:
+        """Does a cp or rsync keep links (-a, -d, -l, -P, -s), or copy an operand that may be a link: a symlink on disk,
+        a path this line already wrote, or a folder that holds one? A link the line made is not on disk yet."""
+        return any(LINK_COPY.fullmatch(arg) for arg in args) or any(
+            self._may_be_link(_expand(arg, askaway_home)) for arg in operands)
+
+    def _may_be_link(self, expanded: str) -> bool:
+        path = self._resolved(expanded)
+        return (os.path.islink(os.path.join(self.cwd, expanded)) or _inside(path, self.written)
+                or _above(path, self.written))
+
+    def _hits_state(self, text: str, askaway_home: str, *, delete: bool) -> bool:
+        """Does an unquoted word name a path inside a state folder, or above one when it deletes or expands?"""
         expanded = _expand(text, askaway_home)
         if not self.cwd_known and not os.path.isabs(expanded):
             return True  # after an untracked directory change, a relative word cannot be placed
-        wildcard = GLOB.search(expanded)
+        path = self._resolved(expanded)
+        climbed = os.path.realpath(os.path.join(self.cwd, expanded))  # a .. after a $ or { can climb back into the folder
+        glob = GLOB.search(expanded)
+        cut = expanded if glob is None else expanded[:expanded.rfind(os.sep, 0, glob.start()) + 1]
+        before_glob = os.path.realpath(os.path.join(self.cwd, cut))  # the directory a glob starts in, even after a $ or {
+        if _inside(path, self.roots) or _inside(climbed, self.roots) or _inside(before_glob, self.roots):
+            return True
+        if delete and _above(climbed, self.roots):
+            return True
+        return (delete or GLOB.search(expanded) is not None) and (
+            _above(path, self.roots) or _above(before_glob, self.roots))
+
+    def _resolved(self, expanded: str) -> str:
+        """The real path a word names from this working directory. A glob, a $ expansion or a brace reaches every path
+        under the directory before its first such mark, so that directory is the path."""
+        wildcard = EXPANSION.search(expanded)
         literal = expanded if wildcard is None else expanded[:expanded.rfind(os.sep, 0, wildcard.start()) + 1]
-        path = os.path.realpath(os.path.join(self.cwd, literal))
-        return _inside(path, self.roots) or ((delete or wildcard is not None) and _above(path, self.roots))
+        return os.path.realpath(os.path.join(self.cwd, literal))
 
     def _nested(self, simple: _Simple, env: Mapping[str, str], argv: Sequence[str]) -> str | None:
         """Text the command runs on its own: $(...) or `...` (with the exports so far), sh -c or eval (with the prefix)."""
         scans = [(self.exported, text) for word in simple.words for text in _substitutions(word)]
         scans += [({**self.exported, **env}, text) for text in _script_texts(argv)]
         for exported, text in scans:
-            reason = _ShellScan(self.cwd, exported, self.roots, self.cwd_known).text(text)
+            reason = _ShellScan(self.cwd, exported, self.roots, self.cwd_known, self.written, self.depth + 1).text(text)
             if reason is not None:
                 return reason
         return None
@@ -2362,35 +2698,83 @@ class _ShellScan:
         return os.path.realpath(os.path.join(self.cwd, target))
 
 
+def _baseline_guard() -> ModuleType:
+    """The frozen guard of commit a312550 (askaway_guard_baseline.py), loaded from beside this script by path, so it
+    loads from the plugin cache, a local mirror and a test alike, whatever sys.path holds. A load that fails raises
+    and leaves nothing in sys.modules, so the next call tries again and never reuses a half-loaded module."""
+    name = "askaway_guard_baseline"
+    if name not in sys.modules:
+        try:
+            spec = importlib.util.spec_from_file_location(name, SCRIPT_PATH.with_name(f"{name}.py"))
+            module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+            sys.modules[name] = module
+            spec.loader.exec_module(module)  # type: ignore[union-attr]
+        except (OSError, ImportError, SyntaxError, AttributeError):
+            sys.modules.pop(name, None)
+            raise
+    return sys.modules[name]
+
+
+def _working_directory() -> str | None:
+    """The working directory, or None when it was deleted: the one case the guard lets through unchecked."""
+    try:
+        return os.getcwd()
+    except FileNotFoundError:
+        return None
+
+
 def bash_tamper_reason(command: str) -> str | None:
     """Why a Bash command may not answer a question, force a prune or write the state folder, or None.
 
-    A deterrent against the agent's own shell, not a guarantee (SPEC.md, the Bash guard)."""
-    return _ShellScan(os.getcwd(), {}, _state_roots()).text(command)
+    The frozen guard of a312550 decides first, so this guard never denies less than that commit did; the current
+    scanner then decides what is left (it is skipped above SCAN_SIZE_LIMIT). Each runs in its own try, and an
+    exception in either is a denial, never an allow; drop the frozen guard and its file once the scanner has a clean
+    review (SPEC.md). A deterrent against the agent's own shell, not a guarantee (SPEC.md, the Bash guard)."""
+    cwd = _working_directory()
+    if cwd is None:
+        return None
+    try:
+        backstop = _baseline_guard()
+    except Exception:  # noqa: BLE001 - fail closed: no backstop, no allow
+        return BACKSTOP_DENIED
+    try:
+        reason = backstop.bash_tamper_reason(command)
+    except Exception:  # noqa: BLE001 - fail closed
+        return UNREADABLE_DENIED
+    if reason is not None or len(command) > SCAN_SIZE_LIMIT:
+        return reason
+    try:
+        return _ShellScan(cwd, {}, _state_roots()).text(command)
+    except Exception:  # noqa: BLE001 - fail closed: a scan that cannot finish allows nothing
+        return UNREADABLE_DENIED
 
 
 def _file_tamper_reason(tool_input: Mapping[str, Any]) -> str | None:
     raw = tool_input.get("file_path") or tool_input.get("notebook_path")
     if not isinstance(raw, str) or not raw:
         return None
-    path = os.path.realpath(os.path.join(os.getcwd(), os.path.expanduser(raw)))
+    cwd = _working_directory()
+    if cwd is None:
+        return None
+    path = os.path.realpath(os.path.join(cwd, os.path.expanduser(raw)))
     return STATE_DENIED if _inside(path, _state_roots()) else None
 
 
 def _tamper_denial(event: Mapping[str, Any]) -> HookOutput:
     """The deny for a Bash command, or a file tool call, that touches the state folder against the rules.
 
-    Fails open: a check that cannot run (a deleted working directory, say) denies nothing."""
+    Fails closed: a check that cannot run denies the call. The one allow is a deleted working directory
+    (`_working_directory`), where there is no folder to resolve a path against."""
     try:
         tool_input = event.get("tool_input") or {}
-        if event.get("tool_name") == "Bash":
+        if event.get("tool_name") in SHELL_TOOLS:
             reason = bash_tamper_reason(str(tool_input.get("command", "")))
         elif event.get("tool_name") in FILE_TOOLS:
             reason = _file_tamper_reason(tool_input)
         else:
             return None
-    except Exception:  # noqa: BLE001 - fail open: the pause check that follows still runs
-        return None
+    except Exception:  # noqa: BLE001 - fail closed
+        return deny(UNREADABLE_DENIED)
     return deny(reason) if reason else None
 
 
@@ -2454,7 +2838,7 @@ def _pause_decision(event: Mapping[str, Any]) -> HookOutput:
 
 
 def hook_pause_guard(event: Mapping[str, Any]) -> HookOutput:
-    tampering = _tamper_denial(event)  # runs in every session, away or not; fails open on its own
+    tampering = _tamper_denial(event)  # runs in every session, away or not; fails closed on its own
     if tampering is not None:
         return tampering
     try:
@@ -2633,7 +3017,7 @@ def _stamp_due(marker: Path, interval_s: float) -> bool:
     try:
         age = time.time() - marker.stat().st_mtime
         return age < 0 or age >= interval_s
-    except FileNotFoundError:
+    except OSError:  # no stamp yet, or one that cannot be read: due
         return True
 
 
@@ -2801,9 +3185,17 @@ def _failed(result: dict[str, Any] | str) -> bool:
     return isinstance(result, dict) and ("error" in result or result.get("action") == "refile")
 
 
-def _exit_code(result: dict[str, Any] | str, args: Sequence[str]) -> int:
+def _strict_flag(args: Sequence[str]) -> bool:
+    """Does the parser read --strict in these arguments? An unambiguous prefix counts, as argparse reads it."""
+    try:
+        return bool(getattr(build_parser().parse_args(_help_words_as_values(args)), "strict", False))
+    except ValueError:  # a usage error: dispatch has already answered it
+        return False
+
+
+def _exit_code(result: dict[str, Any] | str, args: Sequence[str], strict: bool) -> int:
     """0, unless --strict makes a refile, an error or an unanswered wait a failure: 2 on a timeout, else 1."""
-    if isinstance(result, str) or "--strict" not in args:
+    if isinstance(result, str) or not strict:
         return 0
     if result.get("status") == "timeout":
         return 2
@@ -2847,10 +3239,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception:  # noqa: BLE001 - the CLI always answers, on one line
         result, code = {"error": "internal error"}, 1
     if isinstance(result, str):
-        sys.stdout.write(result)  # export writes its document as it is, not as a JSON line
+        # export writes its document as it is, not as a JSON line: as UTF-8 whatever the locale, no character refused
+        sys.stdout.buffer.write(result.encode("utf-8", "backslashreplace"))
+        sys.stdout.buffer.flush()
     else:
         print(json.dumps(result))
-    return code or _exit_code(result, args)
+    return code or _exit_code(result, args, _strict_flag(args))
 
 
 if __name__ == "__main__":

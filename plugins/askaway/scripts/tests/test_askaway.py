@@ -1,5 +1,6 @@
 """Tests for scripts/askaway.py: CLI commands, hook modes and the state folder (SPEC.md)."""
 import ast
+import contextlib
 import csv
 import errno
 import fcntl
@@ -161,7 +162,7 @@ def deliver_event(session=SESSION, cwd=None) -> dict:
 
 
 def edit_event(session=SESSION, tool="Edit", command="") -> dict:
-    tool_input = {"command": command} if tool == "Bash" else {"file_path": "notes.md"}
+    tool_input = {"command": command} if tool in ("Bash", "Monitor") else {"file_path": "notes.md"}
     return {"session_id": session, "cwd": os.getcwd(), "hook_event_name": "PreToolUse",
             "tool_name": tool, "tool_input": tool_input}
 
@@ -316,6 +317,27 @@ def test_a_translation_with_neither_question_nor_title_keeps_no_title(home, caps
     assert stored(home, "q", out["id"])["translations"] == {"pt-BR": {"what": what}}
 
 
+@pytest.mark.parametrize("title", [None, "", "   "])
+def test_a_null_or_blank_translated_title_counts_as_absent_and_takes_the_clipped_question(title, home, capsys):
+    entry = base_entry(translations={"pt-BR": {"title": title, "question": PT_BR_LONG_QUESTION}})
+    out = cli(capsys, "ask", "--json", json.dumps(entry))
+    title_text = askaway._clip(PT_BR_LONG_QUESTION, askaway.TITLE_MAX)
+    assert stored(home, "q", out["id"])["translations"] == {"pt-BR": {"question": PT_BR_LONG_QUESTION,
+                                                                      "title": title_text}}
+
+
+def test_null_translations_file_the_question_without_translations(home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations=None)))
+    assert "id" in out
+    assert stored(home, "q", out["id"]).get("translations", {}) == {}
+
+
+def test_an_english_translation_is_accepted_and_stored_as_sent(home, capsys):
+    question = "Where should the cache live?"
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations={"en": {"question": question}})))
+    assert stored(home, "q", out["id"])["translations"] == {"en": {"question": question, "title": question}}
+
+
 @pytest.mark.parametrize(("translations", "reason"), [
     ({"fr": PT_BR_TRANSLATION}, "translations.fr: not a language"),
     ({"pt": PT_BR_TRANSLATION}, "translations.pt: not a language; use en or pt-BR"),
@@ -441,6 +463,31 @@ def test_ask_rejects_a_blank_or_non_string_text_field(field, capsys):
     assert out["action"] == "refile" and out["error"] == f"missing fields: {field}"
     out = cli(capsys, "ask", "--json", json.dumps(base_entry(**{field: 5})))
     assert out["error"] == f"missing fields: {field}"
+
+
+def test_ask_with_one_option_names_its_key_and_the_option_fields_in_one_refile(home, capsys):
+    entry = base_entry()
+    entry["options"] = entry["options"][:1]
+    del entry["options"][0]["does"]
+    out = cli(capsys, "ask", "--json", json.dumps(entry))
+    assert out["keys_received"] == ["A"]
+    assert "option A" in out["error"] and "does" in out["error"]
+    assert "options must be a list of at least 2 items" in out["error"]
+
+
+def test_ask_without_options_lists_options_as_missing(home, capsys):
+    entry = base_entry()
+    del entry["options"]
+    assert "options" in cli(capsys, "ask", "--json", json.dumps(entry))["missing"]
+
+
+def test_ask_names_an_oversized_unknown_key_with_the_other_gaps_in_one_refile(home, capsys):
+    entry = base_entry()
+    del entry["analogy"]
+    entry["extra"] = "x" * 5000
+    out = cli(capsys, "ask", "--json", json.dumps(entry))
+    assert "missing fields: analogy" in out["error"]
+    assert "over 4096 bytes" in out["error"]
 
 
 def test_ask_error_names_every_missing_field_and_option_gap_in_one_line(home, capsys):
@@ -983,6 +1030,24 @@ def test_the_state_folder_and_its_folders_are_created_private_to_the_user(tmp_pa
         assert stat.S_IMODE(folder.stat().st_mode) == 0o700
 
 
+def test_the_delivery_folder_is_private_and_an_existing_folder_keeps_its_mode(tmp_path, capsys, monkeypatch):
+    fresh = tmp_path / "fresh-inbox"
+    kept = fresh / "q"
+    kept.mkdir(parents=True)
+    kept.chmod(0o750)
+    monkeypatch.setenv("ASKAWAY_HOME", str(fresh))
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    previous = os.umask(0o022)
+    try:
+        item = ask_item(capsys)
+        cli(capsys, "answer", item, "A", "--by", "panel")
+        run_hook(capsys, monkeypatch, "deliver", deliver_event())
+    finally:
+        os.umask(previous)
+    assert stat.S_IMODE((fresh / "d").stat().st_mode) == 0o700
+    assert stat.S_IMODE(kept.stat().st_mode) == 0o750
+
+
 def test_away_file_keeps_its_mode(home, capsys):
     home.mkdir(parents=True)
     path = home / "away.json"
@@ -1282,6 +1347,7 @@ def test_a_failing_pause_lookup_still_denies_the_call(capsys, monkeypatch):
     "mcp__notes__notes_keep_note",
     "mcp__x__create_issue",
     "mcp__x__search_and_delete",
+    "mcp__x__merge_pull_request",
     "mcp__postgres__query",
     "mcp__notes__notes_search",
 ])
@@ -1300,6 +1366,8 @@ def test_pause_guard_denies_agent_and_mcp_write_tools(tool, capsys, monkeypatch)
     "mcp__x__describe_table",
     "mcp__x__show_config",
     "mcp__x__read_file",
+    "mcp__x__get_commit",
+    "mcp__x__get_merge_request",
 ])
 def test_pause_guard_lets_read_only_mcp_tools_through(tool, capsys, monkeypatch):
     pending_pause(capsys, monkeypatch)
@@ -1308,11 +1376,13 @@ def test_pause_guard_lets_read_only_mcp_tools_through(tool, capsys, monkeypatch)
 
 def test_pause_guard_matcher_covers_agent_and_mcp_tools_in_hooks_json():
     hooks = json.loads((SCRIPTS.parent / "hooks" / "command-hooks.json").read_text(encoding="utf-8"))
-    matcher = next(group["matcher"] for group in hooks["hooks"]["PreToolUse"]
-                   if "pause-guard" in group["hooks"][0]["command"])
-    for name in ("Edit", "Write", "NotebookEdit", "Bash", "Agent", "mcp__graphify__update_node"):
-        assert re.fullmatch(matcher, name), name
-    assert not re.fullmatch(matcher, "Read")
+    group = next(group for group in hooks["hooks"]["PreToolUse"] if "pause-guard" in group["hooks"][0]["command"])
+    # Claude Code tests a regex matcher with RegExp.test, a match anywhere in the tool name (hooks doc)
+    for name in ("Edit", "Write", "NotebookEdit", "Bash", "PowerShell", "Monitor", "Agent", "mcp__graphify__update_node"):
+        assert re.search(group["matcher"], name), name
+    for name in ("Read", "TodoWrite"):
+        assert not re.search(group["matcher"], name), name
+    assert group["hooks"][0]["onFailure"] == "block"  # a timeout or a failed start blocks the call (hooks doc, v2.1.295+)
 
 
 def stamp_event(stdout: str, agent_id: str | None = None, session=SESSION, command: str | None = None) -> dict:
@@ -1343,6 +1413,19 @@ def test_a_subagent_pause_holds_only_that_subagent(capsys, monkeypatch):
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert run_hook(capsys, monkeypatch, "pause-guard", agent_event("agent-2")) == ""
     assert run_hook(capsys, monkeypatch, "pause-guard", edit_event()) == ""
+
+
+def test_a_damaged_question_file_holds_a_subagent_call_too(home, capsys, monkeypatch):
+    item = "q-1-abcdef"
+    write_raw(home, "q", item, f'{{"v":1,"id":"{item}","session":"{SESSION}","pause":true')
+    assert hook_json(capsys, monkeypatch, "pause-guard", agent_event("agent-1"))["hookSpecificOutput"][
+        "permissionDecision"] == "deny"
+
+
+def test_the_pause_denial_tells_the_agent_to_stop_instead_of_polling(capsys, monkeypatch):
+    file_pause(capsys, monkeypatch)
+    reason = hook_json(capsys, monkeypatch, "pause-guard", edit_event())["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "end the turn now instead of retrying or polling, because the answer arrives by itself" in reason
 
 
 def test_a_main_thread_pause_holds_only_the_main_thread(capsys, monkeypatch):
@@ -2562,6 +2645,18 @@ def test_pause_guard_lets_through_only_the_installed_mirror_or_plugin_root_scrip
     assert askaway.inbox_call(command) is is_allowed
 
 
+@pytest.mark.parametrize("command, is_allowed", [
+    (f"python3 {askaway.SCRIPT_PATH}\nstatus q-1-abcdef", False),
+    (f"python3\n{askaway.SCRIPT_PATH} status q-1-abcdef", False),
+    (f"python3 {askaway.SCRIPT_PATH}\nexport X=1 status q-1-abcdef", False),
+    (f"export X=1\npython3 {askaway.SCRIPT_PATH} status q-1-abcdef", False),
+    (f"export X=1 python3 {askaway.SCRIPT_PATH} status q-1-abcdef", False),
+    (f"python3 {askaway.SCRIPT_PATH}\tstatus q-1-abcdef", True),
+])
+def test_inbox_head_separates_its_words_with_spaces_or_tabs_only(command, is_allowed):
+    assert askaway.inbox_call(command) is is_allowed
+
+
 # ---- interpreter guard and deliver cost ---------------------------------
 
 def test_script_parses_with_python_3_10_grammar():
@@ -2889,6 +2984,13 @@ def bash_denial(capsys, monkeypatch, command: str) -> str:
     return out["hookSpecificOutput"]["permissionDecisionReason"]
 
 
+@pytest.fixture
+def scanner_only(monkeypatch):
+    """The Bash guard without its a312550 backstop: a test that must prove what the current scanner alone decides."""
+    no_baseline = type("NoBaseline", (), {"bash_tamper_reason": staticmethod(lambda _command: None)})
+    monkeypatch.setattr(askaway, "_baseline_guard", lambda: no_baseline)
+
+
 def write_raw(home: Path, folder: str, item_id: str, text: str) -> None:
     (home / folder).mkdir(parents=True, exist_ok=True)
     (home / folder / f"{item_id}.json").write_text(text, encoding="utf-8")
@@ -2944,11 +3046,255 @@ def test_an_unreadable_away_status_read_stays_allowed(capsys, monkeypatch):
 
 
 @pytest.mark.parametrize("command", [
-    f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} away on # it's",
-    f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} answer q-1-abcdef A # it's",
+    f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} away on 'it",
+    f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} answer q-1-abcdef A 'it",
 ])
 def test_an_unreadable_command_naming_a_sandbox_home_is_denied_as_the_state_folder(command, capsys, monkeypatch):
     assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
+
+
+@pytest.mark.usefixtures("scanner_only")  # the a312550 backstop denies this one: a known over-deny, see SPEC.md
+def test_a_comment_with_an_apostrophe_is_not_a_quote_so_the_sandboxed_answer_is_read(capsys, monkeypatch):
+    command = f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} answer q-1-abcdef A # it's"
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+@pytest.mark.parametrize("command", [
+    "cd ~/.claude/state && rm -r askaway # it's",
+    "cd ~/.claude/state && rm -r askaway 'it",
+    "rm -r ~/.claude/state/askaway 'it",
+])
+def test_a_command_naming_the_state_folder_in_pieces_is_denied_even_when_unreadable(command, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
+
+
+def test_an_unreadable_command_unrelated_to_the_state_folder_still_passes(capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event('echo "it\'s')) == ""
+
+
+@pytest.mark.parametrize("command", [
+    "mv ~/.claude/state ~/.claude/state.old",
+    "mv ~/.claude ~/claude-moved",
+])
+def test_mv_cannot_move_a_folder_above_the_state_folder(command, capsys, monkeypatch):
+    assert "panel" in bash_denial(capsys, monkeypatch, command)
+
+
+def test_a_sandbox_home_under_a_link_made_earlier_in_the_same_line_is_not_trusted(capsys, monkeypatch):
+    link = "/tmp/askaway-test-link"
+    command = f"ln -s ~/.claude/state {link} && ASKAWAY_HOME={link}/askaway python3 {SCRIPT} answer q-1-abcdef A"
+    assert bash_denial(capsys, monkeypatch, command) == askaway.ANSWER_DENIED
+
+
+@pytest.mark.parametrize("command", [
+    "echo <(true)#; rm -rf ~/.claude/state/askaway",
+    "echo $(( (1) ))#; python3 /x/askaway.py answer q-x A",
+    "a=(1 2)#; rm -rf ~/.claude/state/askaway",
+])
+def test_a_hash_right_after_a_closing_paren_is_a_word_character_not_a_comment(command, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command)
+
+
+@pytest.mark.parametrize("command", [
+    "echo a#b > ~/.claude/state/askaway/q/x.json",
+    "echo a#b > ~/.claude/state/askaway/q/x.json # it's",
+])
+def test_a_hash_inside_a_word_still_reaches_the_state_folder_redirect(command, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
+
+
+@pytest.mark.parametrize("command", [
+    "echo a#b",
+    "git commit -m 'fix #12'",
+    "grep -n '#' notes.md",
+    "ls # it's fine",
+])
+def test_a_hash_that_is_data_or_a_comment_passes(command, capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+@pytest.mark.parametrize("command", [
+    "mv -t /tmp/askaway-dst ~/.claude/state",
+    "mv --target-directory=/tmp/askaway-dst ~/.claude/state",
+    "mv -t/tmp/askaway-dst ~/.claude/state",
+])
+def test_mv_into_a_target_directory_removes_a_state_folder_operand(command, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
+
+
+def test_mv_into_a_target_directory_outside_the_state_folder_passes(capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event("mv -t /tmp/askaway-dst /tmp/askaway-src")) == ""
+
+
+@pytest.mark.parametrize("command", [
+    f"N=1; ln -s ~/.claude/state /tmp/y$N && ASKAWAY_HOME=/tmp/y1/askaway python3 {SCRIPT} answer q-1-abcdef A",
+    f"ln -s ~/.claude/state /tmp/$'y2' && ASKAWAY_HOME=/tmp/y2/askaway python3 {SCRIPT} answer q-1-abcdef A",
+    f"ln -s ~/.claude/state /tmp/{{y3,}} && ASKAWAY_HOME=/tmp/y3/askaway python3 {SCRIPT} answer q-1-abcdef A",
+])
+def test_a_link_named_through_an_expansion_still_makes_its_sandbox_home_untrusted(command, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == askaway.ANSWER_DENIED
+
+
+@pytest.mark.parametrize("command", [
+    f"mkdir -p /tmp/askaway-sb && ASKAWAY_HOME=/tmp/askaway-sb python3 {SCRIPT} answer q-1-abcdef A",
+    f"cp -r /tmp/askaway-fixture /tmp/askaway-sb && ASKAWAY_HOME=/tmp/askaway-sb python3 {SCRIPT} answer q-1-abcdef A",
+])
+def test_a_scratch_folder_made_by_mkdir_or_a_plain_copy_is_still_a_sandbox_home(command, capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+@pytest.mark.parametrize("command", [
+    "export CDPATH=/opt; cd /tmp/askaway-w; touch a; touch b",
+    "export CDPATH=/opt; touch a; touch b",
+])
+@pytest.mark.usefixtures("scanner_only")  # the a312550 backstop denies these: a known over-deny, see SPEC.md
+def test_an_exported_cdpath_does_not_untrack_commands_that_are_not_a_cd(command, capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+@pytest.mark.parametrize("command", [
+    "declare -x CDPATH=/opt; cd sub; touch x",
+    "readonly CDPATH=/opt; cd sub; touch x",
+])
+def test_a_shell_variable_cdpath_untracks_the_relative_cd_that_reads_it(command, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
+
+
+@pytest.mark.parametrize(("command", "reason"), [
+    ("echo ${x:- #}; rm -rf ~/.claude/state/askaway", askaway.STATE_DENIED),
+    ("echo ${x:-'}'}; rm -rf ~/.claude/state/", askaway.STATE_DENIED),
+    ("echo `true #`; python3 /x/askaway.py answer q-x A", askaway.ANSWER_DENIED),
+])
+def test_a_hash_inside_an_expansion_or_a_backquote_does_not_hide_the_command(command, reason, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == reason
+
+
+def test_a_hash_after_an_ansi_c_escaped_quote_is_data_so_the_delete_after_it_is_read(capsys, monkeypatch):
+    command = "echo $'a \\' #'; rm -rf ~/.claude/st\"\"ate/askaway/"
+    assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
+
+
+@pytest.mark.parametrize(("command", "reason"), [
+    ("echo ok # rm -rf ~/.claude/state/askaway", askaway.STATE_DENIED),
+    ("echo ok # python3 /x/askaway.py answer q-x A", askaway.ANSWER_DENIED),
+    ("echo a #b; rm -rf ~/.claude", askaway.STATE_DENIED),
+])
+def test_a_comment_that_would_be_denied_as_a_command_is_denied(command, reason, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == reason
+
+
+@pytest.mark.parametrize("command", [
+    "ls ~/.claude/state/askaway/q  # list the state/askaway questions",
+    "echo ok # ~/.claude/state/askaway",
+])
+def test_a_comment_that_only_names_the_state_folder_passes(command, capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+@pytest.mark.parametrize("command", [
+    "echo $$'a\\' ; rm -rf ~/.claude/state/askaway #'",
+    "echo $$'a\\' ; mv ~/.claude/state/askaway /tmp/x #'",
+    "echo `echo \\` #`; rm -rf ~/.claude",
+    "echo `echo \\` #`; rm -rf ~/.claude/state",
+    "(( 1 #)); rm -rf ~/.claude",
+    "(( 1 #)); rm -rf ~/.claude/state",
+    "((rm -rf ~/.claude/state))",
+])
+def test_a_hash_the_scan_could_misread_does_not_hide_the_command_after_it(command, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
+
+
+@pytest.mark.parametrize("command", [
+    "mkdir -p ~/.claude/state/x; echo '{}' > ~/.claude/state/x$Y/../askaway/q/q-1.json",
+    "echo '{}' > ~/.claude/state/x{a}/../askaway/q/q-1.json",
+    "cp /tmp/a ~/.claude/state/x`true`/../askaway/q/q-1.json",
+    "cd ~/.claude/state && echo hi > x$Y/../askaway/q/a.json",
+])
+def test_a_dot_dot_after_an_expansion_cannot_climb_back_into_the_state_folder(command, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
+
+
+@pytest.mark.parametrize("command", [
+    'echo x > "$OUT"',
+    'mkdir -p "$d/x"',
+    'cp a "$(mktemp -d)/"',
+    "touch {a,b}.md",
+])
+def test_a_write_through_an_expansion_above_the_state_folder_passes(command, capsys, monkeypatch):
+    monkeypatch.chdir(Path.home() / ".claude")
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+@pytest.mark.parametrize("command", [
+    "touch st*",
+    'rm -r "$OUT"',
+    "rm -r ~/.claude",
+])
+def test_a_glob_or_a_delete_above_the_state_folder_is_still_denied(command, capsys, monkeypatch):
+    monkeypatch.chdir(Path.home() / ".claude")
+    assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
+
+
+COPY_SANDBOX_ANSWER = f"ASKAWAY_HOME=/tmp/askaway-test-copy/askaway python3 {SCRIPT} answer q-1-abcdef A"
+
+
+@pytest.mark.parametrize("command", [
+    f"ln -s ~/.claude/state /tmp/askaway-test-link && cp -r /tmp/askaway-test-link /tmp/askaway-test-copy && {COPY_SANDBOX_ANSWER}",
+    f"ln -s ~/.claude/state /tmp/askaway-test-link && rsync -a /tmp/askaway-test-link /tmp/askaway-test-copy && {COPY_SANDBOX_ANSWER}",
+    f"ln -s ~/.claude/state /tmp/askaway-test-dir/link && cp -r /tmp/askaway-test-dir /tmp/askaway-test-copy && {COPY_SANDBOX_ANSWER}",
+    f"cp -P /tmp/askaway-fixture /tmp/askaway-test-copy && {COPY_SANDBOX_ANSWER}",
+])
+def test_a_copy_that_keeps_or_may_hold_a_link_is_not_a_sandbox_home(command, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == askaway.ANSWER_DENIED
+
+
+LINK_SANDBOX_ANSWER = f"ASKAWAY_HOME=/tmp/state/askaway python3 {SCRIPT} answer q-1-abcdef A"
+
+
+@pytest.mark.parametrize("command", [
+    f"cd /tmp && ln -s ~/.claude/state && {LINK_SANDBOX_ANSWER}",
+    f"ln -s --target-directory=/tmp ~/.claude/state && {LINK_SANDBOX_ANSWER}",
+    f"ln -st/tmp ~/.claude/state && {LINK_SANDBOX_ANSWER}",
+    f"cd /tmp && ln -S .x -s ~/.claude/state && {LINK_SANDBOX_ANSWER}",
+    f"cd $X && ln -s /etc/hosts && {LINK_SANDBOX_ANSWER}",
+])
+def test_a_link_ln_places_in_a_target_folder_or_the_cwd_is_not_a_sandbox_home(command, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == askaway.ANSWER_DENIED
+
+
+def test_an_unreadable_commit_naming_a_state_file_without_askaway_passes(capsys, monkeypatch):
+    command = "git commit -F - <<'EOF'\nlog: ~/.claude/state/skills-usage.jsonl isn't shared\nEOF"
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+def test_a_commit_message_naming_askaway_and_state_in_a_heredoc_passes(capsys, monkeypatch):
+    command = "git commit -m \"$(cat <<'EOF'\nfix(askaway): don't lose the state\nEOF\n)\""
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+def test_a_heredoc_to_a_notes_file_naming_askaway_and_state_passes(capsys, monkeypatch):
+    command = "cat <<'EOF' > notes.md\nthe askaway state isn't lost\nEOF"
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+def test_monitor_runs_its_command_under_the_bash_rules(capsys, monkeypatch):
+    event = edit_event(tool="Monitor", command=f"echo '{{}}' > {STATE_FOLDER}/a/q-1-abcdef.json")
+    assert hook_json(capsys, monkeypatch, "pause-guard", event)["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+@pytest.mark.parametrize("verb", ["replace", "rename", "drop", "upload", "restore", "upsert", "append"])
+def test_an_mcp_tool_with_a_write_verb_is_not_read_only(verb):
+    assert not askaway.is_read_only_mcp(f"mcp__x__search_{verb}")
+
+
+@pytest.mark.parametrize("tool", ["get_commit", "get_merge_request", "list_merge_requests", "list_archives"])
+def test_an_mcp_read_tool_that_names_a_commit_merge_or_archive_is_read_only(tool):
+    assert askaway.is_read_only_mcp(f"mcp__x__{tool}")
+
+
+@pytest.mark.parametrize("tool", ["merge_pull_request", "commit_and_push", "get_merge_and_delete", "search_and_merge"])
+def test_an_mcp_merge_commit_or_archive_write_tool_is_not_read_only(tool):
+    assert not askaway.is_read_only_mcp(f"mcp__x__{tool}")
 
 
 def test_bash_may_read_away_mode_and_the_cli_still_switches_it_for_the_user(home, capsys):
@@ -3030,6 +3376,8 @@ def test_bash_may_write_a_glob_that_cannot_reach_the_inbox_state_folder(capsys, 
     "pushd; cp /tmp/x .",
     "CDPATH=~/.claude/state cd askaway; cp /tmp/x a/",
     "export CDPATH=~/.claude/state; cd askaway; cp /tmp/x a/",
+    "export CDPATH=~/.claude/state; cd /tmp; cd askaway; cp /tmp/x a/q-1-abcdef.json",
+    "CDPATH=~/.claude/state; cd /tmp; cd askaway; cp /tmp/x a/q-1-abcdef.json",
     "eval 'cd ~/.claude/state/askaway/a'; cp /tmp/x .",
     "source /tmp/x.sh; cp /tmp/x .",
 ])
@@ -3504,6 +3852,87 @@ def test_status_table_adds_the_reply_line_after_the_table(home, capsys):
     assert lines[-1] == "reply: B"
 
 
+def test_prune_id_removes_the_question_under_the_ask_lock(home, capsys, monkeypatch):
+    held = {"lock": False}
+    removed_under_lock: list[bool] = []
+    real_remove = askaway._remove_item
+
+    @contextlib.contextmanager
+    def lock_spy():
+        held["lock"] = True
+        try:
+            yield
+        finally:
+            held["lock"] = False
+
+    def remove_spy(item_id):
+        removed_under_lock.append(held["lock"])
+        return real_remove(item_id)
+
+    item = ask_item(capsys)
+    monkeypatch.setattr(askaway, "_ask_lock", lock_spy)
+    monkeypatch.setattr(askaway, "_remove_item", remove_spy)
+    assert cli(capsys, "prune", "--id", item) == {"removed": 1}
+    assert removed_under_lock == [True]
+
+
+def test_prune_removes_its_candidates_under_the_ask_lock(home, monkeypatch):
+    held = {"lock": False}
+    removed_under_lock: list[bool] = []
+
+    @contextlib.contextmanager
+    def lock_spy():
+        held["lock"] = True
+        try:
+            yield
+        finally:
+            held["lock"] = False
+
+    def remove_spy(item_id):
+        removed_under_lock.append(held["lock"])
+        return True
+
+    monkeypatch.setattr(askaway, "_ask_lock", lock_spy)
+    monkeypatch.setattr(askaway, "_remove_item", remove_spy)
+    monkeypatch.setattr(askaway, "_orphan_ids", lambda: ["q-1-abcdef", "q-2-abcdef"])
+    assert askaway.cmd_prune(30, False) == {"removed": 2, "removed_ids": ["q-1-abcdef", "q-2-abcdef"]}
+    assert removed_under_lock == [True, True]
+
+
+def test_a_prefix_of_strict_still_turns_a_refusal_into_exit_1(monkeypatch):
+    monkeypatch.setattr(askaway, "dispatch", lambda argv: {"error": "refused"})
+    assert askaway.main(["prune", "--stri"]) == 1
+
+
+def test_export_writes_a_non_utf8_project_name_without_a_traceback(monkeypatch, capsys):
+    monkeypatch.setattr(askaway, "dispatch", lambda argv: "project a\udcffb\n")
+    assert askaway.main(["export", "--format", "csv"]) == 0
+    assert "project a\\udcffb" in capsys.readouterr().out
+
+
+def test_linux_desktop_sessions_follow_xdg_config_home(home, tmp_path, monkeypatch):
+    if sys.platform == "darwin":
+        pytest.skip("macOS keeps Claude Desktop in Application Support")
+    monkeypatch.delenv(askaway.DESKTOP_SESSIONS_ENV, raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    assert askaway.desktop_sessions_root() == tmp_path / "xdg" / "Claude" / "claude-code-sessions"
+
+
+def test_a_stamp_that_cannot_be_read_is_due_instead_of_raising(tmp_path):
+    blocker = tmp_path / "file"
+    blocker.write_text("x", encoding="utf-8")
+    assert askaway._stamp_due(blocker / "last_prune", askaway.PRUNE_INTERVAL_S) is True
+
+
+def test_load_questions_raises_when_q_cannot_be_listed(home, monkeypatch):
+    def unlistable(path):
+        raise PermissionError(errno.EACCES, "denied", str(path))
+
+    monkeypatch.setattr(askaway.os, "scandir", unlistable)
+    with pytest.raises(PermissionError):
+        askaway.load_questions()
+
+
 def test_prune_id_force_removes_an_open_question_of_a_live_session_and_names_it(home, capsys, monkeypatch):
     live = ask_from(capsys, monkeypatch, SESSION)
     assert "has not ended" in cli(capsys, "prune", "--id", live)["error"]
@@ -3916,8 +4345,8 @@ def test_a_placeholder_word_tradeoff_or_title_is_refused(capsys):
 
 
 @pytest.mark.parametrize("command", [
-    "python3 - <<'EOF'\nfrom pathlib import Path\np = Path('plugins/askaway/SPEC.md')\ns = p.read_text()\n"
-    "s = s.replace('the answer record', 'the \"answer\" record under ~/.claude/state/askaway')\np.write_text(s)\nEOF",
+    ("python3 - <<'EOF'\nfrom pathlib import Path\np = Path('plugins/askaway/SPEC.md')\ns = p.read_text()\n"
+     "s = s.replace('the answer record', 'the \"answer\" record under ~/.claude/state/askaway')\np.write_text(s)\nEOF"),
     "python3 -c \"print('askaway answer(' )\"",
 ])
 def test_code_that_edits_docs_mentioning_askaway_is_allowed(command, capsys, monkeypatch):
@@ -4879,3 +5308,180 @@ def test_prune_id_without_force_refuses_an_answered_high_risk_question(home, cap
     cli(capsys, "answer", held, "A", "--by", "panel")
     release_marker(home, SESSION)
     assert "already answered" in cli(capsys, "prune", "--id", held)["error"]
+
+
+HOME_PATH = str(Path.home())
+CLIMB = f"/tmp/a$x/../..{HOME_PATH}/.claude"  # /tmp/a$x is a name the guard cannot place; the .. climbs back out of /tmp
+
+
+@pytest.mark.usefixtures("scanner_only")
+@pytest.mark.parametrize(("command", "reason"), [
+    ("(( ((1)) #)); echo A'\n'; rm -rf ~/.claude/state/askaway; #'", "STATE_DENIED"),
+    ('(( ((1)) #)); echo A"\n"; rm -rf ~/.claude/state/askaway; #"', "STATE_DENIED"),
+    (f"(( ((1)) #)); echo A'\n'; python3 {SCRIPT} answer q1 A; #'", "ANSWER_DENIED"),
+    ("echo ${x:-${y} #'\n'}; rm -rf ~/.claude/state/askaway; #'", "STATE_DENIED"),
+    ('echo ${x:-${y} #"\n"}; rm -rf ~/.claude/state/askaway; #"', "STATE_DENIED"),
+    ("echo ${a:-${b:-${c:-${d}}}} #'\n'}; rm -rf ~/.claude/state/askaway; #'", "STATE_DENIED"),
+    ("(( ((((1)))) #)); echo A'\n'; rm -rf ~/.claude/state/askaway; #'", "STATE_DENIED"),
+    ("echo $(echo $(echo $(echo $(rm -rf ~/.claude/state/askaway))))", "STATE_DENIED"),
+    (f"mkdir -p /tmp/a; rm -rf {CLIMB}", "STATE_DENIED"),
+    (f"mkdir -p /tmp/a; rm -rf {CLIMB}/st''ate", "STATE_DENIED"),
+    (f"mkdir -p /tmp/a; touch {CLIMB}/st''ate/askaw*/q/x.json", "STATE_DENIED"),
+    (f"mkdir -p /tmp/a; echo x > {CLIMB}/st''ate/ask*/q/x.json", "STATE_DENIED"),
+    (f"rm -rf /tmp/a{{,}}/../..{HOME_PATH}/.claude", "STATE_DENIED"),
+    (f"touch /tmp/a`true`/../..{HOME_PATH}/.claude/st''ate/askaw?/q/x", "STATE_DENIED"),
+    ("echo hi # it's\nrm -rf ~/.claude/state/askaway", "STATE_DENIED"),
+    ("echo hi # it's; rm -rf ~/.claude/state/askaway", "STATE_DENIED"),
+])
+def test_the_scanner_alone_denies_the_gauntlet_6_review_4_inputs(command, reason, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == getattr(askaway, reason)
+
+
+@pytest.mark.usefixtures("scanner_only")
+@pytest.mark.parametrize("command", [
+    f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} answer q-1-abcdef A # it's",
+    "echo ${a:-${b}} # it's",
+    "(( ((1)) # ))",
+])
+def test_the_scanner_alone_still_lets_a_harmless_command_with_a_nested_unit_or_a_comment_through(command, capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+def test_the_frozen_guard_of_78a729d_backs_the_scanner_up(capsys, monkeypatch):
+    command = f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} answer q-1-abcdef A # it's"  # only the old guard denies it
+    assert askaway._ShellScan(os.getcwd(), {}, askaway._state_roots()).text(command) is None
+    assert askaway._baseline_guard().bash_tamper_reason(command) == askaway.STATE_DENIED
+    assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
+    assert askaway._baseline_guard().SCRIPT_PATH == SCRIPT.resolve()  # the inbox-call exemption names askaway.py
+
+
+# ---- gauntlet 6 review 5: no exception, depth or time path lets a command through ----
+
+STATE_RM = "rm -rf " + STATE_FOLDER
+DEEP_COMMANDS = {
+    "substitution": "echo " + "$(echo " * 198 + "x" + ")" * 198 + "; " + STATE_RM,
+    "subshell": "(" * 394 + STATE_RM + ")" * 394,
+    "arithmetic": "echo $(( " + "(" * 394 + "1" + ")" * 394 + " )); " + STATE_RM,
+}
+UNCLOSED_COMMANDS = {
+    "substitution": "$(" * 10000 + " " + STATE_RM,
+    "subshell": "((" * 10000 + " " + STATE_RM,
+    "quoted": 'echo "' + "$(" * 10000 + '";' + " " + STATE_RM,
+}
+
+
+def raising_scan(_scan, _command: str) -> None:
+    raise RecursionError
+
+
+@pytest.mark.parametrize("command", DEEP_COMMANDS.values(), ids=DEEP_COMMANDS)
+def test_a_deeply_nested_command_is_denied(command, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command)
+
+
+@pytest.mark.usefixtures("scanner_only")
+@pytest.mark.parametrize("command", DEEP_COMMANDS.values(), ids=DEEP_COMMANDS)
+def test_the_scanner_alone_denies_past_its_depth_cap_instead_of_recursing(command, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == askaway.TOO_DEEP_DENIED
+
+
+@pytest.mark.parametrize("command", UNCLOSED_COMMANDS.values(), ids=UNCLOSED_COMMANDS)
+def test_unclosed_units_are_read_in_linear_time(command, capsys, monkeypatch):
+    def scan() -> str | None:
+        return askaway._ShellScan(os.getcwd(), {}, askaway._state_roots()).text(command)
+
+    assert finishes_within(1, scan) == askaway.STATE_DENIED
+    assert finishes_within(1, lambda: askaway.bash_tamper_reason(command)) == askaway.STATE_DENIED
+    assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
+
+
+def test_a_command_over_the_size_limit_is_left_to_the_frozen_guard(monkeypatch):
+    seen: list[str] = []
+    monkeypatch.setattr(askaway._ShellScan, "text", lambda _scan, command: seen.append(command))
+    assert askaway.bash_tamper_reason("echo " + "a" * askaway.SCAN_SIZE_LIMIT) is None
+    assert askaway.bash_tamper_reason(STATE_RM + " " * askaway.SCAN_SIZE_LIMIT) == askaway.STATE_DENIED
+    assert seen == []
+    assert askaway.bash_tamper_reason("echo a") is None
+    assert seen == ["echo a"]
+
+
+def test_a_baseline_that_cannot_load_denies_every_call_and_is_not_reused(tmp_path, capsys, monkeypatch):
+    monkeypatch.delitem(sys.modules, "askaway_guard_baseline", raising=False)
+    monkeypatch.setattr(askaway, "SCRIPT_PATH", tmp_path / "askaway.py")  # no baseline file beside it
+    for _ in range(2):
+        assert bash_denial(capsys, monkeypatch, "ls") == askaway.BACKSTOP_DENIED
+        assert "askaway_guard_baseline" not in sys.modules
+
+
+def test_a_baseline_that_raises_denies_every_call(capsys, monkeypatch):
+    def missing() -> None:
+        raise ImportError("gone")
+
+    monkeypatch.setattr(askaway, "_baseline_guard", missing)
+    assert bash_denial(capsys, monkeypatch, "ls") == askaway.BACKSTOP_DENIED
+    assert bash_denial(capsys, monkeypatch, "ls") == askaway.BACKSTOP_DENIED
+
+
+def test_a_baseline_that_fails_while_deciding_denies(capsys, monkeypatch):
+    def broken(_command: str) -> None:
+        raise RecursionError
+
+    broken_guard = type("Broken", (), {"bash_tamper_reason": staticmethod(broken)})
+    monkeypatch.setattr(askaway, "_baseline_guard", lambda: broken_guard)
+    assert bash_denial(capsys, monkeypatch, "ls") == askaway.UNREADABLE_DENIED
+
+
+@pytest.mark.usefixtures("scanner_only")
+def test_a_scanner_that_raises_denies_instead_of_letting_the_command_through(capsys, monkeypatch):
+    monkeypatch.setattr(askaway._ShellScan, "text", raising_scan)
+    assert bash_denial(capsys, monkeypatch, "ls") == askaway.UNREADABLE_DENIED
+
+
+def test_a_baseline_denial_is_returned_before_the_scanner_runs(capsys, monkeypatch):
+    monkeypatch.setattr(askaway._ShellScan, "text", raising_scan)
+    assert bash_denial(capsys, monkeypatch, STATE_RM) == askaway.STATE_DENIED
+
+
+@pytest.mark.usefixtures("scanner_only")
+@pytest.mark.parametrize("command", [
+    "cat > notes.md <<'EOF'\n`\xa0`).(\"\">X\nEOF",
+    "cat > marketing.md <<'EOF'\n# Report\n. next steps follow\nResult > baseline\nEOF",
+    "cd /some/project && python3 - <<'EOF'\n. first\nprint(1 > 0)\nopen('out.txt', 'w').write('x')\nEOF",
+    'cat > product.md <<"EOF"\n. a line\n> quoted\nEOF',
+    "cat > product.md <<\\EOF\n. a line\n> quoted\nEOF",
+    "cat > product.md <<-'EOF'\n\t. a line\n\t> quoted\n\tEOF",
+])
+def test_the_body_of_a_quoted_heredoc_is_data_to_the_scanner(command, capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+@pytest.mark.usefixtures("scanner_only")
+@pytest.mark.parametrize("command", [
+    f"cat <<EOF\nrun $(rm -rf {STATE_FOLDER})\nEOF",
+    f"cat <<EOF\nrun `rm -rf {STATE_FOLDER}`\nEOF",
+    f"cat <<EOF\nrun ${{x:-$(rm -rf {STATE_FOLDER})}}\nEOF",
+    f"cat <<-EOF\n\trun $(rm -rf {STATE_FOLDER})\n\tEOF",
+    f"cat <<A <<'B'\nplain\nA\nrun $(rm -rf {STATE_FOLDER})\nB\ncat <<C\n$(rm -rf {STATE_FOLDER})\nC",
+])
+def test_an_unquoted_heredoc_body_still_runs_its_substitutions_for_the_scanner(command, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
+
+
+@pytest.mark.usefixtures("scanner_only")
+def test_a_quoted_heredoc_fed_to_an_interpreter_that_writes_the_state_folder_is_denied(capsys, monkeypatch):
+    command = f"python3 - <<'EOF'\nopen('{STATE_FOLDER}/q.json', 'w').write('x')\nEOF"
+    assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
+
+
+@pytest.mark.usefixtures("scanner_only")
+def test_a_herestring_and_a_quoted_look_alike_do_not_hide_the_commands_after_them(capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, f"cat <<< x\nrm -rf {STATE_FOLDER}") == askaway.STATE_DENIED
+    assert bash_denial(capsys, monkeypatch, f"echo \"<<'X'\"\nrm -rf {STATE_FOLDER}\nX") == askaway.STATE_DENIED
+
+
+@pytest.mark.parametrize("unit", ["#'\n", "a #'\n"])
+def test_lone_quote_comments_are_read_in_linear_time(unit):
+    command = unit * (64 * 1024 // len(unit))
+    start = time.perf_counter()
+    finishes_within(2, lambda: askaway.bash_tamper_reason(command))
+    assert time.perf_counter() - start < 2
