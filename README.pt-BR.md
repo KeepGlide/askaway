@@ -50,7 +50,7 @@
 
 ## 📌 Status
 
-**Beta** (`0.4.0-beta.40`, acesso antecipado). O Askaway segue o [SemVer](https://semver.org/): enquanto a versão for `0.y.z`, qualquer coisa pode mudar a qualquer momento. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
+**Beta** (`0.4.0-beta.41`, acesso antecipado). O Askaway segue o [SemVer](https://semver.org/): enquanto a versão for `0.y.z`, qualquer coisa pode mudar a qualquer momento. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
 > A API de mods muda entre as versões do Claude Code, então espere mudanças até uma versão estável.
@@ -789,6 +789,7 @@ As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md), no formato 
 | beta.31 a beta.35 | 2026-10-21 | Rodada de revisão 5: reforço do guarda, o TTL ancorado em `clock_mark`, o aviso de pausa danificada, troca do modo ausente negada ao agente; `translations` na pergunta; grupos da barra lateral do Desktop; títulos inteiros. |
 | beta.36 a beta.39 | 2026-10-21 a 10-22 | A pausa segura só o agente que perguntou (`stamp-asker`); o caminho de sessões do macOS; falhar fechado com `onFailure: block`; a cópia congelada do guarda; esmaecido até gravar; entrega ao subagente que perguntou. |
 | beta.40 | 2026-10-22 | Uma cópia de cada resposta por destinatário (`d/` e `s/`); a marca de recomendada desenhada uma vez; comandos com mais de 64K caracteres negados; um diretório de trabalho apagado não libera mais; `MultiEdit` coberto; um evento de gancho ilegível negado. |
+| beta.41 | 2026-10-22 | O README registra as decisões, as escolhas e os limites; o histórico público foi reescrito com texto neutro, então todos os shas de commits e tags mudaram. |
 
 ## 🤝 Contribuição
 

@@ -2,12 +2,17 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.40, set by the beta.40 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.41, set by the beta.41 release commit.
 Commit hashes name the change in `git log`.
 
 ## [Unreleased]
 
+## [0.4.0-beta.41] - 2026-10-22
+
+Askaway 0.4.0-beta.41 records its decisions, trade-offs and limits in the README pair, and ships from a rewritten public history.
+
 ### Changed
+- The repository history was rewritten on 2026-10-22 to drop text about the maintainer's private setup from every commit, message and tag. Every commit and tag sha from the fifth commit on changed, and the hashes this changelog cites were moved to the new commits. A clone made before that date no longer fast-forwards: clone again, or run `git fetch --force --tags origin` and `git reset --hard origin/main` in a clone with no local work. The code of each tag is unchanged; only comments, test fixtures and documentation text differ.
 - The README pair records the project's decisions (what was chosen, over what, why and since which version), its trade-offs and its limits, explains how it works step by step (the `stamp-asker` hook, the pause guard with its frozen copy and scanner, the panel token, one copy of each answer per recipient in `d/` and `s/`), and gives an overview of the version line (`README.md`, `README.pt-BR.md`). Known issues adds the frozen copy's over-denies and the `delivered` status shown while a subagent is still held, and cites symbol names instead of line numbers.
 - SPEC.md and CHANGELOG.md name only commits of this repository and neutral examples: the frozen guard copy is described as the guard of 0.4.0-beta.36 plus the relaxations of 0.4.0-beta.39 (be7d417).
 
@@ -705,6 +710,7 @@ Third gauntlet round (40 personas over betas 14 to 25): 150 findings, 64 adopted
 - The README describes the away flow and what each card carries, matches every claim to the plugin, and adds a screenshot (150ad49, 6020300).
 - SPEC.md records the 0.4.0-beta.5 live check of the pane layout (0f43a9f).
 
-[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.40...HEAD
+[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.41...HEAD
+[0.4.0-beta.41]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.40...v0.4.0-beta.41
 [0.4.0-beta.40]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.39...v0.4.0-beta.40
 [0.4.0-beta.39]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.38...v0.4.0-beta.39

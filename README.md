@@ -50,7 +50,7 @@
 
 ## 📌 Status
 
-**Beta** (`0.4.0-beta.40`, early access). Askaway follows [SemVer](https://semver.org/): while the version is `0.y.z`, anything may change at any time. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
+**Beta** (`0.4.0-beta.41`, early access). Askaway follows [SemVer](https://semver.org/): while the version is `0.y.z`, anything may change at any time. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
 > The mod API moves between Claude Code releases, so expect changes until a stable release.
@@ -789,6 +789,7 @@ The changes of each version are in [CHANGELOG.md](CHANGELOG.md), in the [Keep a 
 | beta.31 to beta.35 | 2026-10-21 | Review round 5: guard hardening, the TTL anchored on `clock_mark`, the damaged-pause notice, away switches denied to the agent; question `translations`; Desktop sidebar Groups; whole titles. |
 | beta.36 to beta.39 | 2026-10-21 to 10-22 | The pause holds only the asking agent (`stamp-asker`); the macOS session path; fail closed with `onFailure: block`; the frozen guard copy; dim until written; delivery to the asking subagent. |
 | beta.40 | 2026-10-22 | One copy of each answer per recipient (`d/` and `s/`); the recommended mark drawn once; commands over 64K characters denied; a deleted working directory no longer allows; `MultiEdit` covered; an unreadable hook event denied. |
+| beta.41 | 2026-10-22 | The README records the decisions, trade-offs and limits; the public history is rewritten with neutral wording, so every commit and tag sha changed. |
 
 ## 🤝 Contributing
 
