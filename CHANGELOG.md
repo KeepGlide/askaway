@@ -7,6 +7,25 @@ Commit hashes name the change in `git log`.
 
 ## [Unreleased]
 
+### Changed
+- Each answer has one copy per recipient. `d/<id>.json` is the main session's copy and carries `"recipient": "main"`; the new `s/<id>.json` is the copy of the subagent whose own `ask` filed the question, with its `agent_id` (`_claim_copy`, `_copy_closed`). A subagent's high-risk pause ends only on its own copy or a lapse, never on the main session's copy (`_pause_holds`). A marker written by 0.4.0-beta.39 or older, with no `recipient`, still closes every copy (`_closes_every_copy`). A subagent's `wait` marks its own copy from the line it printed (`_mark_waited`). `prune` removes `s/` files with their item and as orphans.
+- The deliver hook reads and judges every answer before it claims any copy, then claims and prints in one short loop (`_deliver_lines`). The daily cleanup runs before the claims, one run at a time under a non-blocking `.prune.lock` (`_cleanup_lock`, `_maybe_prune`), so a hook timeout during the reads or the cleanup costs no claimed line. Only the main thread re-checks other sessions' answers (`_claimed_lines`).
+- A subagent held by its own pause is told that its own `status <id>` call brings its copy and ends the hold; one held by a pause it did not file is told the parent session receives the answer (`_subagent_pause_reason`).
+- The question playbook gives the `ask --json '<JSON>'` form, with an apostrophe as `\u0027` and no `<<` in the JSON, for calls a pause holds, and tells agents never to wrap a watched `askaway.py` subcommand in backticks or `$(...)` inside the JSON (`skills/askaway-question-playbook/SKILL.md`).
+
+### Fixed
+- An option shows the recommended mark once. The CLI takes the recommended marks off the start and the end of every label it stores, in English and Portuguese, in brackets or after a dash or a colon (`RECOMMENDED_MARKER`, `unmarked_label`): `ask --json`, `ask` on stdin, translations, the AskUserQuestion skeleton and the CSV label column. A label that is only a mark is refiled as missing. The pane takes them off too and draws its own mark once, on the button, in History and in the footer (`optionLabelOf`, `recommendedMarkOf`, `hooks/model.ts`).
+- Pane: Other text typed under a kept label stays pending on a blur while its field is on screen, so Submit all sends the text the field shows (`recordPendingOther`). A reply press runs its own `list --open` and decides on its own result (`refreshEnded`). A failed `list --open` run is logged with its exit code and stderr, once per failure text, cut to 500 characters (`logEndedListFailure`). A written reply whose file does not read back yet stays off the board as a local copy that names who answered (`panelWho`). The poll after a Dismiss waits for the poll in flight (`pollAfterRunning`), and the draft retry waits for a save in flight (`draftSaves`). The footer names a question that is gone "Question closed", not its id (`hooks/register.tsx`, `hooks/model.ts`).
+- A failed directory fsync after `write_atomic`'s replace is a warning on stderr, as after `create_once`'s link (`_sync_published`). A `q/` file whose name is not an inbox id is skipped by `list`, `prune` and `export` (`_question_matches`).
+
+### Security
+- The pause guard matcher and the file tamper check cover `MultiEdit` (`hooks/command-hooks.json`, `FILE_TOOLS`).
+- The Bash guard denies every command longer than 64K characters, instead of leaving it to the frozen copy alone (`TOO_LONG_DENIED`).
+- A deleted working directory no longer lets a call through: the frozen copy and the scanner run with the directory unknown and strict, and a file tool's relative path is refused (`_backstop_reason`, `_file_tamper_reason`).
+- The scanner joins backslash-newline continuations in a command it cannot read as written (`_joined_lines`), and ends an unquoted heredoc whose terminator a backslash-newline splits (`_body_lines`). A `git` or `gh` heredoc is message text only for a builtin message subcommand with no config set that reads its message from stdin, and a code heredoc in a `$(...)` under one is code (`_message_command`, `_prose`). `cp`, `ln` and `install -t DIR` name a write target (`_write_operands`), and the suffix of `mv -S` is no target folder (`MOVE_TARGET_SHORT`).
+- The pause guard reads its event as UTF-8 bytes whatever the locale, and denies an event it cannot read (`run_hook`, `UNREADABLE_DENIED`); the other hook modes still fail open. A held `ask` is told the `ask --json '<JSON>'` form the pause lets through (`_ask_form_hint`).
+- SECURITY.md lists two known limits: the pause guard blocks a call on its own timeout or crash only from Claude Code 2.1.295 on, and below Python 3.12 every hook exits 0 and holds nothing.
+
 ## [0.4.0-beta.39] - 2026-10-22
 
 Askaway 0.4.0-beta.39 delivers each answer to the subagent that asked, and stops the Bash guard denying unrelated commands.

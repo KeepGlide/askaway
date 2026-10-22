@@ -430,7 +430,8 @@ python3 "<askaway>/scripts/askaway.py" wait <id> --strict
 ~/.claude/state/askaway/
 ├── q/<id>.json   the question, written by ask; the stamp-asker hook adds `asker` once
 ├── a/<id>.json   the answer, first writer wins
-├── d/<id>.json   the delivery marker
+├── d/<id>.json   the delivery marker of the main session's copy
+├── s/<id>.json   the delivery marker of the asking subagent's own copy
 ├── away.json     away mode: {"on": true, "ts": ...}
 ├── draft.json    the wizard's picks, shared by every session of the folder
 ├── cleared.json  the History lines a Clear all hid, shared by every session of the folder
@@ -449,9 +450,9 @@ The state folder belongs to one user, and every Claude Code session that runs as
 ### What Askaway reads and writes
 
 - **Hooks** (`plugins/askaway/hooks/command-hooks.json`) read the hook input from stdin: session id, permission mode, working directory, tool name and tool input.
-  - `SessionStart` (on `startup`, `resume`, `clear` or `compact`), `UserPromptSubmit` and `PostToolUse` run `hook deliver`: it reads `q/`, `a/` and `d/`, writes a delivery marker to `d/` for each answer it hands over, and puts the answer text into that session's context.
+  - `SessionStart` (on `startup`, `resume`, `clear` or `compact`), `UserPromptSubmit` and `PostToolUse` run `hook deliver`: it reads `q/`, `a/`, `d/` and `s/`, writes a delivery marker for each answer it hands over (to `d/` for the main session, to `s/` for the subagent whose own `ask` filed the question), and puts the answer text into that session's context.
   - `PreToolUse` on `AskUserQuestion` runs `hook ask-guard`: it reads the away state and writes nothing.
-  - `PreToolUse` on `^(Edit|Write|NotebookEdit|Bash|PowerShell|Monitor|Agent)$|^mcp__` runs `hook pause-guard`: it reads `q/`, `a/` and `d/`; its only write is the `clock_mark` stamp in the state folder, when a pause has an answer that is not marked yet.
+  - `PreToolUse` on `^(Edit|Write|NotebookEdit|MultiEdit|Bash|PowerShell|Monitor|Agent)$|^mcp__` runs `hook pause-guard`: it reads `q/`, `a/`, `d/` and `s/`; its only write is the `clock_mark` stamp in the state folder, when a pause has an answer that is not marked yet.
   - `PostToolUse` on `Bash` runs `hook stamp-asker`: after an `ask` call it writes `asker` (the caller's `agent_id`, or `main`) onto the pause that call filed, and changes no other field.
 - **Session titles:** when a question is filed, `ask` finds the asking session's transcript, `<session>.jsonl`, in any project folder under `~/.claude/projects/`, and keeps only its title entries (`custom-title`, `agent-name`, `ai-title`). It does not read prompts or replies. The title labels the session on the card.
 - **Claude Desktop session records:** every `ask` reads the records `$XDG_CONFIG_HOME/Claude/claude-code-sessions/*/*/local_*.json` (`~/.config` when `XDG_CONFIG_HOME` is unset; on macOS, under `~/Library/Application Support`) to find the Desktop session and family of the asking session.
@@ -498,10 +499,10 @@ Found one? [Open an issue](https://github.com/KeepGlide/askaway/issues/new).
 
 | Category | Tests |
 |---|---|
-| Mod (TypeScript), `plugins/askaway/tests/` | 487 |
-| CLI and hooks (Python), `plugins/askaway/scripts/tests/` | 1085 |
+| Mod (TypeScript), `plugins/askaway/tests/` | 508 |
+| CLI and hooks (Python), `plugins/askaway/scripts/tests/` | 1203 |
 
-Python count from `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts`, at commit `be7d417`, 2026-10-22. The mod count is from a fresh run of `claude plugin test plugins/askaway` at the same commit (the runner has no collection mode).
+Python count from `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts`, at commit `4a64166`, 2026-10-22. The mod count is from a fresh run of `claude plugin test plugins/askaway` at the same commit (the runner has no collection mode).
 
 ## 🔧 Development
 
