@@ -11,11 +11,14 @@ import { detectLang, resolveLang, t, type Lang } from './i18n'
 import { renderPane, type PaneActions, type PaneView } from './pane'
 import {
   EMPTY_BOARD,
+  OTHER_INPUT_PREFIX,
   OTHER_KEY,
+  SUBMIT_ALL_KEY,
   ageLabel,
   footerText,
   groupBySession,
   isOpenIn,
+  leadOf,
   leavesOtherField,
   listText,
   openQuestions,
@@ -57,9 +60,7 @@ const DRAFT_LOCK_STALE_MINUTES = 1
 const DRAFT_LOCK_STALE_FIND_ARG = `+${DRAFT_LOCK_STALE_MINUTES - 1}`
 // A pick, Next or Back locks the moves for this long: a second press inside the window (a double click) does nothing.
 const MOVE_LOCK_MS = 350
-// An answered card stays listed, dimmed, for this long after the press; then it leaves and its status line shows.
-const FADE_MS = 250
-// The `list --open` run that finds the ended sessions repeats at most this often while the linked open questions do not change (H11).
+// The `list --open` run that finds the ended sessions repeats at most this often while the linked open questions do not change.
 const ENDED_RECHECK_MS = 30_000
 // The plugin's own store keys: the ids of the History lines the person cleared, and the chosen language.
 const CLEARED_KEY = 'cleared'
@@ -392,6 +393,7 @@ async function tickClock($: EngineInterface, now: number): Promise<void> {
   const drawnAt = (at: number): string =>
     JSON.stringify([
       onCard === undefined ? null : ageLabel(lang, onCard.ts, at),
+      onCard === undefined ? null : leadOf(lang, onCard, at),
       historyOf(lang, current, { cleared: hidden, now: at, leaving: fading }),
       footerText(lang, current, at, hidden) ?? null,
     ])
@@ -404,11 +406,23 @@ async function tickClock($: EngineInterface, now: number): Promise<void> {
 // first question.
 function prunedWizard(prev: Wizard, open: readonly Question[]): Wizard {
   const groups = flow.groupsOf([...open])
-  const active = flow.activeGroup(groups, prev)
-  const switched = prev.groupKey !== null && active !== undefined && active.key !== prev.groupKey
+  const active = groupOnScreen(groups, prev)
+  // A group whose key vanished (a Desktop config change) is not a switch while the question on screen is still in it.
+  const switched =
+    prev.groupKey !== null && active !== undefined && active.key !== prev.groupKey && !active.questions.some(question => question.id === prev.questionId)
   const from: Wizard = { ...prev, step: anchorStep(prev, active, switched) }
   const pruned = flow.pruneWizard(from, open.map(question => question.id), active?.questions.length ?? 0)
   return { ...pruned, groupKey: active?.key ?? null, questionId: active?.questions[pruned.step]?.id ?? null }
+}
+
+// The group on screen: the one the wizard names while it is still open; else the group that holds the question on screen
+// (a Desktop config change can move its questions under a new group key); else the first group.
+function groupOnScreen(groups: readonly Group[], prev: Wizard): Group | undefined {
+  return (
+    groups.find(group => group.key === prev.groupKey) ??
+    groups.find(group => group.questions.some(question => question.id === prev.questionId)) ??
+    groups[0]
+  )
 }
 
 // The step before the clamp: the index of the question on screen when it is still in the group on screen.
@@ -418,30 +432,35 @@ function anchorStep(prev: Wizard, active: Group | undefined, switched: boolean):
   return anchor >= 0 ? anchor : prev.step
 }
 
-// The last `list --open` run: the linked open ids it covered and when it ran (H11).
+// The last `list --open` run: the linked open ids it covered and when it ran.
 let endedCheck: { key: string; at: number } | undefined
 
 // Asks the CLI which open questions belong to an ended session; only questions that name a session can. A run that fails
-// keeps what the pane knew. The run repeats when the linked ids change, else at most every ENDED_RECHECK_MS (H11). The atom
-// is written only when the list changed, so a poll that learns nothing redraws nothing.
-async function refreshEnded($: EngineInterface, home: string, next: Board, now: number): Promise<void> {
+// keeps what the pane knew. The run repeats when the linked ids change, else at most every ENDED_RECHECK_MS. The atom
+// is written only when the list changed, so a poll that learns nothing redraws nothing. The result is false when the list did
+// not run or printed no list, so a press can refuse its reply rather than send it on the last list.
+async function refreshEnded($: EngineInterface, home: string, next: Board, now: number): Promise<boolean> {
   const linked = next.questions.filter(question => question.session !== null && isOpenIn(next, question.id)).map(question => question.id)
-  let ended: string[] | undefined = []
+  let ended: string[] = []
   if (linked.length === 0) {
     endedCheck = undefined
   } else {
     const key = linked.sort().join(',')
-    if (endedCheck?.key === key && now - endedCheck.at < ENDED_RECHECK_MS) return
+    if (endedCheck?.key === key && now - endedCheck.at < ENDED_RECHECK_MS) return true
     const argv = ['python3', `${$.plugin.root}/scripts/askaway.py`, 'list', '--open']
     const run = await $.process.run(argv, { env: { ASKAWAY_HOME: home } }).catch(() => undefined)
     // A run that fails keeps what the pane knew and is due again at the next poll, so only a run that ran is stamped.
-    if (run?.exitCode !== 0) return
+    if (run?.exitCode !== 0) return false
+    // Output that is not the list is a check that did not run: it is not stamped either, so the next poll runs it again.
+    const parsed = parseEndedIds(run.stdout)
+    if (parsed === undefined) return false
     endedCheck = { key, at: now }
-    ended = parseEndedIds(run.stdout)
+    ended = parsed
   }
-  if (ended !== undefined && JSON.stringify(ended) !== JSON.stringify(await read($, endedAtom))) {
+  if (JSON.stringify(ended) !== JSON.stringify(await read($, endedAtom))) {
     await update($, endedAtom, () => ended)
   }
+  return true
 }
 
 // Dismiss on an ended or a damaged card: the CLI removes the question (prune --id), then the board is read again. An ended card's pause is
@@ -638,30 +657,41 @@ async function writeAnswer($: EngineInterface, home: string, id: string, key: st
   const isChoice =
     question !== undefined && (key === OTHER_KEY ? text !== undefined : question.options.some(option => option.key === key))
   if (!isChoice || !isOpenIn(current, id)) return false
-  // A press checks the ended sessions at once: the poll's throttle (H11) must not let a reply reach a session that ended (H9).
-  endedCheck = undefined
-  await refreshEnded($, home, current, await $.clock.now())
-  // A question whose session ended takes no reply: its card offers Dismiss only (H9).
-  if ((await read($, endedAtom)).includes(id)) return false
-  const path = `${home}/a/${id}.json`
   const pressedAt = await $.clock.now()
-  // The card dims at once, before the CLI answers: the press gives its feedback without waiting for the disk.
-  if (!(await read($, quietAtom))) await startFade($, id, pressedAt)
-  const lang = await read($, langAtom)
-  // A reply the CLI could not write (an error or a refused token) is logged and told; the pick stays for another press (H7).
-  const written = await answerViaCli($, home, id, key, text).catch((error: unknown) => {
-    logFailure($, error)
-    $.ui.toast(t(lang, 'toast.replyFailed'))
-    return undefined
-  })
-  if (written === undefined) return false
-  // The board takes the record on disk, whoever wrote it. The CLI stamps its own ts, who and session, so a copy made here
-  // would differ from the file and redraw the pane on the next poll.
-  const stored = parseAnswer(await readJson($, path), id)
-  if (stored !== undefined) await update($, board, prev => withAnswer(prev, stored))
-  // The CLI keeps the first reply: a refused one names the reply that holds the question, so the person knows which one stays (H8).
-  if (!written && stored !== undefined) $.ui.toast(t(lang, 'toast.replyHeld', { key: stored.key }))
-  return written
+  // The card dims at once, before the ended check and the CLI: the press gives its feedback without waiting for the disk.
+  const fading = !(await read($, quietAtom))
+  if (fading) await startFade($, id, pressedAt)
+  // The card dims until the reply is written. Every exit ends the fade here: a written reply takes the card off the board
+  // first, and a refused or failed press brings it back, including when a read, a write or a toast throws.
+  try {
+    const lang = await read($, langAtom)
+    // A press checks the ended sessions at once: the poll's throttle must not let a reply reach a session that ended.
+    // A check that did not run refuses the reply too: the person is told, and the pick stays for another press.
+    endedCheck = undefined
+    if (!(await refreshEnded($, home, current, await $.clock.now()))) {
+      $.ui.toast(t(lang, 'toast.replyFailed'))
+      return false
+    }
+    // A question whose session ended takes no reply: its card offers Dismiss only.
+    if ((await read($, endedAtom)).includes(id)) return false
+    const path = `${home}/a/${id}.json`
+    // A reply the CLI could not write (an error or a refused token) is logged and told; the pick stays for another press.
+    const written = await answerViaCli($, home, id, key, text).catch((error: unknown) => {
+      logFailure($, error)
+      $.ui.toast(t(lang, 'toast.replyFailed'))
+      return undefined
+    })
+    if (written === undefined) return false
+    // The board takes the record on disk, whoever wrote it. The CLI stamps its own ts, who and session, so a copy made here
+    // would differ from the file and redraw the pane on the next poll.
+    const stored = parseAnswer(await readJson($, path), id)
+    if (stored !== undefined) await update($, board, prev => withAnswer(prev, stored))
+    // The CLI keeps the first reply: a refused one names the reply that holds the question, so the person knows which one stays.
+    if (!written && stored !== undefined) $.ui.toast(t(lang, 'toast.replyHeld', { key: stored.key }))
+    return written
+  } finally {
+    if (fading) await endFade($, id).catch((error: unknown) => logFailure($, error))
+  }
 }
 
 // The one-shot credential the CLI's panel answers demand (SPEC.md, "Panel credential"): a random token, recorded in a
@@ -703,10 +733,9 @@ async function answerViaCli($: EngineInterface, home: string, id: string, key: s
   return written
 }
 
-// Marks the card as leaving and, FADE_MS later on the engine clock, lets it go.
+// Marks the card as leaving; writeAnswer's finally ends the fade, once the reply is written or when the press is refused or fails.
 async function startFade($: EngineInterface, id: string, pressedAt: number): Promise<void> {
   await update($, leaving, prev => ({ ...prev, [id]: pressedAt }))
-  $.clock.after(FADE_MS, () => report($, endFade($, id)))
 }
 
 async function endFade($: EngineInterface, id: string): Promise<void> {
@@ -1067,6 +1096,13 @@ type OtherRecord = typeof flow.submittedOther
 // The key the pane's focus ring stood on last, as the ui.focus hook saw it: undefined for one of the engine's own stops.
 let focusedKey: string | undefined
 
+// True when a focus move takes the typed Other text off the ring. From Submit all it counts for an element that is not an
+// Other field: Submit all's own press records the text, but a move off it must not drop the text the pane then clears.
+function leavesOtherText(previous: string | undefined, next: string | undefined): boolean {
+  if (previous === SUBMIT_ALL_KEY) return next !== SUBMIT_ALL_KEY && next?.startsWith(OTHER_INPUT_PREFIX) !== true
+  return leavesOtherField(previous, next) && next !== SUBMIT_ALL_KEY
+}
+
 // The text of an "Other…" field recorded as the pick, not kept: blank text takes the pick away. A question
 // that is not open, or fading out, takes nothing.
 async function submitOther($: EngineInterface, id: string, text: string, record: OtherRecord): Promise<void> {
@@ -1290,9 +1326,10 @@ export const register: Register = on => {
   })
 
   // The ring leaving the Other field: the move is passed on first, then the field's pending text is recorded, so a person
-  // who never pressed Keep keeps it. The hook never blocks, rewrites or re-targets the move.
+  // who never pressed Keep keeps it. A move onto Submit all records nothing: its press records the text as the answer
+  // (submittedTypedOther), a kept label included. The hook never blocks, rewrites or re-targets the move.
   on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
-    const isLeavingOther = leavesOtherField(focusedKey, e.element)
+    const isLeavingOther = leavesOtherText(focusedKey, e.element)
     focusedKey = e.element
     const result = await next(e)
     if (isLeavingOther) await afterPendingOther($, async () => undefined)

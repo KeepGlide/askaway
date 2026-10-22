@@ -89,8 +89,12 @@ const optionalText = (raw: unknown): string | undefined =>
 const fitOf = (raw: unknown): number | null =>
   typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 && raw <= 100 ? Math.round(raw) : null
 
+// The CLI takes a key as a positional argument (`answer <id> <key>`), so only one uppercase letter passes: a key such as
+// `-h` would be read as an option of the CLI.
+const OPTION_KEY_PATTERN = /^[A-Z]$/
+
 function parseOption(raw: unknown): QuestionOption | undefined {
-  if (!isRecord(raw) || typeof raw.key !== 'string' || typeof raw.label !== 'string') return undefined
+  if (!isRecord(raw) || typeof raw.key !== 'string' || !OPTION_KEY_PATTERN.test(raw.key) || typeof raw.label !== 'string') return undefined
   return {
     key: raw.key,
     label: raw.label,
@@ -440,8 +444,6 @@ export function titleCase(text: string, lang: Lang): string {
     .join(' ')
 }
 
-// The key of a question's group: its session family (the Claude Desktop root session) when it has one, else its project.
-// Old questions carry no family and keep the project grouping. The tree and the counter both use this one rule.
 // Escapes the markdown punctuation of a label (a question title is text the agent wrote), so it cannot draw a link,
 // an autolink, emphasis or HTML of its own. Tabs and newlines become spaces: a Markdown drawing has no others.
 const MARKDOWN_PUNCTUATION = /[\\`*_[\]()<>!|~&:.@]/g
@@ -498,9 +500,12 @@ export function parseDesktopGroups(config: unknown): DesktopGroups {
 export function withDesktopGroup(question: Question, groups: DesktopGroups): Question {
   const sessionGroup = question.desktop_session === undefined ? undefined : groups.assignments.get(question.desktop_session)
   const familyGroup = question.family === undefined ? undefined : groups.assignments.get(question.family)
-  const groupId = sessionGroup ?? familyGroup
-  const name = groupId === undefined ? '' : singleLine(groups.names.get(groupId) ?? '')
-  return groupId === undefined || name === '' ? question : { ...question, desktop_group: { id: groupId, name } }
+  // The first of the two that has a name: a group with no name is skipped, so the family root's group still applies.
+  for (const groupId of [sessionGroup, familyGroup]) {
+    const name = groupId === undefined ? '' : singleLine(groups.names.get(groupId) ?? '')
+    if (groupId !== undefined && name !== '') return { ...question, desktop_group: { id: groupId, name } }
+  }
+  return question
 }
 
 // The key of a question's group: its Desktop sidebar group when the config names one, else its session family (the Claude
@@ -511,12 +516,12 @@ export function groupKeyOf(question: Pick<Question, 'project' | 'family' | 'desk
 
 // The name of a project: its folder name, title-cased from its slug ("my-sample_project" becomes "My Sample Project").
 export function projectLabel(project: string, lang: Lang): string {
-  return titleCase(basename(project).replace(/[-_]+/g, ' '), lang)
+  return singleLine(titleCase(basename(project).replace(/[-_]+/g, ' '), lang))
 }
 
 // The name of a question's session: its title, title-cased, else the words for "the session".
 export function sessionLabelOf(question: Pick<Question, 'session_title'>, lang: Lang): string {
-  return question.session_title === undefined ? t(lang, 'status.target.session') : titleCase(question.session_title, lang)
+  return question.session_title === undefined ? t(lang, 'status.target.session') : singleLine(titleCase(question.session_title, lang))
 }
 
 function basename(project: string): string {
@@ -566,7 +571,7 @@ export function questionLabel(question: Question): string {
 // project is unknown (questions with no family, or no question).
 export function groupLabelOf(question: Question | undefined, lang: Lang): string {
   if (question?.desktop_group !== undefined) return question.desktop_group.name
-  if (question?.family_title !== undefined) return titleCase(question.family_title, lang)
+  if (question?.family_title !== undefined) return singleLine(titleCase(question.family_title, lang))
   return projectLabel(question?.project ?? '', lang) || t(lang, 'status.target.session')
 }
 
@@ -622,9 +627,9 @@ function noteOf(lang: Lang, answer: Answer, delivery: Delivery | undefined, now:
   return t(lang, isEnded ? 'history.sessionEnded' : 'history.expired')
 }
 
-// One answer's row: its question's title (its id when the question is gone), its Desktop session when known, and its
-// line, for example "Answer A · sent 14:32 · delivered 14:33 (read by the session)"; a pending answer's line ends at the
-// sent time.
+// One answer's row: its question's title ("Question closed" when the question is gone), its Desktop session when known, and its
+// line, for example "Keep · sent 14:32 · delivered 14:33 (read by the session)", where "Keep" is the chosen option's label;
+// a pending answer's line ends at the sent time.
 function historyEntryOf(
   lang: Lang,
   answer: Answer,
@@ -647,7 +652,8 @@ function historyEntryOf(
 
 type HistoryBuild = { key: string; label: string; href?: string; sessions: Map<string, HistorySession> }
 
-// Places one row under its family and session. The family is the question's group key; an answer whose question is gone
+// Places one row under its group and session. The question's group key (groupKeyOf: its Desktop group, else its session family)
+// is the group; an answer whose question is gone
 // goes to the fallback group ("the session"), and a question with no session title is named the same way.
 function placeEntry(groups: Map<string, HistoryBuild>, lang: Lang, question: Question | undefined, entry: HistoryEntry): void {
   const groupKey = question === undefined ? '' : groupKeyOf(question)
@@ -695,7 +701,7 @@ export const clearableIdsOf = (history: readonly HistoryGroup[]): string[] =>
     group.sessions.flatMap(session => session.entries.map(entry => entry.id)),
   )
 
-// The header counter: the open questions and the distinct groups (session families, or projects for old questions).
+// The header counter: the open questions and the distinct groups (Desktop groups, else session families, else projects).
 export function counterText(lang: Lang, questions: readonly Question[]): string {
   if (questions.length === 0) return t(lang, 'counter.none')
   const groups = new Set(questions.map(groupKeyOf)).size
@@ -738,10 +744,9 @@ function lastAnswerText(lang: Lang, answer: Answer, question: Question | undefin
   })
 }
 
-export const riskLabel = (lang: Lang, risk: string): string => {
-  const key = RISK_KEYS.get(risk)
-  return key === undefined ? t(lang, 'risk.other', { risk }) : t(lang, key)
-}
+// Only the three risks the CLI writes are named. Any other stored value is drawn as the medium warning, never as its raw
+// text: the label goes into a Markdown heading, and a risk that reads as a link would be drawn as one.
+export const riskLabel = (lang: Lang, risk: string): string => t(lang, RISK_KEYS.get(risk) ?? 'risk.medium')
 
 export function ageLabel(lang: Lang, ts: number, now: number): string {
   const minutes = Math.max(0, Math.round((now - ts) / 60_000))
@@ -817,6 +822,9 @@ export const otherInputKey = (questionId: string, round: number): string =>
 
 // The key of a question's "Other…" button, which draws the kept label once there is one.
 export const otherButtonKey = (questionId: string): string => `other-${questionId}`
+
+// The key of the Submit all button: a focus move onto it leaves the pending Other text for the press to record.
+export const SUBMIT_ALL_KEY = 'submit-all'
 
 // True when a focus move takes the ring off the Other field: the element it stood on was a field of that prefix, and the
 // ring moves to another element or to one of the engine's own stops (no element). The register records the field's text then.

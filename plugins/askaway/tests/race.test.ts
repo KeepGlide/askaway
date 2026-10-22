@@ -258,7 +258,7 @@ test('race: when the first write fails, the guards are released and the next Sub
   expect(writes).toEqual([])
   expect(files.has(path('a', QUESTION))).toBe(false)
   holds.write = undefined
-  // The failed card fades for FADE_MS (250) and a card that is fading takes no press: the retry waits for the fade.
+  // A refused write ends the failed card's fade at once, so the retry goes through at once; the advance only settles the timers.
   await clock.advance(250)
   await pane.press({ key: 'submit-all' })
   expect(attempts).toEqual([path('a', QUESTION), path('a', QUESTION)])

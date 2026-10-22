@@ -76,9 +76,14 @@ test('a stored language wins; anything else falls back to the detected one', () 
 
 test('t fills the named placeholders and keeps a placeholder with no value', () => {
   expect(t('en', 'history.sent', { time: '14:32' })).toBe('sent 14:32')
+  expect(t('en', 'history.sent')).toBe('sent {time}')
   expect(t('pt', 'history.sent', { time: '14:32' })).toBe('enviada 14:32')
   expect(t('en', 'footer.last', { title: 'Pick', label: 'Keep', age: '1 min ago' })).toBe('last: Pick → Keep, 1 min ago')
   expect(t('pt', 'footer.last', { title: 'Escolha', label: 'Keep', age: 'há 1 min' })).toBe('última: Escolha → Keep, há 1 min')
+})
+
+test('the en toast.clearedPending text ends with a period, as the other en toasts do', () => {
+  expect(t('en', 'toast.clearedPending', { n: 2 })).toBe('Cleared 2; waiting replies still reach their sessions.')
 })
 
 test('t reads a numeric value as its text', () => {

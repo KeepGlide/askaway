@@ -13,6 +13,7 @@ import { KEEPGLIDE_HEADER_SIZE, KEEPGLIDE_SUBMIT_SIZE, renderHistoryIcon, render
 import {
   urgencyGradeOf,
   OTHER_KEY,
+  SUBMIT_ALL_KEY,
   ageLabel,
   clearableIdsOf,
   counterText,
@@ -783,7 +784,7 @@ function renderSubmitAll(ui: Ui, lang: Lang, actions: PaneActions, card: CardCon
   return (
     <Box key="submit-row" flexDirection="row" alignItems="center" gap={1}>
       {card.held.hold('submit-all', [label, isOff, hotkey], onPress, press => (
-        <Button key="submit-all" label={label} variant={isOff ? 'secondary' : 'primary'} dimColor={isOff} hotkey={hotkey} onPress={press} />
+        <Button key={SUBMIT_ALL_KEY} label={label} variant={isOff ? 'secondary' : 'primary'} dimColor={isOff} hotkey={hotkey} onPress={press} />
       ))}
       {renderKeepGlide(ui, card.surface, 'keepglide-submit', KEEPGLIDE_SUBMIT_SIZE)}
     </Box>

@@ -128,6 +128,8 @@ type Holds = {
   listAnswers?: Promise<void>
   answerExit?: number
   listExit?: number
+  // Runs when the pane's `list` call reaches the stub, before it answers: the card's state is read at that moment.
+  onList?: () => Promise<void>
   failListOf?: string
   failReadOf?: string
   tornWriteTo?: string
@@ -148,6 +150,8 @@ type Holds = {
   failSubmitOnce?: boolean
   // Runs when a link is made, with the target it names: a test writes another window's marker at that moment (Gauntlet 5 review R12).
   onLink?: (marker: string) => void
+  // The stdout of `list --open` when it exits 0 but prints no list (Gauntlet 6 review R3).
+  listStdout?: string
 }
 
 // The engine's file calls, answered from an in-memory folder. A read of a missing file rejects, as the host does.
@@ -303,7 +307,9 @@ function stubHost(
     calls.push({ argv: [...e.argv], env: e.init?.env })
     // `list --open` reports the ids a test put in `ended`; `prune --id` removes the question file, as the CLI does for one.
     if (e.argv[2] === 'list') {
+      await holds.onList?.()
       if (holds.listExit !== undefined) return cliReply('', holds.listExit)
+      if (holds.listStdout !== undefined) return cliReply(holds.listStdout)
       const items = [...files.keys()].filter(file => file.startsWith(`${STATE}/q/`)).map(file => ({ id: file.slice(`${STATE}/q/`.length, -5) }))
       return cliReply(JSON.stringify({ items: items.map(item => (ended.has(item.id) ? { ...item, ended: true } : item)) }))
     }
@@ -427,6 +433,13 @@ test('model: the urgency grade is the level the file names, else the one its wor
   // A level that is not one of the three reads as absent, and the words decide.
   expect(grade({ urgency: 'Blocks in ~8 min', urgency_level: 'critical' })).toBe('low')
   expect(URGENCY_COLOR).toEqual({ low: 'success', medium: 'warning', high: 'error' })
+})
+
+test('model: an option key must be one uppercase letter, so a key such as -h never reaches the CLI argument list', () => {
+  const withFirstKey = (key: string) => JSON.parse(question('q-m-000004', 10, { recommended: 'B', options: [{ key, label: 'Keep' }, { key: 'B', label: 'Rewrite' }] }))
+  expect(parseQuestion(withFirstKey('A'), 'q-m-000004')).toBeDefined()
+  expect(parseQuestion(withFirstKey('-h'), 'q-m-000004')).toBeUndefined()
+  expect(parseQuestion(withFirstKey('a'), 'q-m-000004')).toBeUndefined()
 })
 
 test('model: parseQuestion keeps each option tradeoff, and a missing or blank one reads as absent', () => {
@@ -560,12 +573,20 @@ test('model: the session label is the title-cased session title, or the words fo
   expect(sessionLabelOf(parsedQuestion('q-m-000002', 10), 'pt')).toBe('a sessão')
 })
 
+test('model: a label is one line with no control or bidi characters, the escape and the bidi override are removed or spaced', () => {
+  expect(sessionLabelOf(parsedQuestion('q-m-000003', 10, { session_title: 'build‮me\u0007now' }), 'en')).toBe('Buildme now')
+  expect(projectLabel('/work/bridge‮to\u001bmoon', 'en')).toBe('Bridgeto moon')
+  expect(groupLabelOf(parsedQuestion('q-m-000003', 10, { family_title: 'Family‮One' }), 'en')).toBe('FamilyOne')
+})
+
 test('model: the risk label reads in each language, and an unknown risk keeps its name', () => {
   expect(riskLabel('pt', 'high')).toBe('🛑 risco alto')
   expect(riskLabel('en', 'medium')).toBe('⚠️ medium risk')
   expect(riskLabel('en', 'low')).toBe('✅ low risk')
-  expect(riskLabel('en', 'extreme')).toBe('⚠️ extreme risk')
-  expect(riskLabel('pt', 'constructor')).toBe('⚠️ risco constructor')
+  // pane-safe5-1: a risk other than low, medium or high is never drawn raw (the label goes into a Markdown heading).
+  expect(riskLabel('en', 'extreme')).toBe('⚠️ medium risk')
+  expect(riskLabel('pt', 'constructor')).toBe('⚠️ risco médio')
+  expect(riskLabel('en', 'high\n\n[Abrir](https://x)')).toBe('⚠️ medium risk')
 })
 
 test('model: the age label reads now, minutes, hours and days in both languages', () => {
@@ -2883,6 +2904,21 @@ test('a focus move within the Other field records nothing, and a move to an engi
   await pane.unmount()
 })
 
+test('a focus move from Submit all onto another element records the Other text typed before it; a move within Submit all records nothing', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await moveRing($, 'other-input-q-l1-aaaaaa')
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
+  await moveRing($, 'submit-all')
+  await moveRing($, 'submit-all')
+  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(false)
+  await moveRing($, 'nav-next')
+  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
+  await pane.unmount()
+})
+
 test('Back records the Other text typed on the card it leaves', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
@@ -3580,29 +3616,134 @@ test('a window of one question has no Back or Next: the pick writes nothing, and
   await pane.unmount()
 })
 
-test('Submit all dims the answered card before it leaves: a second press on one of its options during the fade writes nothing', async ($, on) => {
+// A press the hook refuses ends the fade it started at once: the card is not left dimmed while nothing was written.
+test('a reply the CLI refuses ends the card fade at once', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const holds: Holds = {}
+  const { writes } = stubHost(on, files, true, {}, holds)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  holds.answerExit = 1
+  await pane.press({ key: 'submit-all' })
+  expect(writes).toEqual([])
+  expect((await pane.find({ type: 'Text', text: 'Which way for q-l1-aaaaaa?' }))?.props.dimColor).not.toBe(true)
+  await pane.unmount()
+})
+
+test('a reply refused by a failed ended check ends the card fade at once', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone' })]])
+  const holds: Holds = {}
+  const { writes } = stubHost(on, files, true, {}, holds)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  holds.listExit = 1
+  await pane.press({ key: 'submit-all' })
+  expect(writes).toEqual([])
+  expect((await pane.find({ type: 'Text', text: 'Which way for q-l1-aaaaaa?' }))?.props.dimColor).not.toBe(true)
+  await pane.unmount()
+})
+
+test('a reply refused because its session ended ends the card fade at once', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone' })]])
+  const { ended, writes } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  ended.add('q-l1-aaaaaa')
+  await pane.press({ key: 'submit-all' })
+  expect(writes).toEqual([])
+  expect((await pane.find({ type: 'Text', text: 'Which way for q-l1-aaaaaa?' }))?.props.dimColor).not.toBe(true)
+  await pane.unmount()
+})
+
+test('a reply the CLI keeps from an earlier one ends the card fade at once', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { writes } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  // Another writer answers after the poll: the CLI keeps the first reply and reports written false.
+  files.set(path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'B'))
+  await pane.press({ key: 'submit-all' })
+  expect(writes).toEqual([])
+  expect((await pane.find({ type: 'Text', text: 'Which way for q-l1-aaaaaa?' }))?.props.dimColor).not.toBe(true)
+  await pane.unmount()
+})
+
+test('an answered card stays dimmed while its reply is written, and leaves once the write lands', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const holds: Holds = {}
+  const { writes, clock } = stubHost(on, files, true, {}, holds)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
+  const write = gate()
+  holds.write = write.promise
+  const pressed = pane.press({ key: 'submit-all' })
+  await clock.settle()
+  // No timer ends the fade while the write is pending, however long it takes.
+  await clock.advance(1000)
+  expect(writes).toEqual([])
+  expect((await pane.find({ type: 'Box', key: 'card-q-l1-aaaaaa' }))?.props.borderDimColor).toBe(true)
+  write.open()
+  await pressed
+  await clock.settle()
+  expect(writes).toEqual([path('a', 'q-l1-aaaaaa')])
+  expect(await pane.find({ type: 'Box', key: 'card-q-l1-aaaaaa' })).toBeUndefined()
+  expect(await textsOf(pane)).toContain('Nenhuma pendente')
+  await pane.unmount()
+})
+
+test('a reply that fails to write undims its card once the write fails, and the failure is toasted', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const holds: Holds = {}
+  const { toasts, writes, clock } = stubHost(on, files, true, {}, holds, { LANG: '' })
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
+  const write = gate()
+  holds.write = write.promise
+  holds.answerExit = 1
+  const pressed = pane.press({ key: 'submit-all' })
+  await clock.settle()
+  await clock.advance(1000)
+  expect((await pane.find({ type: 'Box', key: 'card-q-l1-aaaaaa' }))?.props.borderDimColor).toBe(true)
+  write.open()
+  await pressed
+  await clock.settle()
+  expect(writes).toEqual([])
+  expect((await pane.find({ type: 'Box', key: 'card-q-l1-aaaaaa' }))?.props.borderDimColor).not.toBe(true)
+  expect(await pane.find({ type: 'Text', text: 'Which way for q-l1-aaaaaa?' })).toBeDefined()
+  expect(toasts).toEqual(['Could not send your reply; the question is still open.'])
+  await pane.unmount()
+})
+
+test('Submit all of a window writes each answer once its reply is written, then the window is answered', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
   ])
-  const { writes, clock } = stubHost(on, files)
+  const holds: Holds = {}
+  const { writes, clock } = stubHost(on, files, true, {}, holds)
   await $.session.start(SESSION)
   const pane = await mountPane($)
   // The pick on the first question moves on to the second, the last: its pick completes the window.
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
   await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
-  await pane.press({ key: 'submit-all' })
-  expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb')])
-  // Submit all goes back to the first question, which is drawn dimmed while it fades.
-  expect((await pane.find({ type: 'Text', text: 'Which way for q-l1-aaaaaa?' }))?.props.dimColor).toBe(true)
-  expect((await pane.find({ type: 'Button', key: 'opt-q-l1-aaaaaa-B' }))?.props.dimColor).toBe(true)
-  expect((await pane.find({ type: 'Button', key: 'nav-next' }))?.props.dimColor).toBe(true)
-  await clock.advance(100)
-  await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  const write = gate()
+  holds.write = write.promise
+  const pressed = pane.press({ key: 'submit-all' })
+  await clock.settle()
+  expect(writes).toEqual([])
+  write.open()
+  await pressed
+  await clock.settle()
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb')])
   expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ key: 'B' })
-  await clock.advance(250)
+  expect(readJson(files, path('a', 'q-l2-bbbbbb'))).toMatchObject({ key: 'A' })
   expect(await textsOf(pane)).toContain('Nenhuma pendente')
   await pane.unmount()
 })
@@ -5388,7 +5529,7 @@ test('Gauntlet B1 H10: a failed cleared.json write is logged, and the clear hold
   await restarted.unmount()
 })
 
-test('Gauntlet B1 H12: a hidden History row that crosses 30 s leaves the drawn pane unchanged', async ($, on) => {
+test('Gauntlet B1 H12: a cleared History row, once hidden, leaves the drawn pane unchanged for 31 s', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   const { clock } = stubHost(on, files)
   await $.session.start(SESSION)
@@ -5576,7 +5717,7 @@ test('Gauntlet B2 H25: Clear all over a pending reply says the reply still reach
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'history-clear' })
-  expect(toasts).toEqual(['Cleared 1; waiting replies still reach their sessions'])
+  expect(toasts).toEqual(['Cleared 1; waiting replies still reach their sessions.'])
   expect(clearings).toHaveLength(1)
   await pane.unmount()
 })
@@ -6154,7 +6295,7 @@ test('Gauntlet 4 B1 M35: in a round of three, a failed reply keeps its pick and 
   await pane.press({ key: 'opt-q-l3-cccccc-B' })
   await pane.press({ key: 'submit-all' })
   await clock.settle()
-  // The answered cards fade for FADE_MS before they leave the card.
+  // The answered cards leave once their replies are written; the failed one comes back.
   await clock.advance(250)
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l3-cccccc')])
   expect(toasts).toEqual(['Could not send your reply; the question is still open.'])
@@ -6225,20 +6366,24 @@ test('gauntlet 4, B2 M13: the footer names an Other answer by its typed text, an
   expect(footerText('pt', blank, now)).toContain('última: q-b2-000001 → Outra…, há 12 min')
 })
 
-// beta.35, item 1: a clipped title (the CLI's 60 characters, its last one "…") is drawn whole in the tree row, the card title row,
-// the History row and the footer. The footer and the card show the answer as the option label, never its letter.
-test('beta.35 item 1: a clipped title is drawn whole in the tree row, the card title row and the History row', async ($, on) => {
+// beta.35, item 1: a clipped title (the CLI's 60 characters, its last one "…") is drawn whole in the tree row, the card title row
+// and the new-question toast. The card body draws the whole question too, so each surface is checked by its own key.
+test('beta.35 item 1: a clipped title is drawn whole in the tree row, the card title row and the new-question toast', async ($, on) => {
   const files = new Map([
     [path('q', 'q-t1-aaaaaa'), question('q-t1-aaaaaa', 1000, { title: CLIPPED_TITLE, question: CLIPPED_TEXT })],
     [path('q', 'q-t2-bbbbbb'), question('q-t2-bbbbbb', 500, { title: CLIPPED_TITLE, question: CLIPPED_TEXT })],
     [path('a', 'q-t2-bbbbbb'), answer('q-t2-bbbbbb', 'A', 400)],
   ])
-  stubHost(on, files)
+  const { toasts, clock } = stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
-  const texts = await textsOf(pane)
-  expect(texts.some(text => text.includes(CLIPPED_TEXT))).toBe(true)
-  expect(texts.some(text => text.startsWith(`○ ${CLIPPED_TEXT} ✓ Keep · enviada `))).toBe(true)
+  // The question on screen has no tree link: its tree row is plain text, the whole question as its label.
+  expect((await textsOf(pane)).includes(`● ${CLIPPED_TEXT}`)).toBe(true)
+  expect((await textsOf(pane)).includes(CLIPPED_TEXT)).toBe(true)
+  expect((await textsOf(pane)).some(text => text.startsWith(`○ ${CLIPPED_TEXT} ✓ Keep · enviada `))).toBe(true)
+  files.set(path('q', 'q-t3-cccccc'), question('q-t3-cccccc', 3000, { title: CLIPPED_TITLE, question: CLIPPED_TEXT }))
+  await clock.advance(5000)
+  expect(toasts).toEqual([`Nova pergunta: ${CLIPPED_TEXT}`])
   await pane.unmount()
 })
 
@@ -6337,7 +6482,7 @@ test("beta.35 item 3: a session in no group falls back to its family title, and 
   await pane.unmount()
 })
 
-test('beta.35 item 3: a question in a Desktop group is grouped, labelled and ordered by that group; only a family root outside a group draws no session row', () => {
+test('beta.35 item 3: a question in a Desktop group is grouped and labelled by that group; only a family root outside a group is a root session', () => {
   const grouped = { ...parsedQuestion('q-dg-000004', 10, { family: 'local_root1', family_title: 'Family One', desktop_session: 'local_root1' }), desktop_group: { id: 'cg-1', name: 'Claude Global' } }
   expect(groupKeyOf(grouped)).toBe('cg-1')
   expect(groupLabelOf(grouped, 'en')).toBe('Claude Global')
@@ -6625,7 +6770,7 @@ test('beta.35 review fix 2: a config that stops parsing keeps the last good grou
   await pane.unmount()
 })
 
-test('beta.35 review fix 5: a config over 4 MiB is skipped and keeps the last good groups; one over the limit from the start names none', async ($, on) => {
+test('beta.35 review fix 5: a config over 4 MiB is skipped and keeps the last good groups', async ($, on) => {
   const mtimes = new Map([[DESKTOP_CONFIG, 1000]])
   const sizes = new Map([[DESKTOP_CONFIG, 1024]])
   const holds: Holds = { mtimes, sizes }
@@ -6740,6 +6885,23 @@ test('beta.35 review M34: a Desktop group with an empty or blank name is skipped
   }
 })
 
+test('pane-exec3-2: a session whose group has no name takes its family root\'s named group, as SPEC says', () => {
+  const session = parsedQuestion('q-n4-000012', 1, { desktop_session: 'local_s1', family: 'local_root1', family_title: 'Family One' })
+  const groups = parseDesktopGroups({
+    preferences: {
+      epitaxyPrefs: {
+        'dframe-group-scopes': {
+          'acc/org': {
+            groups: [{ id: 'cg-1', name: '' }, { id: 'cg-2', name: 'Claude Work' }],
+            assignments: { 'code:local_s1': 'cg-1', 'code:local_root1': 'cg-2' },
+          },
+        },
+      },
+    },
+  })
+  expect(withDesktopGroup(session, groups).desktop_group).toEqual({ id: 'cg-2', name: 'Claude Work' })
+})
+
 test('beta.35 review M35: a Desktop group name is drawn on one line, its control and format characters gone', () => {
   const groups = parseDesktopGroups({
     preferences: {
@@ -6823,4 +6985,135 @@ test('beta.35 review M07: a History row and the footer name the option label of 
   const now = 10 * FOOT_DAY
   const footer: Board = { questions: [translated], answers: [answerOf('q-n4-000011', 'A', now - 12 * FOOT_MIN)], delivered: [] }
   expect(footerText('pt', footer, now)).toContain('última: Pick the queue → Manter, há 12 min')
+})
+
+test('pane-conc5-1: a focus move onto Submit all keeps the pending Other text, so with a kept label Submit all still sends the typed text', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { writes } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  // Enter keeps the label; the field then gets a new text that is typed but not kept yet.
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  await moveRing($, 'other-input-q-l1-aaaaaa-1')
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa-1', text: 'Typed reply', kind: 'change' })
+  // The ring moves onto Submit all before the press: the focus move must not drop the typed text.
+  await moveRing($, 'submit-all')
+  await pane.press({ key: 'submit-all' })
+  expect(writes).toEqual([path('a', 'q-l1-aaaaaa')])
+  expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ id: 'q-l1-aaaaaa', key: 'other', by: 'panel', text: 'Typed reply' })
+  await pane.unmount()
+})
+
+test('pane-conc5-2: the card is dimmed before the ended-session list runs, so a press during that run sees it dimmed', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'cli-1' })]])
+  let pane: Awaited<ReturnType<typeof mountPane>> | undefined
+  const dimmedAtList: unknown[] = []
+  // Only the list run of the press is read: `reading` is raised just before the press, and the first list run after it is that run.
+  let reading = false
+  let resolveRead: () => void = () => undefined
+  const listRead = new Promise<void>(resolve => { resolveRead = resolve })
+  // The recorder reads the card while the list run is in flight.
+  const holds: Holds = { onList: async () => {
+    if (pane === undefined || !reading) return
+    reading = false
+    dimmedAtList.push((await pane.find({ type: 'Box', key: 'card-q-l1-aaaaaa' }))?.props.borderDimColor)
+    resolveRead()
+  } }
+  const { clock } = stubHost(on, files, true, {}, holds)
+  await $.session.start(SESSION)
+  pane = await mountPane($)
+  // A list run that ran within the last 30 s is not run again, so the press waits for the next one.
+  await clock.advance(31_000)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
+  reading = true
+  await pane.press({ key: 'submit-all' })
+  // The press returns before its list run reaches the stub, so the test waits for that read and for the answer after it.
+  await listRead
+  await clock.settle()
+  expect(dimmedAtList).toEqual([true])
+  expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ id: 'q-l1-aaaaaa', key: 'B', by: 'panel' })
+  await pane.unmount()
+})
+
+test('pane-exec3-1: a Desktop config change that moves the question on screen under a new group key keeps that question on the card', async ($, on) => {
+  const mtimes = new Map([[DESKTOP_CONFIG, 1000]])
+  const files = new Map([
+    [DESKTOP_CONFIG, desktopConfig([{ id: 'g1', name: 'Desktop Group' }], {})],
+    [path('q', 'q-h-cccccc'), question('q-h-cccccc', 100, { family: 'local_H', family_title: 'Family H', session: 'cli-h' })],
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { family: 'local_F', family_title: 'Family F', session: 'cli-1' })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { family: 'local_F', family_title: 'Family F', session: 'cli-2' })],
+  ])
+  const { clock } = stubHost(on, files, true, {}, { mtimes })
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  // The card starts on q-h, the oldest group. A tree jump puts q-l2 on the card, in group F, the group the config change moves.
+  await pressTreeLink(pane, 'jump', 'q-l2-bbbbbb')
+  expect(await pane.find({ type: 'Box', key: 'card-q-l2-bbbbbb' })).toBeDefined()
+  // The family's group key moves from its family to the Desktop group g1 under the same questions.
+  files.set(DESKTOP_CONFIG, desktopConfig([{ id: 'g1', name: 'Desktop Group' }], { 'code:local_F': 'g1' }))
+  mtimes.set(DESKTOP_CONFIG, 2000)
+  await clock.advance(5000)
+  expect(await pane.find({ type: 'Box', key: 'card-q-l2-bbbbbb' })).toBeDefined()
+  expect(await pane.find({ type: 'Box', key: 'card-q-h-cccccc' })).toBeUndefined()
+  await pane.unmount()
+})
+
+test('pane-rule1-1: the lead line gets its date at midnight, though the age label, History and footer read the same', async ($, on) => {
+  // The fake clock starts at 0. The question was asked at 00:30 of the local day that holds 0; the clock is moved to 23:59 of
+  // that day before the pane mounts, so the age reads "23 h ago" on both sides of midnight and only the lead's date can change.
+  const dayStart = new Date(0)
+  dayStart.setHours(0, 0, 0, 0)
+  const nextMidnight = new Date(dayStart)
+  nextMidnight.setDate(nextMidnight.getDate() + 1)
+  const asked = dayStart.getTime() + 30 * 60_000
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', asked, { recommended: 'B' })]])
+  const { clock } = stubHost(on, files, true, {}, {}, { LANG: 'en_US.UTF-8' })
+  await clock.advance(nextMidnight.getTime() - 60_000)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  const leadOnCard = async (): Promise<string | undefined> => (await textsOf(pane)).find(text => text.startsWith('On B since '))
+  expect(await leadOnCard()).toMatch(/^On B since 00:30\. /)
+  await clock.advance(60_000)
+  expect(await leadOnCard()).toMatch(/^On B since \d\d\/\d\d 00:30\. /)
+  await pane.unmount()
+})
+
+test('pane-safe5-2: a press whose ended-session list does not run takes no reply: nothing is written and the person is told', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'cli-1' })]])
+  const { writes, toasts } = stubHost(on, files, true, {}, { listExit: 1 })
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
+  await pane.press({ key: 'submit-all' })
+  expect(writes).toEqual([])
+  expect(toasts).toEqual(['Não foi possível enviar sua resposta; a pergunta continua aberta.'])
+  await pane.unmount()
+})
+
+// Gauntlet 6 review R4: a `list --open` run that exits non-zero did not run, so the press refuses like an unparseable run and tells the person.
+test('Gauntlet 6 review R4: a list --open run that exits non-zero refuses the reply, and the person is told', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone' })]])
+  const { toasts, writes } = stubHost(on, files, true, {}, { listExit: 1 }, { LANG: '' })
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
+  await pane.press({ key: 'submit-all' })
+  expect(writes).toEqual([])
+  expect(toasts).toEqual(['Could not send your reply; the question is still open.'])
+  expect((await pane.find({ type: 'Button', key: 'opt-q-l1-aaaaaa-B' }))?.props.variant).toBe('primary')
+  await pane.unmount()
+})
+
+// Gauntlet 6 review R3: a `list --open` run that exits 0 but prints no list did not run, so the press refuses like a failed run.
+test('Gauntlet 6 review R3: unparseable list --open output refuses the reply, and the person is told', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone' })]])
+  const { toasts, writes } = stubHost(on, files, true, {}, { listStdout: 'not a list' }, { LANG: '' })
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
+  await pane.press({ key: 'submit-all' })
+  expect(writes).toEqual([])
+  expect(toasts).toEqual(['Could not send your reply; the question is still open.'])
+  expect((await pane.find({ type: 'Button', key: 'opt-q-l1-aaaaaa-B' }))?.props.variant).toBe('primary')
+  await pane.unmount()
 })

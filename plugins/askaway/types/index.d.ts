@@ -121,7 +121,7 @@ declare module 'claude-code' {
       seen: { isPrimed: boolean; ids: string[] }
       // Ids of answers whose History line the person cleared (delivered, ended or expired lines; the plugin's store keeps them under "cleared").
       cleared: string[]
-      // The answered cards still fading out (250 ms after the press): question id → press time. Drawn dim, then gone.
+      // The answered cards still fading out (until their reply is written): question id → press time. Drawn dim, then gone.
       leaving: Record<string, number>
       // The move lock (350 ms after a pick, Next or Back): the option, Other, Next and Back buttons are drawn disabled and presses do nothing.
       moveLock: boolean
