@@ -3,7 +3,8 @@
 
 State lives in one JSON file per item under ASKAWAY_HOME (default
 ~/.claude/state/askaway): q/ questions, a/ answers (first writer wins),
-d/ delivery markers and away.json. Contract: SPEC.md next to this plugin.
+d/ delivery markers (the main session's copy), s/ the asking subagent's own delivery markers and away.json.
+Contract: SPEC.md next to this plugin.
 Hook modes fail open: any error exits 0 with no output, except the pause guard, which denies the call.
 """
 import os
@@ -29,23 +30,58 @@ def _marked(path: str) -> bool:
     return stat.S_ISREG(status.st_mode) and status.st_size > 0
 
 
-def _nothing_to_deliver() -> bool:
-    """Is every answer already marked in d/? Runs before the heavy imports."""
+def _asked_by(path: str, agent_id: str) -> bool:
+    """Does the question file name agent_id as its asker? A file that is no regular file, or does not read, names nobody.
+    O_NOFOLLOW and O_NONBLOCK keep a symlink or a FIFO from being followed or blocking the open, as _regular_bytes does."""
+    import json  # the fast path runs before the module imports
+    import stat
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return False
+    with os.fdopen(descriptor, "rb") as handle:
+        try:
+            entry = json.loads(handle.read()) if stat.S_ISREG(os.fstat(descriptor).st_mode) else None
+        except (OSError, ValueError, RecursionError):
+            return False
+    return isinstance(entry, dict) and entry.get("asker") == agent_id
+
+
+def _nothing_to_deliver(agent_id: str | None = None) -> bool:
+    """Is every answer already marked in d/ and, for a subagent's call (agent_id), every answer its own ask filed marked
+    in s/ too? Runs before the heavy imports; it reads a q/ file only for a subagent's call, to find the asker."""
     default_home = os.path.join(os.path.expanduser("~"), ".claude", "state", "askaway")
     home = os.environ.get("ASKAWAY_HOME") or default_home
     try:
         answered = _json_names(os.path.join(home, "a"))
     except OSError:
         return True
-    folder = os.path.join(home, "d")
-    return all(_marked(os.path.join(folder, name)) for name in answered)
+    if not all(_marked(os.path.join(home, "d", name)) for name in answered):
+        return False
+    return agent_id is None or not any(_asked_by(os.path.join(home, "q", name), agent_id) for name in answered
+                                       if not _marked(os.path.join(home, "s", name)))
+
+
+def _event_agent(raw: bytes) -> str | None:
+    """The agent_id of a hook event, parsed only when the text names one, so a main-thread event pays no JSON parse."""
+    if b'"agent_id"' not in raw:
+        return None
+    import json
+    event = json.loads(raw.decode("utf-8"))
+    agent_id = event.get("agent_id") if isinstance(event, dict) else None
+    return agent_id if isinstance(agent_id, str) and agent_id else None
 
 
 def _exit_if_idle() -> None:
     try:
-        if sys.argv[1:3] == ["hook", "deliver"] and _nothing_to_deliver():
-            sys.stdin.read()
+        if sys.argv[1:3] != ["hook", "deliver"] or not _nothing_to_deliver():
+            return
+        raw = sys.stdin.buffer.read()
+        agent_id = _event_agent(raw)
+        if agent_id is None or _nothing_to_deliver(agent_id):
             sys.exit(0)
+        import io
+        sys.stdin = io.TextIOWrapper(io.BytesIO(raw), encoding="utf-8")  # the slow path reads the event again
     except Exception:  # noqa: BLE001 - fail open: a broken fast path still exits 0 with no output
         sys.exit(0)
 
@@ -211,6 +247,8 @@ INBOX_HEREDOC: Final = re.compile(rf"{_INBOX_HEAD}[^;&|`$<>\n]*?<<-?\s*(['\"]?)(
 TMP_ROOT: Final = os.path.realpath("/tmp")
 HOME_VAR: Final = "ASKAWAY_HOME"
 ASK_LOCK: Final = ".ask.lock"  # the state folder's lock file: held by each ask from its duplicate check to its write
+PRUNE_LOCK: Final = ".prune.lock"  # taken without waiting by the daily cleanup: a run that finds it held skips the cleanup
+RECIPIENT_KEY: Final = "recipient"  # who a delivery marker gave the reply to: MAIN_ASKER in d/, the subagent's agent_id in s/
 ANSWER_DENIED: Final = ("Denied: an Askaway question is answered only by the user, in the Askaway panel, never "
                         "from a shell command. Keep working on the recommended option or end the turn.")
 AWAY_DENIED: Final = ("Denied: the Askaway away mode is switched only by the user, in the Askaway panel or the user's "
@@ -376,13 +414,23 @@ def _fsync_dir(folder: Path) -> None:
         os.close(fd)
 
 
+def _sync_published(folder: Path, step: str) -> None:
+    """Sync the folder of a file already published: a failure then is a warning on stderr, not a failure, because the
+    file is in place and a caller that retried or gave up would act on a write that happened."""
+    try:
+        _fsync_dir(folder)
+    except OSError as exc:
+        sys.stderr.write(json.dumps({"warning": f"directory sync failed after the {step}",
+                                     "error": _os_error_text(exc)}) + "\n")
+
+
 def write_atomic(target: Path, data: Mapping[str, Any]) -> None:
     tmp = _write_temp(target, data)
     try:
         os.replace(tmp, target)
     finally:
         tmp.unlink(missing_ok=True)
-    _fsync_dir(target.parent)
+    _sync_published(target.parent, "replace")
 
 
 def create_once(target: Path, data: Mapping[str, Any]) -> bool:
@@ -400,11 +448,7 @@ def create_once(target: Path, data: Mapping[str, Any]) -> bool:
             os.replace(tmp, target)
     finally:
         tmp.unlink(missing_ok=True)
-    try:
-        _fsync_dir(target.parent)
-    except OSError as exc:  # the link already published the file: a failed directory sync is a warning, not a failure
-        sys.stderr.write(json.dumps({"warning": "directory sync failed after the link",
-                                     "error": _os_error_text(exc)}) + "\n")
+    _sync_published(target.parent, "link")
     return True
 
 
@@ -448,8 +492,9 @@ def read_json(path: Path) -> dict[str, Any] | None:
 
 
 def _question_matches(item_id: str, entry: Mapping[str, Any]) -> bool:
-    """A q/ file reads as a question only when its id is its file name and its ts is an integer."""
-    return entry.get("id") == item_id and isinstance(entry.get("ts"), int)
+    """A q/ file reads as a question only when its file name is an inbox id, its id is that name and its ts is an
+    integer: item_path refuses any other name, so such a file would break list, prune and export."""
+    return ID_PATTERN.fullmatch(item_id) is not None and entry.get("id") == item_id and isinstance(entry.get("ts"), int)
 
 
 def load_questions() -> tuple[list[dict[str, Any]], list[str]]:
@@ -1546,7 +1591,7 @@ def cmd_away(state: str) -> dict[str, Any]:
 
 
 def _present_files(item_id: str) -> list[Path]:
-    return [item_path(folder, item_id) for folder in ("q", "a", "d") if os.path.lexists(item_path(folder, item_id))]
+    return [item_path(folder, item_id) for folder in ("q", "a", "d", "s") if os.path.lexists(item_path(folder, item_id))]
 
 
 def _removable(present: Sequence[Path]) -> bool:
@@ -1571,7 +1616,7 @@ def _remove_item(item_id: str) -> bool:
 
 def _remove_stale_temps() -> None:
     cutoff = time.time() - TEMP_STALE_S
-    for folder in (state_home(), state_home() / "q", state_home() / "a", state_home() / "d"):
+    for folder in (state_home(), *(state_home() / name for name in ("q", "a", "d", "s"))):
         for tmp in [*folder.glob(".*.tmp"), *(folder.glob(f"{TOKEN_DIR}/*") if folder == state_home() else ())]:
             with contextlib.suppress(OSError):
                 if tmp.is_file() and tmp.stat().st_mtime < cutoff:
@@ -1602,7 +1647,7 @@ def _unreadable_answers() -> list[str]:
 
 def _orphan_ids() -> list[str]:
     """Answer and marker files whose question file is gone: an interrupted prune left them, and no list shows them."""
-    ids = {path.stem for folder in ("a", "d") for path in (state_home() / folder).glob("*.json")
+    ids = {path.stem for folder in ("a", "d", "s") for path in (state_home() / folder).glob("*.json")
            if ID_PATTERN.fullmatch(path.stem)}
     return [item_id for item_id in sorted(ids) if not os.path.lexists(item_path("q", item_id))]
 
@@ -1694,13 +1739,16 @@ def _mark_delivered(item_id: str) -> bool:
     if asked and asked != caller_session():
         return False
     with contextlib.suppress(OSError):  # a marker that did not land is retried by the deliver hook
-        return create_once(item_path("d", item_id), {"id": item_id, "session": asked or caller_session(), "ts": now_ms()})
+        return create_once(item_path("d", item_id), {"id": item_id, "session": asked or caller_session(),
+                                                     RECIPIENT_KEY: MAIN_ASKER, "ts": now_ms()})
     return False
 
 
 def _asked_by_subagent(item_id: str) -> bool:
-    """A subagent asked this question: its wait prints the line and leaves the marker to the main session."""
-    return (read_json(item_path("q", item_id)) or {}).get("run_kind") == "subagent"
+    """A subagent asked this question (run_kind subagent, or a pause its ask stamped): its wait prints the line and
+    leaves the d/ marker to the main session; the deliver hook of the wait call marks the caller's own copy."""
+    entry = read_json(item_path("q", item_id)) or {}
+    return entry.get("run_kind") == "subagent" or _subagent_asker(entry) is not None
 
 
 def _answered_line(item_id: str) -> str | None:
@@ -2939,6 +2987,35 @@ def _holds_caller(entry: Mapping[str, Any], agent_id: str | None) -> bool:
     return True
 
 
+def _subagent_asker(entry: Mapping[str, Any]) -> str | None:
+    """The agent_id of the subagent whose ask filed this pause, or None for a main-thread or unstamped one."""
+    asker = entry.get(ASKER_KEY)
+    return asker if isinstance(asker, str) and asker and asker != MAIN_ASKER else None
+
+
+def _closes_every_copy(marker: Mapping[str, Any]) -> bool:
+    """Does this d/ marker close the reply for the asking subagent too? A lapsed one does, and so does one written before
+    markers named their recipient (0.4.0-beta.39 and older: no recipient and no pane `via`), which closed every copy."""
+    return marker.get("expired") is True or (RECIPIENT_KEY not in marker and "via" not in marker)
+
+
+def _subagent_copy_closed(item_id: str) -> bool:
+    """Has the asking subagent had its own copy (s/), or does the d/ marker close every copy?"""
+    if read_json(item_path("s", item_id)) is not None:
+        return True
+    marker = read_json(item_path("d", item_id))
+    return marker is not None and _closes_every_copy(marker)
+
+
+def _pause_holds(entry: Mapping[str, Any]) -> bool:
+    """Does this pause still hold? A subagent's pause ends only once that subagent has its copy or the answer lapsed:
+    the main session's copy never ends it. Any other pause ends once the answer is delivered or lapsed."""
+    status = item_status(entry["id"])[0]
+    if _subagent_asker(entry) is None:
+        return status not in PAUSE_ENDED
+    return status != "expired" and not _subagent_copy_closed(entry["id"])
+
+
 def _holding_question(session: str, agent_id: str | None = None) -> tuple[str, str | None] | None:
     """The (id, title) of the question that pauses this call, or None; the title is None for a damaged file.
 
@@ -2947,7 +3024,7 @@ def _holding_question(session: str, agent_id: str | None = None) -> tuple[str, s
     entries, damaged = load_questions()
     for entry in entries:
         if (entry.get("pause") is True and entry.get("session") == session and _holds_caller(entry, agent_id)
-                and item_status(entry["id"])[0] not in PAUSE_ENDED):
+                and _pause_holds(entry)):
             return entry["id"], entry.get("title") or entry["id"]
     for item_id in damaged:
         if damaged_question_session(item_id) == session and item_status(item_id)[0] == "open":
@@ -2974,13 +3051,24 @@ def _pause_decision(event: Mapping[str, Any]) -> HookOutput:
                     f"turn.{hint}")
     status = f"python3 {SCRIPT_PATH} status {item_id}"
     if event.get("agent_id"):
-        return deny(f"Paused: Askaway question {item_id} ({_literal(title)}) needs the user's answer. It holds this "
-                    "call: end the turn now. A subagent hands back what it has and says the question is open, and the "
-                    "parent session receives the answer. The answer does not arrive by itself once you stop. To look "
-                    f"it up here, run `{status}` once; an answer then appears as hook context after that call.{hint}")
+        return deny(_subagent_pause_reason(item_id, title, event["agent_id"], status) + hint)
     return deny(f"Paused: Askaway question {item_id} ({_literal(title)}) needs the "
                 "user's answer. It holds this call: end the turn now instead of retrying or polling, because the "
                 f"answer arrives by itself in the context. To look it up once: `{status}`.{hint}")
+
+
+def _subagent_pause_reason(item_id: str, title: str, agent_id: object, status: str) -> str:
+    """The pause reason a subagent reads: its own pause reaches it after its own status call, which alone ends the hold;
+    a pause no ask of this subagent filed holds the whole session, and only the parent session receives that answer."""
+    paused = f"Paused: Askaway question {item_id} ({_literal(title)}) needs the user's answer."
+    if (read_json(item_path("q", item_id)) or {}).get(ASKER_KEY) != agent_id:
+        return (f"{paused} It holds the whole session, this call included: end the turn now. A subagent hands back what "
+                "it has and says the question is open. The parent session receives the answer and the hold ends then; "
+                f"the answer does not reach you here, so do not wait for it. To look it up once: `{status}`.")
+    return (f"{paused} It holds this call: end the turn now. A subagent hands back what it has and says the question "
+            "is open, and the parent session receives its own copy of the answer. The answer does not arrive by itself "
+            f"once you stop. To look it up here, run `{status}` once: an answer then reaches you as hook context after "
+            "that call, and only that delivery to you ends this hold.")
 
 
 def _ask_form_hint(tool: object, command: str) -> str:
@@ -3005,6 +3093,14 @@ def hook_pause_guard(event: Mapping[str, Any]) -> HookOutput:
 def _asked_id(response: object) -> str | None:
     """The id of the question an ask reply files, or None when the reply names none. A duplicate reply names none:
     its twin keeps the asker of the call that filed it, so a repeat never stamps."""
+    reply = _stdout_reply(response)
+    if reply is None or reply.get("duplicate") is True:
+        return None
+    return _reply_id(reply)
+
+
+def _stdout_reply(response: object) -> dict[str, Any] | None:
+    """The JSON object a finished Bash call printed on stdout, or None."""
     stdout = response.get("stdout") if isinstance(response, dict) else None
     if not isinstance(stdout, str):
         return None
@@ -3012,8 +3108,10 @@ def _asked_id(response: object) -> str | None:
         reply = json.loads(stdout.strip())
     except (ValueError, RecursionError):
         return None
-    if not isinstance(reply, dict) or reply.get("duplicate") is True:
-        return None
+    return reply if isinstance(reply, dict) else None
+
+
+def _reply_id(reply: Mapping[str, Any]) -> str | None:
     item_id = reply.get("id")
     return item_id if isinstance(item_id, str) and ID_PATTERN.fullmatch(item_id) else None
 
@@ -3145,10 +3243,26 @@ def _lapse_reason(entry: Mapping[str, Any], answer: Mapping[str, Any],
     return "ttl" if answer_lapsed(answer) else None
 
 
-def _deliver_one(item_id: str, session: str | None, cwd: object,
-                 released: ReleasedScan | None = None, asker: str | None = None) -> str | None:
-    marker = item_path("d", item_id)
-    if read_json(marker) is not None:  # a readable marker closed it; an empty or torn one is written again
+def _copy_closed(item_id: str, asker: str | None) -> bool:
+    """Is the caller's copy closed: d/ for the main session (asker None), s/ or a d/ that closes every copy for the
+    subagent? A readable marker closes it; an empty or torn one is written again."""
+    if asker is None:
+        return read_json(item_path("d", item_id)) is not None
+    return _subagent_copy_closed(item_id)
+
+
+def _claim_copy(item_id: str, session: str | None, asker: str | None) -> bool:
+    """Publish the caller's delivery marker, no clobber: d/ names the main session as recipient, s/ the subagent's
+    agent_id. True when this call claimed the copy."""
+    marker = item_path("d" if asker is None else "s", item_id)
+    return create_once(marker, {"id": item_id, "session": session, RECIPIENT_KEY: asker or MAIN_ASKER, "ts": now_ms()})
+
+
+def _due_line(item_id: str, session: str | None, cwd: object,
+              released: ReleasedScan | None = None, asker: str | None = None) -> str | None:
+    """The line of an answer due to the caller, not claimed yet: the main session (asker None) takes every answer of its
+    session, a subagent only the pauses its own ask filed. A lapsed answer is closed here and has no line."""
+    if _copy_closed(item_id, asker):
         return None
     entry = read_json(item_path("q", item_id))
     answer = read_json(item_path("a", item_id))
@@ -3160,13 +3274,17 @@ def _deliver_one(item_id: str, session: str | None, cwd: object,
     if not _receives(entry, session, cwd) or answer_lapsed(answer):
         reason = _lapse_reason(entry, answer, released)
         if reason:
-            create_once(marker, {"id": item_id, "session": None, "expired": True,
-                                 "reason": reason, "ts": now_ms()})
+            _close_lapsed(item_id, reason, asker)
         return None
-    line = _answer_line(entry, answer)
-    if line is None or not create_once(marker, {"id": item_id, "session": session, "ts": now_ms()}):
-        return None
-    return line
+    return _answer_line(entry, answer)
+
+
+def _close_lapsed(item_id: str, reason: str, asker: str | None) -> None:
+    """Record a lapse in d/, which closes every copy; when the main session's copy already holds d/, the asking
+    subagent's lapse goes to its own s/ marker, which ends its pause."""
+    lapse = {"id": item_id, "session": None, "expired": True, "reason": reason, "ts": now_ms()}
+    if not create_once(item_path("d", item_id), lapse) and asker is not None:
+        create_once(item_path("s", item_id), lapse)
 
 
 def _stamp_due(marker: Path, interval_s: float) -> bool:
@@ -3186,22 +3304,47 @@ def _clock_jumped(marker: Path) -> bool:
         return False
 
 
-def _maybe_prune() -> None:
-    """Opportunistic prune from the deliver slow path, at most once a day. Best effort.
+@contextlib.contextmanager
+def _cleanup_lock() -> Generator[bool]:
+    """Try the daily cleanup's lock without waiting: True when this run holds it, False when another run does."""
+    path = state_home() / PRUNE_LOCK
+    _make_folder(path.parent)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            held = True
+        except BlockingIOError:
+            held = False
+        yield held
+    finally:
+        os.close(fd)  # closing the descriptor releases the lock
 
-    After a clock jump the cleanup waits one cycle, and answer_lapsed holds the unread-answer expiry for that
-    cycle too: hook_deliver calls this after the deliveries, so they read the stamp before it moves.
+
+def _maybe_prune() -> None:
+    """Opportunistic prune from the deliver slow path, at most once a day. Best effort, one run at a time: a run that
+    finds the cleanup lock held skips the cleanup instead of waiting for it.
+
+    The stamp moves first, so a cleanup that the hook timeout cuts short waits a day instead of starting again in front
+    of every delivery. After a clock jump the cleanup waits one cycle and only the stamp moves, and answer_lapsed holds
+    the unread-answer expiry for that cycle too: hook_deliver then calls this after the deliveries, so they read the stamp
+    before it moves; on any other day it calls this before them, so no claimed line waits on the cleanup.
     """
     marker = state_home() / PRUNE_STAMP
     if not _stamp_due(marker, PRUNE_INTERVAL_S):
         return
-    if not _clock_jumped(marker):
+    with _cleanup_lock() as held:
+        if not held:
+            return
+        jumped = _clock_jumped(marker)
+        with contextlib.suppress(OSError):
+            marker.touch()  # the stamp moves even when some items are skipped, so the next cycle runs
+        if jumped:
+            return
         with contextlib.suppress(OSError):
             _remove_stale_temps()
             _remove_all(_closed_ids(prune_days(), load_questions()[0]))  # never a damaged file: the user clears those
             _remove_all(_orphan_ids())
-    with contextlib.suppress(OSError):
-        marker.touch()  # the stamp moves even when some items were skipped, so the next cycle runs
 
 
 def _foreign_recheck_due() -> bool:
@@ -3217,51 +3360,92 @@ def _foreign_recheck_due() -> bool:
 def _foreign(item_id: str, session: str | None, cwd: object) -> bool:
     """An open answer that another session (or project) receives: only a re-check can close it."""
     if read_json(item_path("d", item_id)) is not None:
-        return False  # already closed: _deliver_one returns at once
+        return False  # already closed: _due_line returns at once
     entry = read_json(item_path("q", item_id))
     return entry is not None and not _receives(entry, session, cwd)
 
 
 def _deliver_lines(item_ids: Sequence[str], session: str | None, cwd: object, recheck: bool,
                    asker: str | None = None) -> list[str]:
+    """The lines this run claims, in two passes: every answer is read and judged first (the slow session_ended scans
+    run there, and a lapse is closed there), then the due copies are claimed in one short loop, so the hook prints
+    right after its first claim and a timeout during the reads leaves no claimed line unprinted."""
     released = ReleasedScan()  # one folder-wide scan for every answer of this run, at most
-    lines: list[str] = []
+    due: list[tuple[str, str]] = []
     for item_id in item_ids:
-        if not recheck and _foreign(item_id, session, cwd):
-            continue  # another session's unread answer: re-checked at most once a minute
-        try:
-            line = _deliver_one(item_id, session, cwd, released, asker)
-        except OSError:
-            continue  # no marker was written, so the next run retries this answer
+        try:  # another session's unread answer is re-checked at most once a minute
+            line = None if not recheck and _foreign(item_id, session, cwd) else _due_line(
+                item_id, session, cwd, released, asker)
+        except Exception:  # noqa: BLE001 - nothing was claimed, so the next run retries it; the other answers still go
+            line = None
         if line:
+            due.append((item_id, line))
+    lines: list[str] = []
+    for item_id, line in due:
+        try:
+            claimed = _claim_copy(item_id, session, asker)
+        except Exception:  # noqa: BLE001 - a claim that did not land is retried by the next run; the claimed lines print
+            claimed = False
+        if claimed:
             lines.append(line)
     return lines
 
 
 def _is_wait_call(event: Mapping[str, Any]) -> bool:
-    """Is the call one `askaway.py wait`? A subagent's wait prints the line and leaves the marker to the main session."""
+    """Is the call one `askaway.py wait`? Its reply already carries the delivery line (_mark_waited)."""
     head = INBOX_HEAD.match(str((event.get("tool_input") or {}).get("command", "")).strip())
     return event.get("tool_name") == "Bash" and head is not None and head[0].split()[-1] == "wait"
 
 
+def _mark_waited(event: Mapping[str, Any], session: str | None, cwd: object, asker: str | None) -> None:
+    """A wait call printed the delivery line of a question this caller receives: its copy is marked now and not handed
+    again. The asking subagent's mark (s/) ends its pause; the main session's (d/) is the one its wait on a subagent's
+    question leaves unmarked. A wait reply without a line marks nothing."""
+    reply = _stdout_reply(event.get("tool_response")) if _is_wait_call(event) else None
+    item_id = _reply_id(reply) if reply is not None and isinstance(reply.get("line"), str) else None
+    if item_id is None:
+        return
+    entry = read_json(item_path("q", item_id))
+    if entry is None or not _receives(entry, session, cwd) or (asker is not None and entry.get(ASKER_KEY) != asker):
+        return
+    _claim_copy(item_id, session, asker)
+
+
+def _claimed_lines(event: Mapping[str, Any], item_ids: Sequence[str], asker: str | None) -> list[str]:
+    """The lines this hook call claims: the waited copy is marked first (its line is printed already), then each answer
+    the caller receives. Only the main thread re-checks other sessions' answers, so a subagent never moves that stamp."""
+    session, cwd = event.get("session_id") or None, event.get("cwd")
+    with contextlib.suppress(OSError):  # a mark that did not land: the line is handed as hook context instead
+        _mark_waited(event, session, cwd, asker)
+    return _deliver_lines(item_ids, session, cwd, asker is None and _foreign_recheck_due(), asker)
+
+
+def _daily_cleanup() -> None:
+    with contextlib.suppress(Exception):  # best effort: a cleanup that fails must not cost a delivery
+        _maybe_prune()
+
+
 def hook_deliver(event: Mapping[str, Any]) -> HookOutput:
     # A subagent's hook call carries the parent's session_id plus an agent_id. It takes only the answers its own ask
-    # filed (asker == agent_id), as hook context in its own transcript; the main thread takes every answer. Not on its
-    # own wait: that call already printed the line and leaves the marker, and so the hold, to the main session.
+    # filed (asker == agent_id), as hook context in its own transcript, and marks them in s/; the main thread takes every
+    # answer of its session and marks it in d/. So each gets the reply once, and the main thread's copy never ends a
+    # subagent's pause.
     asker = event.get("agent_id") or None
-    if asker is not None and (not isinstance(asker, str) or _is_wait_call(event)):
+    if asker is not None and not isinstance(asker, str):
         return None
     item_ids = answered_ids()
     event_name = event.get("hook_event_name")
     if not item_ids or not isinstance(event_name, str):
         return None
-    lines = _deliver_lines(item_ids, event.get("session_id") or None, event.get("cwd"), _foreign_recheck_due(), asker)
-    if lines:
-        # Printed and flushed before the daily cleanup: the lines are claimed already, and a kill during the cleanup
-        # must not cost them (run_hook prints only what a handler returns, so this run prints its output here).
+    jumped = _clock_jumped(state_home() / PRUNE_STAMP)
+    if not jumped:
+        _daily_cleanup()  # before any marker: a hook timeout during the cleanup costs no claimed line
+    lines = _claimed_lines(event, item_ids, asker)
+    if lines:  # printed and flushed right after the markers (run_hook prints only what a handler returns)
         print(json.dumps({"hookSpecificOutput": {"hookEventName": event_name,
                                                  "additionalContext": "\n".join(lines)}}), flush=True)
-    _maybe_prune()  # after the deliveries: their clock-jump hold is read before this call moves the stamp
+    if jumped:
+        _daily_cleanup()  # after a clock jump it only moves the stamp, once the deliveries have read the expiry hold
     return None
 
 

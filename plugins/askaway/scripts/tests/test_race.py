@@ -111,3 +111,38 @@ def test_a_foreign_session_writer_racing_nineteen_others_is_refused_and_claims_n
     assert [result["written"] for result in same_session].count(True) == 1
     assert stored_answer(state, item)["key"] == "A"
     assert [path.name for path in (state / "a").iterdir()] == [f"{item}.json"]
+
+
+HOOK_RUNS = 10  # deliver processes per recipient
+
+
+def hook_run(state: Path, mode: str, event: dict) -> str:
+    proc = subprocess.run([sys.executable, str(SCRIPT), "hook", mode], input=json.dumps(event), capture_output=True,
+                          text=True, env=session_env(state, SESSION), cwd=state.parent, timeout=60, check=False)
+    assert proc.returncode == 0, proc.stderr
+    return proc.stdout
+
+
+def test_racing_main_and_subagent_deliver_runs_give_each_recipient_the_reply_exactly_once(state):
+    """A subagent's pause, answered, then main-thread and subagent deliver runs at once: two markers, one line each."""
+    reply = run_cli(state, SESSION, "ask", "--json", json.dumps({**ENTRY, "risk": "high"}))
+    item = reply["id"]
+    main = {"session_id": SESSION, "cwd": str(state.parent), "hook_event_name": "UserPromptSubmit"}
+    subagent = {**main, "hook_event_name": "PostToolUse", "agent_id": "agent-1"}
+    hook_run(state, "stamp-asker", {**subagent, "tool_name": "Bash",
+                                    "tool_input": {"command": f"python3 {SCRIPT} ask --json '{{}}'"},
+                                    "tool_response": {"stdout": json.dumps(reply), "stderr": ""}})
+    run_cli(state, SESSION, "answer", item, "B")
+    events = [main] * HOOK_RUNS + [subagent] * HOOK_RUNS
+    start = threading.Barrier(len(events))
+
+    def deliver(event: dict) -> str:
+        start.wait(timeout=30)
+        return hook_run(state, "deliver", event)
+
+    with ThreadPoolExecutor(max_workers=len(events)) as pool:
+        outputs = list(pool.map(deliver, events))
+    assert [item in out for out in outputs[:HOOK_RUNS]].count(True) == 1
+    assert [item in out for out in outputs[HOOK_RUNS:]].count(True) == 1
+    markers = {folder: json.loads((state / folder / f"{item}.json").read_text(encoding="utf-8")) for folder in "ds"}
+    assert markers["d"]["recipient"] == "main" and markers["s"]["recipient"] == "agent-1"

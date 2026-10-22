@@ -5690,7 +5690,8 @@ def test_deliver_gives_a_subagent_the_answer_its_own_ask_filed(home, capsys, mon
     cli(capsys, "answer", item, "B")
     text = hook_json(capsys, monkeypatch, "deliver", subagent_event())["hookSpecificOutput"]["additionalContext"]
     assert item in text
-    assert (home / "d" / f"{item}.json").exists()
+    assert stored(home, "s", item)["recipient"] == "agent-1"  # the subagent's own copy; d/ stays the main session's
+    assert not (home / "d" / f"{item}.json").exists()
     assert run_hook(capsys, monkeypatch, "deliver", subagent_event()) == ""
 
 
@@ -5719,14 +5720,25 @@ def test_pause_reason_for_a_subagent_says_how_to_fetch_the_answer(capsys, monkey
     assert f"`python3 {askaway.SCRIPT_PATH} status {item}`" in reason
 
 
-def test_a_subagent_wait_call_delivers_nothing_and_leaves_the_hold_to_the_main_session(home, capsys, monkeypatch):
+def wait_event(item: str, reply: dict, agent_id: str | None = "agent-1") -> dict:
+    """The PostToolUse payload of a finished `askaway.py wait <item>` call that printed reply."""
+    event = subagent_event(agent_id=agent_id) if agent_id else {**deliver_event(), "hook_event_name": "PostToolUse"}
+    return {**event, "tool_name": "Bash", "tool_input": {"command": f"python3 {askaway.SCRIPT_PATH} wait {item}"},
+            "tool_response": {"stdout": json.dumps(reply), "stderr": ""}}
+
+
+def test_a_subagent_wait_call_marks_its_own_copy_without_a_second_line_and_the_main_session_gets_its_own(
+        home, capsys, monkeypatch):
     item = file_pause(capsys, monkeypatch, agent_id="agent-1")["id"]
     cli(capsys, "answer", item, "B")
-    wait = {**subagent_event(), "tool_name": "Bash",
-            "tool_input": {"command": f"python3 {askaway.SCRIPT_PATH} wait {item}"}}
-    assert run_hook(capsys, monkeypatch, "deliver", wait) == ""
-    assert not (home / "d" / f"{item}.json").exists()
+    reply = cli(capsys, "wait", item)
+    assert "line" in reply and not (home / "d" / f"{item}.json").exists()
+    assert run_hook(capsys, monkeypatch, "deliver", wait_event(item, reply)) == ""
+    assert stored(home, "s", item)["recipient"] == "agent-1"
+    assert run_hook(capsys, monkeypatch, "pause-guard", agent_event("agent-1")) == ""  # its own delivery ended the hold
+    assert run_hook(capsys, monkeypatch, "deliver", subagent_event()) == ""
     assert item in hook_json(capsys, monkeypatch, "deliver", deliver_event())["hookSpecificOutput"]["additionalContext"]
+    assert run_hook(capsys, monkeypatch, "deliver", deliver_event()) == ""
 
 
 # ---- ported from a local mirror (the Bash guard stops denying unrelated commands) ----
@@ -5766,3 +5778,272 @@ def test_bash_guard_still_reads_the_substitutions_of_an_unquoted_git_heredoc():
 ])
 def test_bash_guard_keeps_refusing_a_relative_write_once_the_directory_is_lost_by_more_than_a_cd_to_a_variable(command):
     assert askaway.bash_tamper_reason(command) == askaway.STATE_DENIED
+
+
+# ---- gauntlet 7, P1b: CLI and delivery -------------------------------------------------------------------------------
+
+def test_a_question_file_whose_name_is_no_inbox_id_is_skipped_by_list_prune_and_export(home, capsys):
+    write_raw(home, "q", "x", '{"id": "x", "ts": 1}')
+    item = ask_item(capsys)
+    assert [row["id"] for row in cli(capsys, "list")["items"]] == [item]
+    assert cli(capsys, "list", "--open")["items"][0]["id"] == item
+    assert "error" not in cli(capsys, "prune")
+    assert askaway.main(["export"]) == 0
+    assert [row["id"] for row in json.loads(capsys.readouterr().out)] == [item]
+
+
+def test_a_failed_directory_sync_after_the_replace_is_a_warning_and_a_high_risk_ask_still_files(home, capsys,
+                                                                                                monkeypatch):
+    monkeypatch.setattr(askaway, "_fsync_dir", failing_directory_sync)
+    askaway.write_atomic(home / "q" / "q-x-000000.json", {"id": "q-x-000000"})
+    assert stored(home, "q", "q-x-000000") == {"id": "q-x-000000"}
+    assert "directory sync failed after the replace" in capsys.readouterr().err
+    assert askaway.main(["ask", "--json", json.dumps(base_entry(risk="high"))]) == 0
+    reply = json.loads(capsys.readouterr().out)
+    assert reply["action"] == "pause" and "error" not in reply and stored(home, "q", reply["id"])["pause"] is True
+
+
+def test_the_daily_cleanup_runs_before_any_marker_is_claimed(home, capsys, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    item = ask_item(capsys)
+    cli(capsys, "answer", item, "B")
+    seen: list[bool] = []
+    monkeypatch.setattr(askaway, "_maybe_prune", lambda: seen.append((home / "d" / f"{item}.json").exists()))
+    assert item in run_hook(capsys, monkeypatch, "deliver", deliver_event())
+    assert seen == [False]
+
+
+def test_a_clock_jump_moves_the_daily_stamp_only_after_the_deliveries(home, capsys, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    item = ask_item(capsys)
+    cli(capsys, "answer", item, "B")
+    stamp = home / "last_prune"
+    stamp.touch()
+    old = time.time() - 8 * 86_400
+    os.utime(stamp, (old, old))
+    seen: list[bool] = []
+    monkeypatch.setattr(askaway, "_maybe_prune", lambda: seen.append((home / "d" / f"{item}.json").exists()))
+    assert item in run_hook(capsys, monkeypatch, "deliver", deliver_event())
+    assert seen == [True]
+
+
+def test_the_daily_cleanup_skips_while_another_run_holds_its_lock(home, capsys):
+    write_raw(home, "a", "q-orph01-444444", "{}")
+    fd = os.open(home / askaway.PRUNE_LOCK, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        askaway._maybe_prune()
+        assert (home / "a" / "q-orph01-444444.json").exists() and not (home / "last_prune").exists()
+    finally:
+        os.close(fd)
+    askaway._maybe_prune()
+    assert not (home / "a" / "q-orph01-444444.json").exists() and (home / "last_prune").exists()
+
+
+def test_a_non_os_error_on_one_answer_keeps_the_lines_already_claimed(home, capsys, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    first, second = ask_item(capsys), ask_item(capsys, title="Second cache question")
+    cli(capsys, "answer", first, "B")
+    cli(capsys, "answer", second, "B")
+    broken = max(first, second)
+    original = askaway._due_line
+
+    def deliver_one(item_id, *args):
+        if item_id == broken:
+            raise ValueError("unexpected")
+        return original(item_id, *args)
+
+    monkeypatch.setattr(askaway, "_due_line", deliver_one)
+    text = hook_json(capsys, monkeypatch, "deliver", deliver_event())["hookSpecificOutput"]["additionalContext"]
+    assert min(first, second) in text and broken not in text
+    assert not (home / "d" / f"{broken}.json").exists()
+
+
+def test_a_subagent_deliver_run_leaves_the_foreign_recheck_stamp_to_the_main_thread(home, capsys, monkeypatch):
+    item = file_pause(capsys, monkeypatch, agent_id="agent-1")["id"]
+    cli(capsys, "answer", item, "B")
+    run_hook(capsys, monkeypatch, "deliver", subagent_event(agent_id="agent-2"))
+    assert not (home / askaway.FOREIGN_STAMP).exists()
+    run_hook(capsys, monkeypatch, "deliver", deliver_event())
+    assert (home / askaway.FOREIGN_STAMP).exists()
+
+
+def subagent_pause_answered(capsys, monkeypatch) -> str:
+    item = file_pause(capsys, monkeypatch, agent_id="agent-1")["id"]
+    cli(capsys, "answer", item, "B")
+    return item
+
+
+def status_event(item: str, agent_id: str = "agent-1") -> dict:
+    """The PostToolUse payload of the subagent's own `askaway.py status <item>` call."""
+    return {**subagent_event(agent_id=agent_id), "tool_name": "Bash",
+            "tool_input": {"command": f"python3 {askaway.SCRIPT_PATH} status {item}"},
+            "tool_response": {"stdout": json.dumps({"id": item, "status": "answered", "key": "B"}), "stderr": ""}}
+
+
+def subagent_held(capsys, monkeypatch) -> bool:
+    return run_hook(capsys, monkeypatch, "pause-guard", agent_event("agent-1")) != ""
+
+
+def test_the_main_delivery_of_a_subagent_pause_never_ends_its_hold_and_the_subagent_gets_its_own_copy_once(
+        home, capsys, monkeypatch):
+    item = subagent_pause_answered(capsys, monkeypatch)
+    assert item in hook_json(capsys, monkeypatch, "deliver", deliver_event())["hookSpecificOutput"]["additionalContext"]
+    assert stored(home, "d", item)["recipient"] == "main"
+    assert subagent_held(capsys, monkeypatch)
+    assert askaway._nothing_to_deliver() is True and askaway._nothing_to_deliver("agent-1") is False
+    assert askaway._nothing_to_deliver("agent-2") is True
+    text = hook_json(capsys, monkeypatch, "deliver", status_event(item))["hookSpecificOutput"]["additionalContext"]
+    assert item in text
+    assert stored(home, "s", item)["recipient"] == "agent-1" and stored(home, "s", item)["session"] == SESSION
+    assert not subagent_held(capsys, monkeypatch)
+    assert askaway._nothing_to_deliver("agent-1") is True
+    assert run_hook(capsys, monkeypatch, "deliver", status_event(item)) == ""
+    assert run_hook(capsys, monkeypatch, "deliver", deliver_event()) == ""
+
+
+def test_a_subagent_that_gets_its_copy_first_leaves_the_main_session_its_own_copy(home, capsys, monkeypatch):
+    item = subagent_pause_answered(capsys, monkeypatch)
+    assert item in run_hook(capsys, monkeypatch, "deliver", status_event(item))
+    assert not subagent_held(capsys, monkeypatch)
+    assert cli(capsys, "status", item)["status"] == "answered"  # the main session's copy is still due
+    assert item in run_hook(capsys, monkeypatch, "deliver", deliver_event())
+    assert run_hook(capsys, monkeypatch, "deliver", deliver_event()) == ""
+    assert run_hook(capsys, monkeypatch, "deliver", status_event(item)) == ""
+    assert cli(capsys, "status", item)["status"] == "delivered"
+
+
+def test_a_pane_prompt_marker_is_the_main_copy_and_does_not_end_the_subagent_hold(home, capsys, monkeypatch):
+    item = subagent_pause_answered(capsys, monkeypatch)
+    write_raw(home, "d", item, json.dumps({"id": item, "session": SESSION, "ts": askaway.now_ms(), "via": "prompt"}))
+    assert subagent_held(capsys, monkeypatch)
+    assert run_hook(capsys, monkeypatch, "deliver", deliver_event()) == ""
+    assert item in run_hook(capsys, monkeypatch, "deliver", status_event(item))
+    assert not subagent_held(capsys, monkeypatch)
+
+
+@pytest.mark.parametrize("asker", ["agent-1", "main"])
+def test_an_old_marker_without_a_recipient_still_closes_every_copy(asker, home, capsys, monkeypatch):
+    item = file_pause(capsys, monkeypatch, agent_id=None if asker == "main" else asker)["id"]
+    cli(capsys, "answer", item, "B")
+    write_raw(home, "d", item, json.dumps({"id": item, "session": SESSION, "ts": askaway.now_ms()}))  # as beta.39 wrote it
+    assert cli(capsys, "status", item)["status"] == "delivered"
+    assert run_hook(capsys, monkeypatch, "deliver", deliver_event()) == ""
+    assert run_hook(capsys, monkeypatch, "deliver", status_event(item)) == ""
+    assert not (home / "s" / f"{item}.json").exists()
+    assert run_hook(capsys, monkeypatch, "pause-guard", agent_event("agent-1")) == ""
+    assert run_hook(capsys, monkeypatch, "pause-guard", edit_event()) == ""
+
+
+def test_a_lapsed_answer_ends_a_subagent_hold_without_a_copy(home, clock, capsys, monkeypatch):
+    base = 1_000_000_000_000
+    clock["ms"] = base
+    item = subagent_pause_answered(capsys, monkeypatch)
+    clock["ms"] = base + 8 * DAY_MS
+    assert run_hook(capsys, monkeypatch, "deliver", status_event(item)) == ""
+    assert not subagent_held(capsys, monkeypatch)
+    assert not (home / "s" / f"{item}.json").exists()
+
+
+def test_a_lapse_after_the_main_copy_went_out_ends_the_subagent_hold_and_delivers_nothing_twice(
+        home, clock, capsys, monkeypatch):
+    base = 1_000_000_000_000
+    clock["ms"] = base
+    item = subagent_pause_answered(capsys, monkeypatch)
+    assert item in run_hook(capsys, monkeypatch, "deliver", deliver_event())
+    assert subagent_held(capsys, monkeypatch)
+    clock["ms"] = base + 8 * DAY_MS
+    assert cli(capsys, "status", item)["status"] == "delivered"
+    assert run_hook(capsys, monkeypatch, "deliver", status_event(item)) == ""
+    assert stored(home, "s", item)["expired"] is True and stored(home, "d", item)["recipient"] == "main"
+    assert not subagent_held(capsys, monkeypatch)
+    assert run_hook(capsys, monkeypatch, "deliver", status_event(item)) == ""
+    assert run_hook(capsys, monkeypatch, "deliver", deliver_event()) == ""
+
+
+def test_every_answer_is_read_before_the_first_copy_is_claimed(home, clock, capsys, monkeypatch):
+    clock["ms"] = 1_000_000_000_000
+    own = answer_from(capsys, monkeypatch, SESSION)
+    clock["ms"] += 1_000
+    foreign = answer_from(capsys, monkeypatch, "other-session")  # its session_ended scan runs after own sorts first
+    assert own < foreign
+    seen: list[bool] = []
+
+    def slow_session_check(*_args) -> bool:
+        seen.append((home / "d" / f"{own}.json").exists())  # a hook timeout here must leave no claimed line unprinted
+        return False
+
+    monkeypatch.setattr(askaway, "session_ended", slow_session_check)
+    text = hook_json(capsys, monkeypatch, "deliver", deliver_event())["hookSpecificOutput"]["additionalContext"]
+    assert seen == [False]
+    assert own in text and foreign not in text
+    assert stored(home, "d", own)["recipient"] == "main" and not (home / "d" / f"{foreign}.json").exists()
+
+
+def test_a_subagent_wait_with_run_kind_subagent_unlocks_only_through_the_hook_of_that_wait(home, capsys, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
+    reply = cli(capsys, "ask", "--json", json.dumps(base_entry(risk="high", run_kind="subagent", title="Drop?")))
+    run_hook(capsys, monkeypatch, "stamp-asker", stamp_event(json.dumps(reply), agent_id="agent-1"))
+    item = reply["id"]
+    cli(capsys, "answer", item, "A")
+    waited = cli(capsys, "wait", item)
+    assert "line" in waited and not (home / "d" / f"{item}.json").exists() and not (home / "s" / f"{item}.json").exists()
+    assert subagent_held(capsys, monkeypatch)  # the CLI wait alone knows no agent_id: the hold stays until its hook
+    assert run_hook(capsys, monkeypatch, "deliver", wait_event(item, waited)) == ""
+    assert not subagent_held(capsys, monkeypatch)
+    assert item in run_hook(capsys, monkeypatch, "deliver", deliver_event())
+    assert run_hook(capsys, monkeypatch, "deliver", deliver_event()) == ""
+
+
+def test_a_wait_reply_without_a_line_marks_nothing(home, capsys, monkeypatch):
+    item = subagent_pause_answered(capsys, monkeypatch)
+    out = run_hook(capsys, monkeypatch, "deliver", wait_event(item, {"id": item, "status": "timeout"}))
+    assert item in out  # nothing printed it yet, so the hook hands it
+    assert stored(home, "s", item)["recipient"] == "agent-1"
+
+
+def test_the_main_session_wait_on_a_subagent_question_is_marked_by_its_hook_and_not_handed_again(
+        home, capsys, monkeypatch):
+    item = subagent_pause_answered(capsys, monkeypatch)
+    waited = cli(capsys, "wait", item)
+    assert "line" in waited
+    assert run_hook(capsys, monkeypatch, "deliver", wait_event(item, waited, agent_id=None)) == ""
+    assert stored(home, "d", item)["recipient"] == "main"
+    assert subagent_held(capsys, monkeypatch)
+
+
+def test_the_held_subagent_is_told_its_own_status_call_brings_the_reply(capsys, monkeypatch):
+    item = file_pause(capsys, monkeypatch, agent_id="agent-1")["id"]
+    reason = hook_json(capsys, monkeypatch, "pause-guard", agent_event("agent-1"))["hookSpecificOutput"][
+        "permissionDecisionReason"]
+    assert f"`python3 {askaway.SCRIPT_PATH} status {item}`" in reason
+    assert "reaches you as hook context after that call, and only that delivery to you ends this hold" in reason
+    assert "parent session receives its own copy" in reason
+
+
+def test_a_subagent_held_by_a_pause_it_did_not_file_is_told_the_reply_does_not_reach_it(capsys, monkeypatch):
+    pending_pause(capsys, monkeypatch)
+    reason = hook_json(capsys, monkeypatch, "pause-guard", agent_event("agent-1"))["hookSpecificOutput"][
+        "permissionDecisionReason"]
+    assert "does not reach you here" in reason and "hook context" not in reason
+
+
+def test_prune_removes_the_subagent_marker_with_its_item_and_as_an_orphan(home, clock, capsys, monkeypatch):
+    item = subagent_pause_answered(capsys, monkeypatch)
+    run_hook(capsys, monkeypatch, "deliver", status_event(item))
+    run_hook(capsys, monkeypatch, "deliver", deliver_event())
+    write_raw(home, "s", "q-orph02-555555", '{"id": "q-orph02-555555", "recipient": "agent-9", "ts": 1}')
+    clock["ms"] += 1
+    assert set(cli(capsys, "prune", "--days", "0")["removed_ids"]) == {item, "q-orph02-555555"}
+    assert not (home / "s" / f"{item}.json").exists() and not (home / "s" / "q-orph02-555555.json").exists()
+
+
+def test_the_deliver_fast_path_hands_a_subagent_its_copy_in_a_real_process(home, capsys, monkeypatch):
+    item = subagent_pause_answered(capsys, monkeypatch)
+    run_hook(capsys, monkeypatch, "deliver", deliver_event())  # the main copy: every d/ marker is in place
+    env = {**os.environ, "ASKAWAY_HOME": str(home)}
+    for agent_id, delivered in (("agent-2", False), ("agent-1", True)):
+        proc = subprocess.run([sys.executable, str(SCRIPT), "hook", "deliver"], input=json.dumps(status_event(
+            item, agent_id)), capture_output=True, text=True, env=env, timeout=20, check=False)
+        assert proc.returncode == 0 and (item in proc.stdout) is delivered, proc.stderr
+    assert stored(home, "s", item)["recipient"] == "agent-1"
