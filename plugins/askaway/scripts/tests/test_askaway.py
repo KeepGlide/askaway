@@ -2986,7 +2986,7 @@ def bash_denial(capsys, monkeypatch, command: str) -> str:
 
 @pytest.fixture
 def scanner_only(monkeypatch):
-    """The Bash guard without its a312550 backstop: a test that must prove what the current scanner alone decides."""
+    """The Bash guard without its frozen backstop: a test that must prove what the current scanner alone decides."""
     no_baseline = type("NoBaseline", (), {"bash_tamper_reason": staticmethod(lambda _command: None)})
     monkeypatch.setattr(askaway, "_baseline_guard", lambda: no_baseline)
 
@@ -3053,7 +3053,7 @@ def test_an_unreadable_command_naming_a_sandbox_home_is_denied_as_the_state_fold
     assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
 
 
-@pytest.mark.usefixtures("scanner_only")  # the a312550 backstop denies this one: a known over-deny, see SPEC.md
+@pytest.mark.usefixtures("scanner_only")  # the frozen backstop denies this one: a known over-deny, see SPEC.md
 def test_a_comment_with_an_apostrophe_is_not_a_quote_so_the_sandboxed_answer_is_read(capsys, monkeypatch):
     command = f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} answer q-1-abcdef A # it's"
     assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
@@ -3147,7 +3147,7 @@ def test_a_scratch_folder_made_by_mkdir_or_a_plain_copy_is_still_a_sandbox_home(
     "export CDPATH=/opt; cd /tmp/askaway-w; touch a; touch b",
     "export CDPATH=/opt; touch a; touch b",
 ])
-@pytest.mark.usefixtures("scanner_only")  # the a312550 backstop denies these: a known over-deny, see SPEC.md
+@pytest.mark.usefixtures("scanner_only")  # the frozen backstop denies these: a known over-deny, see SPEC.md
 def test_an_exported_cdpath_does_not_untrack_commands_that_are_not_a_cd(command, capsys, monkeypatch):
     assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
 
@@ -5347,7 +5347,7 @@ def test_the_scanner_alone_still_lets_a_harmless_command_with_a_nested_unit_or_a
     assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
 
 
-def test_the_frozen_guard_of_78a729d_backs_the_scanner_up(capsys, monkeypatch):
+def test_the_frozen_guard_of_the_mirror_backs_the_scanner_up(capsys, monkeypatch):
     command = f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} answer q-1-abcdef A # it's"  # only the old guard denies it
     assert askaway._ShellScan(os.getcwd(), {}, askaway._state_roots()).text(command) is None
     assert askaway._baseline_guard().bash_tamper_reason(command) == askaway.STATE_DENIED
@@ -5531,3 +5531,42 @@ def test_a_subagent_wait_call_delivers_nothing_and_leaves_the_hold_to_the_main_s
     assert run_hook(capsys, monkeypatch, "deliver", wait) == ""
     assert not (home / "d" / f"{item}.json").exists()
     assert item in hook_json(capsys, monkeypatch, "deliver", deliver_event())["hookSpecificOutput"]["additionalContext"]
+
+
+# ---- ported from a local mirror (the Bash guard stops denying unrelated commands) ----
+
+@pytest.mark.parametrize("command", [
+    "sed -i 's/B --> A3[old]/B --> A3[new]/' docs/execution-model.md",
+    "cd \"$WORK\" && sed -i 's/a/A3[x]/' docs/execution-model.md",
+    "cd $WORK && git status 2>&1 | head",
+    "cd \"$WORK\" && git log --oneline > out.txt",
+    "git commit -m \"$(cat <<'EOF'\nfix(askaway): never write into ASKAWAY_HOME state\n\nremove the false positives\nEOF\n)\"",
+    "git -C ~/.claude commit -m 'docs: state askaway rm note'",
+    "gh pr create --body \"$(cat <<'EOF'\nstops ASKAWAY_HOME write false positive\nEOF\n)\"",
+])
+def test_bash_guard_lets_unrelated_commands_through(command):
+    assert askaway.bash_tamper_reason(command) is None
+
+
+@pytest.mark.parametrize("command", [
+    f"rm {STATE_FOLDER}/q/q-1-abcdef.json",
+    f"cd \"$WORK\"; cd {STATE_FOLDER} && rm q/q-1-abcdef.json",
+    f"sed -i 's/a/b/' {STATE_FOLDER}/q/q-1-abcdef.json",
+    f"git status; python3 - <<'EOF'\nopen('{STATE_FOLDER}/a.json', 'w').write('x')\nEOF",
+])
+def test_bash_guard_still_denies_real_writes_into_the_state_folder(command):
+    assert askaway.bash_tamper_reason(command) == askaway.STATE_DENIED
+
+
+def test_bash_guard_still_reads_the_substitutions_of_an_unquoted_git_heredoc():
+    command = f"git commit -F - <<EOF\n$(rm -rf {STATE_FOLDER})\nEOF"
+    assert askaway.bash_tamper_reason(command) == askaway.STATE_DENIED
+
+
+@pytest.mark.parametrize("command", [
+    "cd \"$WORK\" && cd -; touch fresh.txt",
+    "export CDPATH=/x; cd \"$WORK\" && touch fresh.txt",
+    "popd; cd \"$WORK\" && touch fresh.txt",
+])
+def test_bash_guard_keeps_refusing_a_relative_write_once_the_directory_is_lost_by_more_than_a_cd_to_a_variable(command):
+    assert askaway.bash_tamper_reason(command) == askaway.STATE_DENIED

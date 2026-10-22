@@ -7,8 +7,14 @@ Commit hashes name the change in `git log`.
 
 ## [Unreleased]
 
+Two fixes ported from a local mirror.
+
+### Changed
+- The frozen guard `scripts/askaway_guard_baseline.py` is re-extracted from a later revision of the guard: the guard of 0.4.0-beta.36 plus the relaxations listed under Fixed below. It still decides first, so the guard denies at least what the installed one denied, and it no longer denies what those relaxations let through (`bash_tamper_reason`, `_baseline_guard`).
+
 ### Fixed
 - A subagent's hook call delivers only the answers whose question its own `ask` filed (`asker == agent_id`, `_deliver_one`), and its pause reason says to end the turn, that the parent session receives the answer, and that one `askaway.py status <id>` call fetches it (`_pause_decision`). The main thread still takes every answer of its session. A subagent's own `wait` call delivers nothing, so it keeps leaving the marker, and the hold, to the main session (`_is_wait_call`). Ported from a local mirror.
+- Bash guard: a relative write after `cd "$VAR"` (or `pushd "$VAR"`) is refused only when the command names askaway, `ASKAWAY_HOME` or the word `state` (`STATE_HINT`), and a `git` or `gh` heredoc is commit, PR or issue text, not code (`PROSE_COMMANDS`); the `$(...)` units of an unquoted body are still read. `pushd`, `cd -`, `popd`, `CDPATH`, `source` and `eval` still refuse every relative target, and stay refused after a later `cd "$VAR"`. Ported from a local mirror.
 
 ## [0.4.0-beta.38] - 2026-10-22
 

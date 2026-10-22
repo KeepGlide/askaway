@@ -1,10 +1,12 @@
-"""Frozen copy of the Bash guard as it stood at commit a312550 (askaway.py: bash_tamper_reason and what it uses).
+"""Frozen copy of a later revision of the Bash guard: the guard of 0.4.0-beta.36
+(askaway.py at a312550) plus the relaxations that stop it denying unrelated commands (bash_tamper_reason and what it uses).
 
-Why it exists: the guard was rewritten during gauntlet 6 and every review found inputs the old guard denied and the
-new scanner let through. askaway.bash_tamper_reason denies when the current scanner denies OR this copy denies, so
-the guard never denies less than a312550 did. Do not edit it. Remove it, with its call in askaway.py and its test,
-once the current scanner has a clean review. The only change from a312550 is SCRIPT_PATH, which names askaway.py
-instead of this file, so the inbox-call exemption still matches."""
+Why it exists: the guard was rewritten during gauntlet 6 and every review found inputs the installed guard denied and
+the new scanner let through. askaway.bash_tamper_reason denies when the current scanner denies OR this copy denies, so
+the guard never denies less than the installed mirror did, and never denies more than it, which is why the
+relaxations (STATE_HINT, PROSE_COMMANDS) are part of it. Do not edit it. Remove it, with its call in askaway.py and its
+test, once the current scanner has a clean review. The only change from that source is SCRIPT_PATH, which names
+askaway.py instead of this file, so the inbox-call exemption still matches."""
 import os
 import re
 from collections.abc import Mapping, Sequence
@@ -154,6 +156,12 @@ GLOB: Final = re.compile(r"[*?\[]")
 
 
 STATE_MENTION: Final = re.compile(r"state[\W_]*askaway|ASKAWAY_HOME")
+
+
+STATE_HINT: Final = re.compile(r"askaway|ASKAWAY_HOME|\bstate\b", re.IGNORECASE)  # a command with none of these cannot aim at the state folder
+
+
+PROSE_COMMANDS: Final = frozenset({"git", "gh"})  # a heredoc under these is a commit, PR or issue text, never code
 
 
 WRITE_CODE: Final = re.compile(r"open\(.*?(?:['\"][wax+]|>)|write|unlink|remove|rename|os\.replace\(|rmtree|copy|move"
@@ -485,8 +493,12 @@ class _ShellScan:
     """One Bash command read as the shell runs it: the working directory, whether the guard knows it, and the
     ASKAWAY_HOME it exports."""
 
-    def __init__(self, cwd: str, exported: Mapping[str, str], roots: tuple[str, ...], cwd_known: bool = True) -> None:
+    def __init__(self, cwd: str, exported: Mapping[str, str], roots: tuple[str, ...], cwd_known: bool = True,
+                 *, hinted: bool | None = None, prose: bool = False, strict: bool = False) -> None:
         self.cwd = cwd
+        self.hinted = hinted  # does the whole command mention the state folder? set by the first text() call
+        self.strict = strict  # does the unknown directory come from more than a cd to a variable?
+        self.prose = prose  # is this text inside a git or gh command, whose heredoc is message text?
         self.cwd_known = cwd_known  # False once a directory change the guard cannot follow has run
         self.exported = dict(exported)
         self.roots = roots
@@ -495,9 +507,13 @@ class _ShellScan:
         tokens = _shell_tokens(command)
         if tokens is None:
             return _unreadable_reason(command)
-        if "<<" in command and (reason := _code_reason(_heredoc_code(command), sandboxed=False)) is not None:
+        if self.hinted is None:
+            self.hinted = STATE_HINT.search(command) is not None
+        simples = _simple_commands(tokens)
+        prose = self.prose or all(_command_name(_strip_prefix(simple.words)[1]) in PROSE_COMMANDS for simple in simples)
+        if not prose and "<<" in command and (reason := _code_reason(_heredoc_code(command), sandboxed=False)) is not None:
             return reason  # a heredoc body is code too, except an inbox call's JSON body
-        return next((reason for reason in map(self._simple, _simple_commands(tokens)) if reason is not None), None)
+        return next((reason for reason in map(self._simple, simples) if reason is not None), None)
 
     def _simple(self, simple: _Simple) -> str | None:
         env, argv = _strip_prefix(simple.words)
@@ -511,6 +527,7 @@ class _ShellScan:
         reason = self._checks(simple, argv, env, env.get(HOME_VAR, self.exported.get(HOME_VAR, "")))
         if self._directory_untracked(name, argv, env):
             self.cwd_known = False
+            self.strict = True
         if reason is None and name in DIRECTORY_CHANGERS:
             self._change_directory(name, argv)
         return reason
@@ -545,7 +562,9 @@ class _ShellScan:
         A glob reaches every path under the directory before its first wildcard, so that directory is checked."""
         expanded = _expand(text, askaway_home)
         if not self.cwd_known and not os.path.isabs(expanded):
-            return True  # after an untracked directory change, a relative word cannot be placed
+            # A relative word cannot be placed. After a cd to a variable it counts only in a command that names the
+            # state folder; after any other untracked change (pushd, cd -, popd, CDPATH, source, eval) it always counts.
+            return self.strict or bool(self.hinted)
         wildcard = GLOB.search(expanded)
         literal = expanded if wildcard is None else expanded[:expanded.rfind(os.sep, 0, wildcard.start()) + 1]
         path = os.path.realpath(os.path.join(self.cwd, literal))
@@ -556,7 +575,8 @@ class _ShellScan:
         scans = [(self.exported, text) for word in simple.words for text in _substitutions(word)]
         scans += [({**self.exported, **env}, text) for text in _script_texts(argv)]
         for exported, text in scans:
-            reason = _ShellScan(self.cwd, exported, self.roots, self.cwd_known).text(text)
+            reason = _ShellScan(self.cwd, exported, self.roots, self.cwd_known, hinted=self.hinted, strict=self.strict,
+                                prose=self.prose or _command_name(argv) in PROSE_COMMANDS).text(text)
             if reason is not None:
                 return reason
         return None
@@ -565,8 +585,15 @@ class _ShellScan:
         """Follow the directory a cd or pushd leaves; any change the guard cannot resolve leaves it unknown."""
         target = self._directory_after(name, argv)
         self.cwd_known = target is not None
+        self.strict = target is None and not self._variable_operand(argv)
         if target is not None:
             self.cwd = target
+
+    @staticmethod
+    def _variable_operand(argv: Sequence[str]) -> bool:
+        """Is the directory change a cd or pushd to one operand that holds a variable?"""
+        operands = [_unquote(word) for word in argv[1:] if not DIRECTORY_OPTION.fullmatch(_unquote(word))]
+        return len(operands) == 1 and "$" in operands[0]
 
     def _directory_after(self, name: str, argv: Sequence[str]) -> str | None:
         """The directory a cd or pushd leaves, or None: popd, a swap, cd -, a variable, a glob, or more operands."""
