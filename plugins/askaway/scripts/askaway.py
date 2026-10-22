@@ -160,7 +160,19 @@ MIN_SENTENCES: Final = 2
 SENTENCE_END: Final = re.compile(r"(?<!\be\.g)(?<!\bi\.e)(?<!\betc)(?<!\bvs)(?<!\bcf)[.!?]+(?:\s|$)", re.IGNORECASE)
 ONE_LINE_TEXT: Final = frozenset({"question", "title", "label", "tradeoff"})  # shown on one line: no line breaks kept
 BODY_CONTROL: Final = re.compile(r"(?!\n)[\x00-\x1f\x7f-\x9f]")  # a body keeps its line breaks; other controls go
-RECOMMENDED_MARKER: Final = re.compile(r"\s*\((?:recommended|recomendad[oa])\)\s*$", re.IGNORECASE)
+RECOMMENDED_WORD: Final = r"(?:recommended|recomendad[oa])"
+# The recommended marks an agent may write at the end of an option label, one or more, in English or Portuguese and in
+# any case: in brackets ("(Recommended)", "[Recomendada]", "{recomendado}") or after a dash or a colon ("Keep - Recommended",
+# "Keep — recomendada", "Keep: Recomendado"); a hyphen counts only after a space, so "non-recommended" stays a word. At
+# the start of a label the same marks go too: in brackets ("(Recommended) Keep") or the word before a colon, a dash or a
+# hyphen that a space follows ("Recommended: Keep", "Recomendada — Manter"); a leading word without one stays
+# ("Recommended settings"). The same marks the pane strips (RECOMMENDED_MARKERS at the end and
+# LEADING_RECOMMENDED_MARKERS at the start, hooks/model.ts); \s also takes a no-break space.
+_RECOMMENDED_BRACKETED: Final = r"[(\[{]\s*" + RECOMMENDED_WORD + r"\s*[)\]}]"
+RECOMMENDED_MARKER: Final = re.compile(
+    r"^(?:\s*(?:" + _RECOMMENDED_BRACKETED + r"|" + RECOMMENDED_WORD + r"\s*(?:[–—:]|-(?=\s))))+\s*"
+    r"|(?:\s*(?:" + _RECOMMENDED_BRACKETED + r"|(?:(?<=\s)-|[–—:])\s*" + RECOMMENDED_WORD + r"))+\s*$",
+    re.IGNORECASE)
 SESSION_TITLE_MAX: Final = 80
 SESSION_PATTERN: Final = re.compile(r"[A-Za-z0-9_-]{1,128}")
 DESKTOP_SESSIONS_ROOT: Final = (  # Claude Desktop keeps its data in ~/Library/Application Support on macOS
@@ -653,9 +665,17 @@ def _clean_text(name: str, raw: object) -> str:
     """The text without format characters; control characters become spaces, and a body keeps its line breaks."""
     if not isinstance(raw, str):
         return ""
+    if name == "label":
+        return unmarked_label(raw)
     if name in ONE_LINE_TEXT:
         return _one_line(raw)
     return BODY_CONTROL.sub(" ", _without_format_chars(raw)).strip()
+
+
+def unmarked_label(raw: str) -> str:
+    """An option label on one line with the recommended marks at its end taken off: the pane draws its own mark for the
+    recommended option, so a mark the agent wrote would show twice (own-1). Every label the CLI stores goes through it."""
+    return RECOMMENDED_MARKER.sub("", _one_line(raw)).strip()
 
 
 def _read_text(name: str, raw: object, limit: int) -> tuple[str | None, str | None]:
@@ -1823,7 +1843,7 @@ def _csv_cells(row: Mapping[str, Any]) -> list[str]:
     question, answer = row["question"], row["answer"] or {}
     key = answer.get("key")
     cells = [_utc_text(question.get("ts")), str(question.get("project") or ""), str(question.get("title") or ""),
-             str(question.get("recommended") or ""), str(key or ""), option_label(question, key) or "",
+             str(question.get("recommended") or ""), str(key or ""), unmarked_label(option_label(question, key) or ""),
              answer_who(answer) or "", str(answer.get("by") or ""), _utc_text(answer.get("ts")),
              "true" if row["status"] == "delivered" else "false", str(row["id"])]
     return [_csv_safe(cell) for cell in cells]
@@ -2007,7 +2027,7 @@ def _askuser_options(question: Mapping[str, Any]) -> list[Mapping[str, Any]]:
 def _recommended_key(keyed: Sequence[Mapping[str, Any]], labels: Sequence[str]) -> str:
     """The option whose label carried the recommended marker, else the first."""
     marked = [option["key"] for option, label in zip(keyed, labels, strict=True)
-              if RECOMMENDED_MARKER.search(label)]
+              if RECOMMENDED_MARKER.search(_one_line(label))]
     return marked[0] if marked else keyed[0]["key"]
 
 
@@ -2015,7 +2035,7 @@ def askuser_skeleton(question: Mapping[str, Any]) -> dict[str, Any]:
     """The AskUserQuestion as a question to file: the explanation fields are left for the agent."""
     options = _askuser_options(question)
     labels = [str(option.get("label") or "") for option in options]
-    keyed = [{"key": letter, "label": RECOMMENDED_MARKER.sub("", label).strip() or None,
+    keyed = [{"key": letter, "label": unmarked_label(label) or None,
               "tradeoff": option.get("description"), "fit": None,
               **{name: "" for name in REQUIRED_OPTION_TEXT}}
              for letter, label, option in zip(string.ascii_uppercase, labels, options, strict=False)]

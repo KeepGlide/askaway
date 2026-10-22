@@ -4819,7 +4819,7 @@ def test_ask_turns_control_characters_into_spaces_and_keeps_only_body_line_break
     filed = stored(home, "q", out["id"])
     assert filed["question"] == "Which cache? ]52;c;ZWNobw== should it use"
     assert filed["what"] == "Redis is a cache server.\nIt runs next to the API."
-    assert filed["options"][0]["label"] == "Ship now A · Fake row (recommended)"
+    assert filed["options"][0]["label"] == "Ship now A · Fake row"  # on one line, and the trailing mark taken off (own-1)
 
 
 # ---- gauntlet 4, package A2: state files, guard, prune, export, CLI errors (M1, M2, M6b, M10, M11, M19, M29, M30, M31, M45) ----
@@ -5778,6 +5778,113 @@ def test_bash_guard_still_reads_the_substitutions_of_an_unquoted_git_heredoc():
 ])
 def test_bash_guard_keeps_refusing_a_relative_write_once_the_directory_is_lost_by_more_than_a_cd_to_a_variable(command):
     assert askaway.bash_tamper_reason(command) == askaway.STATE_DENIED
+
+
+# ---- gauntlet 7, P1b: recommended marks (own-1) -------------------------------------------------------------------
+
+MARKED_LABELS = ["Redis (Recommended)", "Redis (recommended)", "Redis [RECOMENDADA]", "Redis {recomendado}",
+                 "Redis ( Recomendada )", "Redis - Recommended", "Redis — recomendada", "Redis – Recommended",
+                 "Redis: Recomendado", "Redis:recommended", "Redis (Recommended)", "Redis (Recommended)\n",
+                 "Redis (Recommended) (Recomendada)", "Redis [Recommended] - recomendado"]
+
+
+@pytest.mark.parametrize("label", MARKED_LABELS)
+def test_ask_takes_the_recommended_marks_off_every_label_in_english_and_portuguese(label, home, capsys):
+    entry = base_entry()
+    entry["options"][0]["label"] = label
+    entry["options"][1]["label"] = "In-process (Recomendada)"  # a mark on an option that is not the recommended one too
+    filed = stored(home, "q", cli(capsys, "ask", "--json", json.dumps(entry))["id"])
+    assert [option["label"] for option in filed["options"]] == ["Redis", "In-process"]
+
+
+@pytest.mark.parametrize("label", ["Keep non-recommended", "Recommended cache", "Keep-recommended", "Redis (fast)"])
+def test_ask_keeps_a_label_whose_mark_is_part_of_the_words(label, home, capsys):
+    entry = base_entry()
+    entry["options"][0]["label"] = label
+    filed = stored(home, "q", cli(capsys, "ask", "--json", json.dumps(entry))["id"])
+    assert filed["options"][0]["label"] == label
+
+
+LEADING_MARKED_LABELS = ["(Recommended) Redis", "[Recomendada] Redis", "{recommended} Redis", "( RECOMENDADO ) Redis",
+                         "Recommended: Redis", "Recomendada — Redis", "Recommended - Redis", "recomendado – Redis",
+                         "Recommended:Redis", "Recommended\xa0- Redis", "\xa0(Recommended)\xa0Redis",
+                         "(Recommended) [Recomendada] Redis", "Recommended: (Recomendado) Redis",
+                         "(Recommended) Redis (Recomendada)"]
+
+
+@pytest.mark.parametrize("label", LEADING_MARKED_LABELS)
+def test_ask_takes_the_recommended_marks_off_the_start_of_a_label_in_english_and_portuguese(label, home, capsys):
+    entry = base_entry()
+    entry["options"][0]["label"] = label
+    filed = stored(home, "q", cli(capsys, "ask", "--json", json.dumps(entry))["id"])
+    assert filed["options"][0]["label"] == "Redis"
+
+
+@pytest.mark.parametrize("label", ["Recommended settings", "Recomendada para produção", "Recommended-settings",
+                                   "Recommendedness: high", "Recomendadas: duas"])
+def test_ask_keeps_a_leading_word_without_a_bracket_or_a_delimiter(label, home, capsys):
+    entry = base_entry()
+    entry["options"][0]["label"] = label
+    filed = stored(home, "q", cli(capsys, "ask", "--json", json.dumps(entry))["id"])
+    assert filed["options"][0]["label"] == label
+
+
+def test_the_askuser_skeleton_reads_a_leading_mark_as_the_recommended_option(capsys, monkeypatch):
+    payload = askuser_payload("bypassPermissions")
+    payload["tool_input"]["questions"][0]["options"][1]["label"] = "[Recomendada] Redis"
+    reason = hook_json(capsys, monkeypatch, "ask-guard", payload)["hookSpecificOutput"]["permissionDecisionReason"]
+    skeleton = json.loads(shlex_split_json(reason.splitlines()[1]))
+    assert [option["label"] for option in skeleton["options"]] == ["In-process", "Redis"]
+    assert skeleton["recommended"] == "B"
+
+
+def test_ask_from_stdin_takes_the_recommended_marks_off_too(home, capsys, monkeypatch):
+    entry = base_entry()
+    entry["options"][0]["label"] = "Redis (Recomendado) (Recommended)"
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(entry)))
+    filed = stored(home, "q", cli(capsys, "ask")["id"])
+    assert filed["options"][0]["label"] == "Redis"
+
+
+def test_ask_takes_the_recommended_marks_off_translated_labels(home, capsys):
+    translations = {"pt-BR": {"options": {"A": {"label": "Redis (Recomendada)"}, "B": {"label": "Na memória: recomendado"}}},
+                    "en": {"options": {"A": {"label": "Redis [Recommended]"}}}}
+    filed = stored(home, "q", cli(capsys, "ask", "--json", json.dumps(base_entry(translations=translations)))["id"])
+    assert filed["translations"]["pt-BR"]["options"] == {"A": {"label": "Redis"}, "B": {"label": "Na memória"}}
+    assert filed["translations"]["en"]["options"] == {"A": {"label": "Redis"}}
+
+
+def test_a_label_that_is_only_a_mark_is_refiled_as_missing(home, capsys):
+    entry = base_entry()
+    entry["options"][0]["label"] = "(Recommended)"
+    out = cli(capsys, "ask", "--json", json.dumps(entry))
+    assert out["action"] == "refile" and "option A: label" in out["error"]
+
+
+def test_the_askuser_skeleton_takes_every_mark_form_off_and_keeps_the_marked_option_recommended(capsys, monkeypatch):
+    payload = askuser_payload("bypassPermissions")
+    payload["tool_input"]["questions"][0]["options"][1]["label"] = "Redis - Recomendada (Recommended)"
+    reason = hook_json(capsys, monkeypatch, "ask-guard", payload)["hookSpecificOutput"]["permissionDecisionReason"]
+    skeleton = json.loads(shlex_split_json(reason.splitlines()[1]))
+    assert [option["label"] for option in skeleton["options"]] == ["In-process", "Redis"]
+    assert skeleton["recommended"] == "B"
+
+
+def shlex_split_json(command_line: str) -> str:
+    """The JSON argument of one skeleton command line of the ask-guard reason."""
+    import shlex
+    return shlex.split(command_line)[-1]
+
+
+def test_the_csv_export_draws_a_stored_marked_label_without_its_mark(home, capsys, monkeypatch):
+    item = ask_item(capsys)
+    entry = stored(home, "q", item)
+    entry["options"][1]["label"] = "In-process (Recomendada)"  # a question filed before the marks were taken off
+    askaway.write_atomic(home / "q" / f"{item}.json", entry)
+    cli(capsys, "answer", item, "B", "--by", "panel")
+    assert askaway.main(["export", "--format", "csv"]) == 0
+    row = next(csv.DictReader(io.StringIO(capsys.readouterr().out)))
+    assert row["label"] == "In-process"
 
 
 # ---- gauntlet 7, P1b: CLI and delivery -------------------------------------------------------------------------------
