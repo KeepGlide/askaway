@@ -5743,11 +5743,31 @@ def test_the_neighbours_of_the_over_denies_stay_denied_by_the_scanner_alone_too(
     assert bash_denial(capsys, monkeypatch, command) == reason
 
 
-# A shell that reads its script from a heredoc runs the body: the frozen copy reads it as commands and denies these.
+# A shell that reads its script from a heredoc or here-string runs the text: the frozen copy reads most of these as
+# commands; the scanner alone reads the body and the here-string words of any line that runs a shell (issue #10).
 SHELL_STDIN_SCRIPTS = {
     "answer-quoted": (f"bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
     "answer-unquoted": (f"bash <<EOF\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
     "state-quoted": ("bash <<'EOF'\ncd ~/.claude/state\nrm -r askaway\nEOF", STATE),
+    "answer-bash-s": (f"bash -s <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-bash-dash": (f"bash - <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-bash-dev-stdin": (f"bash /dev/stdin <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-sh": (f"sh <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-zsh": (f"zsh <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-env-bash": (f"env bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-command-bash": (f"command bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-exec-bash": (f"exec bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-cat-pipe-bash": (f"cat <<'EOF' | bash\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "state-cat-pipe-sh": ("cat <<'EOF' | sh\ncd ~/.claude/state\nrm -r askaway\nEOF", STATE),
+    "answer-here-string": (f"bash <<< 'python3 {SCRIPT} answer q-1-abcdef A'", ANSWER),
+    "away-quoted": (f"bash <<'EOF'\npython3 {SCRIPT} away on\nEOF", askaway.AWAY_DENIED),
+    # a $'...' or $"..." here-string word, read as bash runs it, C escapes decoded
+    "answer-here-string-ansi-c": (f"bash <<< $'python3 {SCRIPT} answer q-1-abcdef A'", ANSWER),
+    "answer-here-string-ansi-c-escaped": (f"bash <<< $'python3 {SCRIPT} \\x61nswer q-1-abcdef A'", ANSWER),
+    "answer-here-string-locale": (f'bash <<< $"python3 {SCRIPT} answer q-1-abcdef A"', ANSWER),
+    # a -c script may start a shell that reads stdin
+    "answer-sh-c-bash-here-string": (f"sh -c 'bash' <<< 'python3 {SCRIPT} answer q-1-abcdef A'", ANSWER),
+    "answer-bash-c-bash-heredoc": (f"bash -c 'bash' <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
 }
 
 
@@ -5756,11 +5776,32 @@ def test_a_shell_reading_its_script_from_a_heredoc_is_denied(command, reason, ca
     assert bash_denial(capsys, monkeypatch, command) == reason
 
 
-@pytest.mark.xfail(strict=True, reason="scanner under-deny hidden by the frozen copy: issue #10")
 @pytest.mark.usefixtures("scanner_only")
 @pytest.mark.parametrize(("command", "reason"), SHELL_STDIN_SCRIPTS.values(), ids=SHELL_STDIN_SCRIPTS.keys())
 def test_the_scanner_alone_denies_a_shell_reading_its_script_from_a_heredoc(command, reason, capsys, monkeypatch):
     assert bash_denial(capsys, monkeypatch, command) == reason
+
+
+# A shell that runs harmless text from a heredoc stays allowed by the scanner and by the full guard.
+SHELL_STDIN_CONTROLS = {
+    "bash-echo-body": "bash <<'EOF'\necho hello\nEOF",
+    "bash-script-file-body": "bash script.sh <<'EOF'\ndata\nEOF",
+    "bash-c-echo-body": "bash -c 'cat' <<'EOF'\ndata\nEOF",
+    "bash-ansi-c-here-string": "bash <<< $'echo hi\\n'",
+}
+
+
+@pytest.mark.parametrize("command", SHELL_STDIN_CONTROLS.values(), ids=SHELL_STDIN_CONTROLS.keys())
+def test_a_shell_running_harmless_heredoc_text_is_allowed(command, request, capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+    request.getfixturevalue("scanner_only")
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+@pytest.mark.usefixtures("scanner_only")  # no shell reads this body, so it stays data for the scanner
+def test_a_heredoc_body_no_shell_reads_stays_data(capsys, monkeypatch):
+    command = "cat > notes.md <<'EOF'\nrun python3 askaway.py answer to reply\nEOF"
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
 
 
 # The full guard's denial of this command is pinned by test_bash_cannot_answer_an_inbox_question_even_with_no_pause_pending.
