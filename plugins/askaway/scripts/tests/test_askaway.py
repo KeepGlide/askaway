@@ -5791,6 +5791,22 @@ SHELL_STDIN_SCRIPTS = {
     "answer-env-S-bash": (f"env -S 'bash -s' <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
     "answer-env-split-string-bash": (
         f"env --split-string='bash -s' <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    # a command word that may expand may be a shell (issue #12)
+    **{f"answer-expanded-{key}": (f"{word} <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER)
+       for key, word in (("shell-var", "$SHELL"), ("shell-var-quoted", '"$SHELL"'), ("shell-brace", "${SHELL}"),
+                         ("glob", "ba*sh"), ("glob-class", "ba[s]h"), ("glob-question", "ba?h"),
+                         ("substitution", "$(which bash)"), ("backquote", "`which bash`"),
+                         ("path-glob", "/bin/*sh"), ("sudo-var", "sudo $SHELL"), ("wrapper-var", "$SUDO bash"))},
+    "answer-expanded-here-string": (f"$SHELL <<< 'python3 {SCRIPT} answer q-1-abcdef A'", ANSWER),
+    **{f"answer-expanded-{key}": (f"{word} <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER)
+       for key, word in (("ansi-c", "$'bash'"), ("locale", '$"bash"'), ("assigned", "x=bash; $x"),
+                         ("empty-before", "$EMPTY bash"), ("sudo-dashdash", "sudo -- $SHELL"))},
+    # an fd number before a redirection is split off by the tokens and is not the command word
+    "answer-fd-redirect-shell-var": (f"2>/dev/null $SHELL <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-fd-redirect-here-string": (f"2>/dev/null \"$SHELL\" <<< 'python3 {SCRIPT} answer q-1-abcdef A'", ANSWER),
+    "answer-fd-redirect-bash": (f"2>/dev/null bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-fd-dup-sudo-bash": (f"2>&1 sudo bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "state-expanded-glob": ("ba*sh <<'EOF'\ncd ~/.claude/state\nrm -r askaway\nEOF", STATE),
 }
 
 
@@ -5817,6 +5833,9 @@ SHELL_STDIN_CONTROLS = {
     "sudo-u-psql-c": "sudo -u postgres psql -c 'select 1'",
     "sudo-i-command": "sudo -i whoami",
     "usr-bin-env-python-script": "/usr/bin/env python3 script.py",
+    "expanded-editor-prose-body": "\"$EDITOR\" <<'EOF'\nsome notes\nEOF",
+    "expanded-shell-echo-body": "$SHELL <<'EOF'\necho hello\nEOF",
+    "quoted-glob-word-body": "'ba*sh' <<'EOF'\npython3 askaway.py status\nEOF",
 }
 
 
@@ -5827,7 +5846,9 @@ SHELL_STDIN_CONTROLS = {
     ("sudo -u root rm -r ~/.claude/state/askaway", STATE),
     ("/usr/bin/env rm -r ~/.claude/state/askaway", STATE),
     (f"sudo -u root python3 {SCRIPT} answer q-1-abcdef A", ANSWER),
-], ids=["sudo-rm", "sudo-u-rm", "usr-bin-env-rm", "sudo-u-answer"])
+    ("2>/dev/null rm -r ~/.claude/state/askaway", STATE),
+    (f"2>/dev/null python3 {SCRIPT} answer q-1-abcdef A", ANSWER),
+], ids=["sudo-rm", "sudo-u-rm", "usr-bin-env-rm", "sudo-u-answer", "fd-redirect-rm", "fd-redirect-answer"])
 def test_the_scanner_alone_reads_the_command_after_a_wrapper(command, reason, capsys, monkeypatch):
     assert bash_denial(capsys, monkeypatch, command) == reason
 
