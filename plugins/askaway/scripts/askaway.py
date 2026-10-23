@@ -90,6 +90,7 @@ if __name__ == "__main__":
     _exit_if_idle()
 
 import argparse
+import codecs
 import contextlib
 import csv
 import fcntl
@@ -2261,9 +2262,10 @@ def _body_lines(lines: Sequence[str], quoted: bool) -> list[tuple[str, int]]:
     return joined
 
 
-def _heredoc_body(text: str, pos: int, opened: tuple[str, bool, bool]) -> tuple[list[str], int]:
-    """(the units the body runs, the index of its terminator line's end) for the heredoc (word, quoted, tab-stripped)
-    whose body starts at pos. A quoted delimiter makes the body data: _heredoc_code reads it when an interpreter runs it."""
+def _heredoc_body(text: str, pos: int, opened: tuple[str, bool, bool]) -> tuple[str, int]:
+    """(the body text as bash reads it, the index of its terminator line's end) for the heredoc (word, quoted,
+    tab-stripped) whose body starts at pos. A quoted delimiter makes the body data: _heredoc_code reads it when an
+    interpreter runs it, and a shell that reads its script from stdin runs it as commands (_run_simple_commands)."""
     word, quoted, dashed = opened
     lines = text[pos:].split("\n")
     body_lines = _body_lines(lines, quoted)
@@ -2271,12 +2273,13 @@ def _heredoc_body(text: str, pos: int, opened: tuple[str, bool, bool]) -> tuple[
                  if (line.lstrip("\t") if dashed else line) == word), None)
     body = [line for line, _ in (body_lines if stop is None else body_lines[:stop])]
     end = len(text) if stop is None else pos + len("\n".join(lines[:body_lines[stop][1] + 1]))
-    return ([] if quoted else _heredoc_units("\n".join(body))), end
+    return "\n".join(body), end
 
 
-def _shell_tokens(text: str) -> list[tuple[str, str]] | None:
+def _shell_tokens(text: str, bodies: list[str] | None = None) -> list[tuple[str, str]] | None:
     """(kind, value) pairs, kind "op", "word" or "comment" (its text after the #); None when a quote or a bracket is left
-    open. A heredoc body is no command line: only the units an unquoted body runs come out, each after a newline op."""
+    open. A heredoc body is no command line: only the units an unquoted body runs come out, each after a newline op.
+    The text of each body is appended to bodies, when given."""
     found: list[tuple[str, str]] = []
     pending: list[tuple[str, bool, bool]] = []  # heredocs opened on this line: (delimiter, quoted, tab-stripped)
     heredoc: str | None = None  # the <<, or <<-, whose delimiter word is next
@@ -2293,7 +2296,10 @@ def _shell_tokens(text: str) -> list[tuple[str, str]] | None:
             heredoc = match[0] if match[0] in ("<<", "<<-") and not text.startswith("<", pos) else None  # <<< is no heredoc
             if match[0] == "\n":
                 for opened in pending:
-                    units, pos = _heredoc_body(text, pos, opened)
+                    body, pos = _heredoc_body(text, pos, opened)
+                    if bodies is not None:
+                        bodies.append(body)
+                    units = [] if opened[1] else _heredoc_units(body)
                     found.extend(token for unit in units for token in (("op", "\n"), ("word", unit)))
                 pending = []
             continue
@@ -2307,6 +2313,24 @@ def _shell_tokens(text: str) -> list[tuple[str, str]] | None:
             pending.append((delimiter, delimiter != raw, heredoc == "<<-"))
             heredoc = None
         pos = end
+
+
+def _here_string_texts(raw: str) -> list[str]:
+    """The text a here-string's word feeds: a $'...' or $"..." word loses its $ and quotes, and a $'...' word is also
+    read with its C escapes decoded, as bash runs it, so $'\\x61nswer' is read as answer too."""
+    if len(raw) >= 3 and raw[0] == "$" and raw[1] in "'\"" and raw[-1] == raw[1]:
+        inner = raw[2:-1]
+        if raw[1] == "'" and "\\" in inner:
+            return [inner, codecs.decode(inner.encode("latin-1", "backslashreplace"), "unicode_escape", "replace")]
+        return [inner]
+    return [_quoted_text(raw)]
+
+
+def _here_strings(tokens: Sequence[tuple[str, str]]) -> list[str]:
+    """The text of each here-string's word: _shell_tokens reads <<< as << then <, so the word after that pair is it."""
+    return [text for index in range(len(tokens) - 2)
+            if tokens[index] == ("op", "<<") and tokens[index + 1] == ("op", "<") and tokens[index + 2][0] == "word"
+            for text in _here_string_texts(tokens[index + 2][1])]
 
 
 def _joined_lines(command: str) -> str:
@@ -2411,6 +2435,12 @@ def _script_texts(argv: Sequence[str]) -> list[str]:
     if name not in SHELL_NAMES:
         return []
     return next(([args[index + 1]] for index, arg in enumerate(args[:-1]) if SHELL_C_FLAG.fullmatch(arg)), [])
+
+
+def _reads_stdin_script(simple: _Simple) -> bool:
+    """Is this command a shell? With no -c script it reads its script from stdin, and a -c script may start a shell
+    that does (sh -c 'bash'), so a heredoc or here-string on the line may be run."""
+    return _command_name(_strip_prefix(simple.words)[1]) in SHELL_NAMES
 
 
 def _is_askaway_name(name: str) -> bool:
@@ -2715,13 +2745,15 @@ class _ShellScan:
     def text(self, command: str) -> str | None:
         if self.depth > SCAN_DEPTH_LIMIT:
             return TOO_DEEP_DENIED
-        tokens = _shell_tokens(command)
+        bodies: list[str] = []
+        tokens = _shell_tokens(command, bodies)
         if tokens is None:
             reason = _unreadable_reason(command)
             if reason is not None or "\\\n" not in command:
                 return reason  # the denial of the command as written stands; with no continued line, nothing is joined
             command = _joined_lines(command)  # a continued line reads once joined, as bash runs it
-            if (tokens := _shell_tokens(command)) is None:
+            bodies = []
+            if (tokens := _shell_tokens(command, bodies)) is None:
                 return _unreadable_reason(command)
         self.command = command
         if self.hinted is None:
@@ -2730,7 +2762,26 @@ class _ShellScan:
         if not self._prose(simple_commands) and "<<" in command and (
                 reason := _code_reason(_heredoc_code(command), sandboxed=False)) is not None:
             return reason  # a heredoc body is code too, except an inbox call's JSON body and git or gh message text
-        return next((reason for reason in map(self._simple, simple_commands) if reason is not None), None)
+        return self._run_simple_commands(simple_commands, [*bodies, *_here_strings(tokens)])
+
+    def _run_simple_commands(self, simple_commands: Sequence[_Simple], stdin_texts: list[str]) -> str | None:
+        """The first denial among the line's simple commands. A shell that reads its script from stdin runs the line's
+        heredoc bodies and here-strings, scanned once at that shell's place in the line, as the shell runs them."""
+        for simple in simple_commands:
+            if (reason := self._simple(simple)) is not None:
+                return reason
+            if stdin_texts and _reads_stdin_script(simple):
+                if (reason := self._stdin_reason(stdin_texts)) is not None:
+                    return reason
+                stdin_texts = []
+        return None
+
+    def _stdin_reason(self, texts: Sequence[str]) -> str | None:
+        """The first denial among texts a shell reads from its stdin, each scanned as a command line of its own."""
+        for text in texts:
+            if (reason := self._child(self.exported).text(text)) is not None:
+                return reason
+        return None
 
     def _prose(self, simple_commands: Sequence[_Simple]) -> bool:
         """Is a heredoc here commit, PR or issue text? Yes when every command is a git or gh message command (see

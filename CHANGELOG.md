@@ -7,6 +7,9 @@ Commit hashes name the change in `git log`.
 
 ## [Unreleased]
 
+### Fixed
+- The Bash guard's scanner reads a heredoc or a `<<<` here-string that a shell runs as its script. In a command line that runs a shell (`bash`, `sh -s`, `bash /dev/stdin`, `env bash`, `cat <<'EOF' | bash`, and `sh -c 'bash'`, whose `-c` script starts a shell that reads stdin), every heredoc body and here-string of the line is scanned, a `$'...'` here-string also with its C escapes decoded (`$'\x61nswer'`), as a command line of its own, so `bash <<'EOF'` with an `answer` line, an `away on` line, or a `cd` above the state folder and a delete of it is denied by the scanner alone, not only by the frozen copy (issue #10; `_reads_stdin_script`, `_here_strings`, `_stdin_reason`). The rule over-denies on purpose: a body that another command on the same line owns is scanned too.
+
 ### Added
 - `FROZEN_COPY_OVER_DENIES` is the one list of the frozen guard copy's 29 known over-denies, each denied by the copy and allowed by the scanner alone, grouped by root cause, with the dangerous neighbours that the scanner alone must still deny (issues #3 to #7). Older tests that pinned the same commands are folded into it. Three strict `xfail` tests pin a scanner under-deny that the copy hides: a shell that reads its script from a heredoc (issue #10).
 
