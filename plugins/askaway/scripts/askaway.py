@@ -333,6 +333,8 @@ DIRECTORY_OPTION: Final = re.compile(r"-(?:-|[LPe@]+)")  # cd's own options and 
 DIRECTORY_STACK_INDEX: Final = re.compile(r"[+-]\d+")  # pushd's rotation of the stack: the directory it reaches is unknown
 DIRECTORY_WORD: Final = re.compile(r"\b(?:cd|pushd|popd)\b")
 SOURCE_NAMES: Final = frozenset({"source", "."})  # run in this shell, and the scan cannot read the file they run
+STDIN_PATH: Final = re.compile(r"/+(?:dev/stdin|dev/fd/0|proc/(?:self|thread-self|[0-9]+)/fd/0)")  # stdin as a file
+# (normpath keeps two leading slashes, and //dev/stdin is /dev/stdin)
 CDPATH_VAR: Final = "CDPATH"  # cd searches these folders for a relative operand
 SHELL_VAR_NAMES: Final = frozenset({"declare", "typeset", "readonly"})  # set shell variables; only CDPATH matters to cd
 MOVE_TARGET_LONG: Final = re.compile(r"--t[\w-]*(?:=(.*))?", re.DOTALL)  # --target-directory, or a prefix of it
@@ -340,7 +342,7 @@ MOVE_TARGET_SHORT: Final = re.compile(r"-[A-RT-Za-z]*t(.*)", re.DOTALL)  # mv -t
 LINK_COPY: Final = re.compile(r"-[A-Za-z]*[sadlP][A-Za-z]*|--(?:symbolic-link|archive|no-dereference|links)")  # cp, rsync keep links
 SUFFIX_OPTION: Final = re.compile(r"-[A-Za-z]*S|--su[\w-]*")  # mv and ln take the next word as a suffix, which is no operand
 PREFIX_WORDS: Final = frozenset({"!", "{", "do", "elif", "else", "if", "then", "until", "while"})
-WRAPPER_ARG: Final = re.compile(r"-\S*|[0-9.]+[smhd]?")
+WRAPPER_ARG: Final = re.compile(r"-\S*|(?:[0-9]+\.?[0-9]*|\.[0-9]+)[smhd]?")  # a number has a digit: . is a command
 ASSIGNMENT: Final = re.compile(r"([A-Za-z_]\w*)=(.*)", re.DOTALL)
 SED_IN_PLACE: Final = re.compile(r"-[A-Za-z]*i|--in-place")
 SED_SCRIPT_OPTION: Final = re.compile(r"-[A-Za-z]*[ef]|--e|--fi")  # -e, -f, --expression, --file: sed takes its script from an option
@@ -2479,8 +2481,11 @@ def _reads_stdin_script(simple: _Simple) -> bool:
     """Is this command a shell? With no -c script it reads its script from stdin, and a -c script may start a shell
     that does (sh -c 'bash'), so a heredoc or here-string on the line may be run. A sudo -i or -s with no command
     starts the target user's shell, which reads stdin too. A command word that may expand ($SHELL, ba*sh, $(which
-    bash)) may be a shell, so it counts as one."""
+    bash)) may be a shell, so it counts as one. A source or . of /dev/stdin (or /dev/fd/0, /proc/self/fd/0, or a word
+    that may expand) runs stdin in this shell."""
     argv = _strip_prefix(simple.words)[1]
+    if argv and _command_name(argv) in SOURCE_NAMES:
+        return any(_may_expand(word) or STDIN_PATH.fullmatch(os.path.normpath(_unquote(word))) for word in argv[1:])
     if argv:
         return _command_name(argv) in SHELL_NAMES or _may_expand(argv[0])
     words = [_unquote(word) for word in simple.words]
