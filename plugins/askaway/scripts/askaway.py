@@ -307,9 +307,27 @@ DELETE_COMMANDS: Final = frozenset({"rm", "unlink", "shred", "rmdir"})
 TARGET_FOLDER_COMMANDS: Final = frozenset({"cp", "ln", "install"})  # each also writes into the folder -t names
 PYTHON_NAME: Final = re.compile(r"python(?:3(?:\.\d+)?)?")
 CODE_RUNNERS: Final = frozenset({"perl", "ruby", "node", "bun", "deno", "php"})
-SHELL_NAMES: Final = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
+SHELL_NAMES: Final = frozenset({
+    "sh", "bash", "rbash", "zsh", "dash", "ash", "ksh", "ksh93", "mksh", "lksh", "oksh", "pdksh", "yash", "posh",
+    "fish", "csh", "tcsh",
+})
 SHELL_C_FLAG: Final = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
-WRAPPER_NAMES: Final = frozenset({"builtin", "command", "env", "exec", "nice", "nohup", "time", "timeout"})
+WRAPPER_NAMES: Final = frozenset({
+    "builtin", "busybox", "command", "doas", "env", "exec", "nice", "nohup", "sudo", "time", "timeout",
+})
+WRAPPER_VALUE_OPTIONS: Final = {  # a wrapper's options that take the next word as their value, so it is not the command
+    "doas": frozenset({"-C", "-u"}),
+    "env": frozenset({"-C", "-u", "--chdir", "--unset"}),
+    "exec": frozenset({"-a"}),
+    "sudo": frozenset({
+        "-C", "-D", "-g", "-h", "-p", "-R", "-r", "-T", "-t", "-U", "-u", "--chdir", "--chroot", "--close-from",
+        "--command-timeout", "--group", "--host", "--other-user", "--prompt", "--role", "--type", "--user",
+    }),
+    "time": frozenset({"-f", "-o", "--format", "--output"}),
+    "timeout": frozenset({"-k", "-s", "--kill-after", "--signal"}),
+}
+ENV_SPLIT_STRING: Final = re.compile(r"(?:-S|--split-string=?)(.*)", re.DOTALL)  # env -S STRING: more command words
+SUDO_SHELL_OPTION: Final = re.compile(r"-[A-Za-z]*[is][A-Za-z]*|--login|--shell")  # sudo -i or -s with no command
 DIRECTORY_CHANGERS: Final = frozenset({"cd", "pushd", "popd"})
 DIRECTORY_OPTION: Final = re.compile(r"-(?:-|[LPe@]+)")  # cd's own options and the end-of-options "--"; a lone "-" is OLDPWD
 DIRECTORY_STACK_INDEX: Final = re.compile(r"[+-]\d+")  # pushd's rotation of the stack: the directory it reaches is unknown
@@ -2372,11 +2390,31 @@ def _simple_commands(tokens: Sequence[tuple[str, str]]) -> list[_Simple]:
     return commands
 
 
-def _drop_wrapper_args(words: list[str]) -> list[str]:
-    """The options and numbers a wrapper (env, nice, timeout) takes before the command it runs."""
+def _takes_next_word(arg: str, values: frozenset[str]) -> bool:
+    """Does this option word leave its value to the next word? A short cluster does when its first value letter is
+    its last one (sudo -iu root), not when the value follows in the word (sudo -uroot)."""
+    if arg.startswith("--"):
+        return arg in values
+    return next((index == len(arg) - 1 for index, letter in enumerate(arg[1:], 1) if f"-{letter}" in values), False)
+
+
+def _drop_wrapper_args(name: str, words: list[str]) -> list[str]:
+    """The options and numbers a wrapper (env, nice, timeout, sudo) takes before the command it runs, with the value
+    word of an option that takes one (sudo -u root, timeout -s KILL). The string of env -S is split on whitespace into
+    more words, as env splits it (escapes and quotes inside it are not read)."""
+    values = WRAPPER_VALUE_OPTIONS.get(name, frozenset())
     rest = list(words)
-    while rest and WRAPPER_ARG.fullmatch(_unquote(rest[0])):
-        rest.pop(0)
+    while rest:
+        arg = _unquote(rest[0])
+        split = ENV_SPLIT_STRING.fullmatch(arg) if name == "env" else None
+        if split is not None and split[1]:
+            rest = [*split[1].split(), *rest[1:]]
+        elif split is not None:
+            rest = [*(_unquote(rest[1]).split() if len(rest) > 1 else []), *rest[2:]]
+        elif WRAPPER_ARG.fullmatch(arg):
+            del rest[: 2 if _takes_next_word(arg, values) else 1]
+        else:
+            break
     return rest
 
 
@@ -2391,8 +2429,8 @@ def _strip_prefix(words: list[str]) -> tuple[dict[str, str], list[str]]:
             words = words[1:]
         elif head in PREFIX_WORDS:
             words = words[1:]
-        elif head in WRAPPER_NAMES:
-            words = _drop_wrapper_args(words[1:])
+        elif os.path.basename(head) in WRAPPER_NAMES:  # /usr/bin/env too
+            words = _drop_wrapper_args(os.path.basename(head), words[1:])
         else:
             break
     return env, words
@@ -2439,8 +2477,13 @@ def _script_texts(argv: Sequence[str]) -> list[str]:
 
 def _reads_stdin_script(simple: _Simple) -> bool:
     """Is this command a shell? With no -c script it reads its script from stdin, and a -c script may start a shell
-    that does (sh -c 'bash'), so a heredoc or here-string on the line may be run."""
-    return _command_name(_strip_prefix(simple.words)[1]) in SHELL_NAMES
+    that does (sh -c 'bash'), so a heredoc or here-string on the line may be run. A sudo -i or -s with no command
+    starts the target user's shell, which reads stdin too."""
+    argv = _strip_prefix(simple.words)[1]
+    if argv:
+        return _command_name(argv) in SHELL_NAMES
+    words = [_unquote(word) for word in simple.words]
+    return any(os.path.basename(word) == "sudo" for word in words) and any(map(SUDO_SHELL_OPTION.fullmatch, words))
 
 
 def _is_askaway_name(name: str) -> bool:

@@ -5768,6 +5768,29 @@ SHELL_STDIN_SCRIPTS = {
     # a -c script may start a shell that reads stdin
     "answer-sh-c-bash-here-string": (f"sh -c 'bash' <<< 'python3 {SCRIPT} answer q-1-abcdef A'", ANSWER),
     "answer-bash-c-bash-heredoc": (f"bash -c 'bash' <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    # other shells, a wrapper by its path, and wrappers whose options take a value (issue #11)
+    **{f"answer-{shell}": (f"{shell} <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER)
+       for shell in ("fish", "ash", "mksh", "rbash", "csh", "tcsh", "yash")},
+    "answer-busybox-sh": (f"busybox sh <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-usr-bin-env-bash": (f"/usr/bin/env bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-sudo-bash": (f"sudo bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-sudo-u-bash": (f"sudo -u root -E bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-usr-bin-sudo-bash": (f"/usr/bin/sudo bash <<< 'python3 {SCRIPT} answer q-1-abcdef A'", ANSWER),
+    "answer-doas-u-sh": (f"doas -u root sh <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-timeout-s-bash": (f"timeout -s KILL 5 bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-env-u-bash": (f"env -u FOO bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "state-sudo-sh": ("sudo sh <<'EOF'\ncd ~/.claude/state\nrm -r askaway\nEOF", STATE),
+    # sudo -i or -s with no command runs a shell; value options in a cluster, attached, or of exec, time and env -S
+    **{f"answer-sudo{option.replace(' ', '')}": (
+        f"sudo {option} <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER)
+       for option in ("-i", "-s", "-E -s", "-iu root", "--login", "--shell")},
+    "answer-sudo-u-attached-bash": (f"sudo -uroot bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-exec-a-bash": (f"exec -a name bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-time-f-bash": (f"time -f '%e' bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-time-o-bash": (f"time -o /dev/null bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-env-S-bash": (f"env -S 'bash -s' <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-env-split-string-bash": (
+        f"env --split-string='bash -s' <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
 }
 
 
@@ -5788,7 +5811,31 @@ SHELL_STDIN_CONTROLS = {
     "bash-script-file-body": "bash script.sh <<'EOF'\ndata\nEOF",
     "bash-c-echo-body": "bash -c 'cat' <<'EOF'\ndata\nEOF",
     "bash-ansi-c-here-string": "bash <<< $'echo hi\\n'",
+    "sudo-u-bash-echo-body": "sudo -u root bash <<'EOF'\necho hello\nEOF",
+    "usr-bin-env-fish-echo-body": "/usr/bin/env fish <<'EOF'\necho hello\nEOF",
+    "busybox-sh-script-file": "busybox sh script.sh",
+    "sudo-u-psql-c": "sudo -u postgres psql -c 'select 1'",
+    "sudo-i-command": "sudo -i whoami",
+    "usr-bin-env-python-script": "/usr/bin/env python3 script.py",
 }
+
+
+# A wrapper's prefix (sudo, sudo -u USER, /usr/bin/env) still leaves the command it runs to the other rules.
+@pytest.mark.usefixtures("scanner_only")
+@pytest.mark.parametrize(("command", "reason"), [
+    ("sudo rm -r ~/.claude/state/askaway", STATE),
+    ("sudo -u root rm -r ~/.claude/state/askaway", STATE),
+    ("/usr/bin/env rm -r ~/.claude/state/askaway", STATE),
+    (f"sudo -u root python3 {SCRIPT} answer q-1-abcdef A", ANSWER),
+], ids=["sudo-rm", "sudo-u-rm", "usr-bin-env-rm", "sudo-u-answer"])
+def test_the_scanner_alone_reads_the_command_after_a_wrapper(command, reason, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == reason
+
+
+@pytest.mark.usefixtures("scanner_only")  # git reads the body as message text, as without the sudo
+def test_a_sudo_git_message_heredoc_stays_prose(capsys, monkeypatch):
+    command = f"sudo git commit -F - <<'EOF'\nfix: python3 {SCRIPT} answer q-1-abcdef A\nEOF"
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
 
 
 @pytest.mark.parametrize("command", SHELL_STDIN_CONTROLS.values(), ids=SHELL_STDIN_CONTROLS.keys())
