@@ -2427,8 +2427,8 @@ def _strip_prefix(words: list[str]) -> tuple[dict[str, str], list[str]]:
         if assignment is not None:
             env[assignment[1]] = assignment[2]
             words = words[1:]
-        elif head in PREFIX_WORDS:
-            words = words[1:]
+        elif head in PREFIX_WORDS or words[0].isdigit():  # a digit word is the fd of a redirection the tokens split off
+            words = words[1:]  # (2>/dev/null bash): no command is named by digits alone, so it is read as that fd
         elif os.path.basename(head) in WRAPPER_NAMES:  # /usr/bin/env too
             words = _drop_wrapper_args(os.path.basename(head), words[1:])
         else:
@@ -2478,10 +2478,11 @@ def _script_texts(argv: Sequence[str]) -> list[str]:
 def _reads_stdin_script(simple: _Simple) -> bool:
     """Is this command a shell? With no -c script it reads its script from stdin, and a -c script may start a shell
     that does (sh -c 'bash'), so a heredoc or here-string on the line may be run. A sudo -i or -s with no command
-    starts the target user's shell, which reads stdin too."""
+    starts the target user's shell, which reads stdin too. A command word that may expand ($SHELL, ba*sh, $(which
+    bash)) may be a shell, so it counts as one."""
     argv = _strip_prefix(simple.words)[1]
     if argv:
-        return _command_name(argv) in SHELL_NAMES
+        return _command_name(argv) in SHELL_NAMES or _may_expand(argv[0])
     words = [_unquote(word) for word in simple.words]
     return any(os.path.basename(word) == "sudo" for word in words) and any(map(SUDO_SHELL_OPTION.fullmatch, words))
 
