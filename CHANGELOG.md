@@ -13,6 +13,7 @@ Commit hashes name the change in `git log`.
 ### Changed
 - SPEC.md (Backstop) defines the clean review that retires the frozen copy: a review round in which no critic finds a scanner under-deny, and a differential run of the copy and the scanner over the commands the tests run, in which every command the copy denies and the scanner allows is in `FROZEN_COPY_OVER_DENIES`. It lists the removal steps, and keeps the copy while a strict `xfail` under-deny is left (issue #2).
 - The README pair's Known issues links the milestones that track the guard's over-denies and the hidden under-deny.
+- `docs/WAVES.md` summarizes the waves (milestones W1 to W3) and is updated when a wave closes.
 
 ## [0.4.0-beta.42] - 2026-10-22
 
