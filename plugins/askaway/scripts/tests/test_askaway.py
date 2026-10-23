@@ -3071,12 +3071,6 @@ def test_an_unreadable_command_naming_a_sandbox_home_is_denied_as_the_state_fold
     assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
 
 
-@pytest.mark.usefixtures("scanner_only")  # the frozen backstop denies this one: a known over-deny, see SPEC.md
-def test_a_comment_with_an_apostrophe_is_not_a_quote_so_the_sandboxed_answer_is_read(capsys, monkeypatch):
-    command = f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} answer q-1-abcdef A # it's"
-    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
-
-
 @pytest.mark.parametrize("command", [
     "cd ~/.claude/state && rm -r askaway # it's",
     "cd ~/.claude/state && rm -r askaway 'it",
@@ -3163,9 +3157,8 @@ def test_a_scratch_folder_made_by_mkdir_or_a_plain_copy_is_still_a_sandbox_home(
 
 @pytest.mark.parametrize("command", [
     "export CDPATH=/opt; cd /tmp/askaway-w; touch a; touch b",
-    "export CDPATH=/opt; touch a; touch b",
 ])
-@pytest.mark.usefixtures("scanner_only")  # the frozen backstop denies these: a known over-deny, see SPEC.md
+@pytest.mark.usefixtures("scanner_only")  # the frozen copy allows this one; its twin with no cd: FROZEN_COPY_OVER_DENIES
 def test_an_exported_cdpath_does_not_untrack_commands_that_are_not_a_cd(command, capsys, monkeypatch):
     assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
 
@@ -5356,9 +5349,8 @@ def test_the_scanner_alone_denies_the_gauntlet_6_review_4_inputs(command, reason
     assert bash_denial(capsys, monkeypatch, command) == getattr(askaway, reason)
 
 
-@pytest.mark.usefixtures("scanner_only")  # the frozen copy over-denies the first: its apostrophe leaves it unreadable there, and an unreadable command naming ASKAWAY_HOME is denied
+@pytest.mark.usefixtures("scanner_only")  # the frozen copy allows these; the sandboxed answer it denies: FROZEN_COPY_OVER_DENIES
 @pytest.mark.parametrize("command", [
-    f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} answer q-1-abcdef A # it's",
     "echo ${a:-${b}} # it's",
     "(( ((1)) # ))",
 ])
@@ -5366,12 +5358,8 @@ def test_the_scanner_alone_still_lets_a_harmless_command_with_a_nested_unit_or_a
     assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
 
 
-def test_the_frozen_guard_of_the_mirror_backs_the_scanner_up(capsys, monkeypatch):
-    command = f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} answer q-1-abcdef A # it's"  # only the old guard denies it
-    assert askaway._ShellScan(os.getcwd(), {}, askaway._state_roots()).text(command) is None
-    assert askaway._baseline_guard().bash_tamper_reason(command) == askaway.STATE_DENIED
-    assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
-    assert askaway._baseline_guard().SCRIPT_PATH == SCRIPT.resolve()  # the inbox-call exemption names askaway.py
+def test_the_frozen_copy_names_askaway_py_for_its_inbox_call_exemption():  # its denials: FROZEN_COPY_OVER_DENIES
+    assert askaway._baseline_guard().SCRIPT_PATH == SCRIPT.resolve()
 
 
 # ---- gauntlet 6 review 5: no exception, depth or time path lets a command through ----
@@ -5462,14 +5450,10 @@ def test_a_baseline_denial_is_returned_before_the_scanner_runs(capsys, monkeypat
     assert bash_denial(capsys, monkeypatch, STATE_RM) == askaway.STATE_DENIED
 
 
-@pytest.mark.usefixtures("scanner_only")  # the frozen copy over-denies four: it reads a quoted body as commands, so a `.` line untracks the directory and a `>` line is a relative write
+@pytest.mark.usefixtures("scanner_only")  # the frozen copy allows these two; the four it denies: FROZEN_COPY_OVER_DENIES
 @pytest.mark.parametrize("command", [
     "cat > notes.md <<'EOF'\n`\xa0`).(\"\">X\nEOF",
-    "cat > marketing.md <<'EOF'\n# Report\n. next steps follow\nResult > baseline\nEOF",
     "cd /some/project && python3 - <<'EOF'\n. first\nprint(1 > 0)\nopen('out.txt', 'w').write('x')\nEOF",
-    'cat > product.md <<"EOF"\n. a line\n> quoted\nEOF',
-    "cat > product.md <<\\EOF\n. a line\n> quoted\nEOF",
-    "cat > product.md <<-'EOF'\n\t. a line\n\t> quoted\n\tEOF",
 ])
 def test_the_body_of_a_quoted_heredoc_is_data_to_the_scanner(command, capsys, monkeypatch):
     assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
@@ -5542,7 +5526,7 @@ def test_a_command_over_the_size_limit_is_denied_even_when_no_pattern_names_the_
 
 
 def test_a_deleted_working_directory_still_runs_the_frozen_copy(tmp_path, capsys, monkeypatch):
-    command = f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} answer q-1-abcdef A # it's"  # only the frozen copy denies it
+    command, _ = FROZEN_COPY_OVER_DENIES["sandboxed-answer-comment-apostrophe"]  # only the frozen copy denies it
     doomed = tmp_path / "doomed"
     doomed.mkdir()
     monkeypatch.chdir(doomed)
@@ -5569,13 +5553,6 @@ def test_a_code_heredoc_in_a_substitution_under_git_or_gh_is_read_as_code(comman
     assert bash_denial(capsys, monkeypatch, command) == reason  # only a cat heredoc there is commit or PR text
 
 
-@pytest.mark.usefixtures("scanner_only")  # the frozen backstop still denies these: a known over-deny, see SPEC.md
-@pytest.mark.parametrize("body", ["fix(askaway): cmd_prune keeps the pause", "fix: never write into ASKAWAY_HOME state"])
-def test_a_git_commit_reading_its_message_from_a_heredoc_is_prose_to_the_scanner(body, capsys, monkeypatch):
-    command = f"git commit -F - <<'EOF'\n{body}\nEOF"
-    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
-
-
 STATE_WRITE_CODE = f"open('{STATE_FOLDER}/a/x.json', 'w').write('{{}}')"
 
 
@@ -5594,18 +5571,6 @@ def test_a_git_or_gh_heredoc_is_code_unless_a_builtin_reads_it_as_its_message(co
     assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
 
 
-@pytest.mark.usefixtures("scanner_only")  # the frozen copy over-denies these: the empty command after the heredoc's first line is no git or gh to it
-@pytest.mark.parametrize("command", [
-    "git commit -F- <<'EOF'\nfix: never write into ASKAWAY_HOME state\nEOF",
-    "git commit --file=- <<'EOF'\nfix: never write into ASKAWAY_HOME state\nEOF",
-    "git -C repo commit --file - <<'EOF'\nfix: never write into ASKAWAY_HOME state\nEOF",
-    "gh pr create --title x --body-file - <<'EOF'\nfix: never write into ASKAWAY_HOME state\nEOF",
-    "gh issue create --body-file=- <<'EOF'\nfix: never write into ASKAWAY_HOME state\nEOF",
-])
-def test_a_builtin_git_or_gh_reading_its_message_from_stdin_keeps_its_heredoc_as_prose(command, capsys, monkeypatch):
-    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
-
-
 SPLIT_TERMINATOR_TAIL = "EO\\\nF\ntouch ~/.claude/st''ate/ask''away/a/x.json"  # bash joins EO\ and F: the heredoc ends
 
 
@@ -5619,46 +5584,26 @@ def test_an_unquoted_heredoc_terminator_split_by_a_continued_line_ends_the_body(
     assert bash_denial(capsys, monkeypatch, command) == askaway.STATE_DENIED
 
 
-@pytest.mark.usefixtures("scanner_only")  # the frozen copy over-denies the escaped one: it reads every body line as a command
+@pytest.mark.usefixtures("scanner_only")  # the frozen copy allows these; the escaped backslash it denies: FROZEN_COPY_OVER_DENIES
 @pytest.mark.parametrize("command", [
     f"cat <<'EOF'\n{SPLIT_TERMINATOR_TAIL}\nEOF",
-    "cat <<EOF\nEO\\\\\nF\ntouch ~/.claude/st''ate/ask''away/a/x.json\nEOF",
     "cat <<-EOF\n\tEO\\\n\tF\ntouch ~/.claude/st''ate/ask''away/a/x.json\nEOF",
-], ids=["quoted", "escaped-backslash", "tab-after-the-join"])
+], ids=["quoted", "tab-after-the-join"])
 def test_a_heredoc_terminator_bash_does_not_join_keeps_the_body_data(command, capsys, monkeypatch):
     assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
 
 
-# Data edits the guard denied in a review round. The frozen copy denies each (SPEC.md, Backstop); the scanner alone
-# passes all but the copy after a cd to a variable, which it refuses by design in a command naming askaway (STATE_HINT).
-SED_GLOB_EDIT = ("cd ~/.claude && sed -i '204s|.*|Release: 1.2.3, tag `v1.2.3`, pushed.|' notes/report.md"
-                 " && git status --short -- plugins/askaway notes/report.md")
-LEDGER_APPEND = ("cd /tmp/scratch && cat >> ledger.md <<'EOF'\n## Review R2: APPROVE\n"
-                 "Second look: an exported GIT_CONFIG is not seen by the state scan (no execution vector).\nEOF\n"
-                 "echo '- R2 APPROVE, gate green' >> resume-brief.md")
-TEST_FILE_APPEND = ("cd ~/src/askaway && cat >> plugins/askaway/tests/askaway.test.ts <<'EOF'\n"
-                    "test('a written answer keeps the window\\'s name', () => {\n"
-                    "  expect(line).toBe('Answered via panel by Ana; askaway list --open shows it')\n})\nEOF")
+# A data edit of a review round that both guards deny, by design in a command naming askaway (STATE_HINT). The other
+# data edits of that round only the frozen copy denies: FROZEN_COPY_OVER_DENIES.
 COPY_AFTER_VARIABLE_CD = "P=/tmp/scratch; cd \"$SRC\" && cp $P/askaway.py $P/red/scripts/askaway.py"
-SCANNER_PASSES = {"sed-script-glob": SED_GLOB_EDIT, "sed-script-glob-home": "cd ~ && sed -i '1s|.*|# Notes|' notes.md",
-                  "sed-double-quoted-script": 'cd ~/.claude && sed -i "1s|.*|x|" notes.md',
-                  "sed-follow-symlinks": "cd ~/.claude && sed -i --follow-symlinks '1s|.*|x|' notes.md",
-                  "ledger-heredoc": LEDGER_APPEND, "test-file-heredoc": TEST_FILE_APPEND}
 
 
 @pytest.mark.parametrize(("command", "reason"), [
-    *[(command, askaway.STATE_DENIED) for command in [SED_GLOB_EDIT, LEDGER_APPEND, COPY_AFTER_VARIABLE_CD]],
-    (TEST_FILE_APPEND, askaway.ANSWER_DENIED),
-], ids=["sed-script-glob", "ledger-heredoc", "copy-after-variable-cd", "test-file-heredoc"])
+    (COPY_AFTER_VARIABLE_CD, askaway.STATE_DENIED),
+], ids=["copy-after-variable-cd"])
 def test_the_frozen_copy_still_denies_these_data_edits(command, reason, capsys, monkeypatch):
     assert askaway._baseline_guard().bash_tamper_reason(command) == reason
     assert bash_denial(capsys, monkeypatch, command) == reason
-
-
-@pytest.mark.usefixtures("scanner_only")  # the frozen copy over-denies these: sed's script read as a path, a quoted body read as commands
-@pytest.mark.parametrize("command", SCANNER_PASSES.values(), ids=SCANNER_PASSES.keys())
-def test_the_scanner_lets_these_data_edits_through(command, capsys, monkeypatch):
-    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
 
 
 @pytest.mark.usefixtures("scanner_only")  # no over-deny: the frozen copy denies these too, and would hide a scanner miss
@@ -5701,6 +5646,127 @@ def test_the_scanner_still_refuses_a_copy_after_a_cd_to_a_variable_in_a_command_
 ], ids=["absolute", "relative", "variable", "target-folder"])
 def test_a_copy_into_the_plugin_folder_passes(command, capsys, monkeypatch):
     assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+# The frozen copy's known over-denies, each listed only here: harmless commands it denies and the scanner alone passes.
+# When the frozen copy is removed (issue #2), drop the copy assertions and keep these as allow tests.
+STATE, ANSWER = askaway.STATE_DENIED, askaway.ANSWER_DENIED
+MESSAGE_ABOUT_STATE = "<<'EOF'\nfix: never write into ASKAWAY_HOME state\nEOF"
+FROZEN_COPY_OVER_DENIES = {
+    # issue #3: _directory_untracked untracks the directory on any CDPATH assignment, with no cd run
+    "issue-3-cdpath": ("export CDPATH=/tmp; touch a", STATE),
+    "cdpath-then-two-writes": ("export CDPATH=/opt; touch a; touch b", STATE),
+    # issue #4: _shell_tokens reads a heredoc body as commands, so a source or . line untracks the directory
+    "issue-4-heredoc-source": ("cat > README.md <<'EOF'\nsource .venv/bin/activate\nEOF\npytest > test.log", STATE),
+    "issue-4-heredoc-paren-dot": ("cat > notes.md <<'EOF'\nSee the guard (SPEC.md).\nEOF\npytest > test.log", STATE),
+    "heredoc-dot-line-then-redirect": ("cat > marketing.md <<'EOF'\n# Report\n. next steps follow\nResult > baseline\nEOF",
+                                       STATE),
+    "heredoc-double-quoted-delimiter": ('cat > product.md <<"EOF"\n. a line\n> quoted\nEOF', STATE),
+    "heredoc-backslash-delimiter": ("cat > product.md <<\\EOF\n. a line\n> quoted\nEOF", STATE),
+    "heredoc-tab-stripped": ("cat > product.md <<-'EOF'\n\t. a line\n\t> quoted\n\tEOF", STATE),
+    "ledger-heredoc": (("cd /tmp/scratch && cat >> ledger.md <<'EOF'\n## Review R2: APPROVE\n"
+                        "Second look: an exported GIT_CONFIG is not seen by the state scan (no execution vector).\nEOF\n"
+                        "echo '- R2 APPROVE, gate green' >> resume-brief.md"), STATE),
+    "heredoc-escaped-backslash-terminator": ("cat <<EOF\nEO\\\\\nF\ntouch ~/.claude/st''ate/ask''away/a/x.json\nEOF",
+                                             STATE),  # the same reading: the body's touch line is a write to it
+    # issue #5: an odd quote leaves the command unreadable, and _unreadable_reason then judges its words alone
+    "issue-5-odd-quotes-md": ("cat > askaway-notes.md <<'EOF'\nthe answer sits in the window's frame\nEOF", ANSWER),
+    "issue-5-odd-quotes-ts": ("cat > src/askaway.ts <<'EOF'\nconst answer = 'window\\'s';\nEOF", ANSWER),
+    "test-file-heredoc": (("cd ~/src/askaway && cat >> plugins/askaway/tests/askaway.test.ts <<'EOF'\n"
+                           "test('a written answer keeps the window\\'s name', () => {\n"
+                           "  expect(line).toBe('Answered via panel by Ana; askaway list --open shows it')\n})\nEOF"),
+                          ANSWER),
+    "commit-message-substitution-apostrophe": ("git commit -m \"$(cat <<'EOF'\nfix(askaway): a subagent's answer\nEOF\n)\"",
+                                               ANSWER),
+    "sandboxed-answer-comment-apostrophe": (f"ASKAWAY_HOME={TMP_INBOX} python3 {SCRIPT} answer q-1-abcdef A # it's",
+                                            STATE),  # the copy reads no comment, and the words name ASKAWAY_HOME
+    # issue #6: _command_targets reads sed -i's script as a file, and _hits_state globs its * over the working directory
+    "issue-6-sed-glob-home": ("cd ~ && sed -i '1s|.*|x|' notes.md", STATE),
+    "issue-6-sed-glob-dotclaude": ("cd ~/.claude && sed -i '1s|.*|x|' notes.md", STATE),
+    "sed-script-glob": (("cd ~/.claude && sed -i '204s|.*|Release: 1.2.3, tag `v1.2.3`, pushed.|' notes/report.md"
+                         " && git status --short -- plugins/askaway notes/report.md"), STATE),
+    "sed-script-glob-home": ("cd ~ && sed -i '1s|.*|# Notes|' notes.md", STATE),
+    "sed-double-quoted-script": ('cd ~/.claude && sed -i "1s|.*|x|" notes.md', STATE),
+    "sed-follow-symlinks": ("cd ~/.claude && sed -i --follow-symlinks '1s|.*|x|' notes.md", STATE),
+    # issue #7: the message lines count as commands, so git or gh is never prose (PROSE_COMMANDS) and _code_reason
+    # reads the message as code
+    "issue-7-commit-stdin": ("git commit -F - <<'EOF'\nfix(askaway): cmd_prune keeps orphans\nEOF", ANSWER),
+    "commit-stdin-cmd-word": ("git commit -F - <<'EOF'\nfix(askaway): cmd_prune keeps the pause\nEOF", ANSWER),
+    "commit-stdin-state-words": (f"git commit -F - {MESSAGE_ABOUT_STATE}", STATE),
+    "commit-stdin-glued": (f"git commit -F- {MESSAGE_ABOUT_STATE}", STATE),
+    "commit-file-equals-stdin": (f"git commit --file=- {MESSAGE_ABOUT_STATE}", STATE),
+    "commit-in-repo-file-stdin": (f"git -C repo commit --file - {MESSAGE_ABOUT_STATE}", STATE),
+    "gh-pr-body-file-stdin": (f"gh pr create --title x --body-file - {MESSAGE_ABOUT_STATE}", STATE),
+    "gh-issue-body-file-stdin": (f"gh issue create --body-file=- {MESSAGE_ABOUT_STATE}", STATE),
+}
+
+
+@pytest.mark.parametrize(("command", "reason"), FROZEN_COPY_OVER_DENIES.values(), ids=FROZEN_COPY_OVER_DENIES.keys())
+def test_the_frozen_copy_over_denies_these_harmless_commands(command, reason, capsys, monkeypatch):
+    assert askaway._baseline_guard().bash_tamper_reason(command) == reason
+    assert bash_denial(capsys, monkeypatch, command) == reason
+
+
+@pytest.mark.usefixtures("scanner_only")  # the frozen copy over-denies these, see FROZEN_COPY_OVER_DENIES
+@pytest.mark.parametrize("command", [command for command, _ in FROZEN_COPY_OVER_DENIES.values()],
+                         ids=FROZEN_COPY_OVER_DENIES.keys())
+def test_the_scanner_lets_the_frozen_copy_over_denies_through(command, capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+def test_an_odd_quote_in_a_body_written_to_a_file_not_named_askaway_passes(capsys, monkeypatch):
+    command = "cat > notes.md <<'EOF'\nthe answer sits in the window's frame\nEOF"  # issue-5-odd-quotes-md, other file
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+# Neighbours of the over-denies that do write the state folder or answer: the scanner alone must keep denying them. The
+# write after a heredoc is spelled st''ate/ask''away so only the command read after the body's end can deny it.
+QUOTED_STATE_WRITE = "touch ~/.claude/st''ate/ask''away/x"
+DENIED_NEIGHBOURS = {
+    "issue-3-cdpath-state": ("export CDPATH=~/.claude/state; cd askaway && touch x", STATE),
+    "issue-4-heredoc-then-state-write": (
+        f"cat > README.md <<'EOF'\nsource .venv/bin/activate\nEOF\n{QUOTED_STATE_WRITE}", STATE),
+    "issue-5-odd-quote-then-answer": (
+        f"cat > askaway-notes.md <<'EOF'\nthe window's frame\nEOF\npython3 {SCRIPT} answer q-1-abcdef A", ANSWER),
+    "issue-6-sed-state-file": (f"sed -i 's/a/b/' {STATE_FOLDER}/q/x.json", STATE),
+    "issue-6-sed-from-the-state-folder": ("cd ~/.claude/state && sed -i 's/a/b/' askaway/q/x.json", STATE),
+    "issue-7-commit-then-state-write": (f"git commit -F - <<'EOF'\nfix: x\nEOF\n{QUOTED_STATE_WRITE}", STATE),
+}
+
+
+@pytest.mark.parametrize(("command", "reason"), DENIED_NEIGHBOURS.values(), ids=DENIED_NEIGHBOURS.keys())
+def test_the_neighbours_of_the_over_denies_stay_denied_by_the_scanner_alone_too(command, reason, request, capsys,
+                                                                                 monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == reason
+    request.getfixturevalue("scanner_only")  # the frozen copy denies these too, and would hide a scanner miss
+    assert askaway._baseline_guard().bash_tamper_reason(command) is None
+    assert bash_denial(capsys, monkeypatch, command) == reason
+
+
+# A shell that reads its script from a heredoc runs the body: the frozen copy reads it as commands and denies these.
+SHELL_STDIN_SCRIPTS = {
+    "answer-quoted": (f"bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-unquoted": (f"bash <<EOF\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "state-quoted": ("bash <<'EOF'\ncd ~/.claude/state\nrm -r askaway\nEOF", STATE),
+}
+
+
+@pytest.mark.parametrize(("command", "reason"), SHELL_STDIN_SCRIPTS.values(), ids=SHELL_STDIN_SCRIPTS.keys())
+def test_a_shell_reading_its_script_from_a_heredoc_is_denied(command, reason, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == reason
+
+
+@pytest.mark.xfail(strict=True, reason="scanner under-deny hidden by the frozen copy: issue #10")
+@pytest.mark.usefixtures("scanner_only")
+@pytest.mark.parametrize(("command", "reason"), SHELL_STDIN_SCRIPTS.values(), ids=SHELL_STDIN_SCRIPTS.keys())
+def test_the_scanner_alone_denies_a_shell_reading_its_script_from_a_heredoc(command, reason, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == reason
+
+
+# The full guard's denial of this command is pinned by test_bash_cannot_answer_an_inbox_question_even_with_no_pause_pending.
+@pytest.mark.usefixtures("scanner_only")  # no over-deny: the frozen copy denies it too, and would hide a scanner miss
+def test_the_scanner_alone_denies_a_plain_answer(capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, f"python3 {SCRIPT} answer q-1-abcdef A") == askaway.ANSWER_DENIED
 
 
 def test_a_held_ask_is_told_the_inline_json_form_the_pause_lets_through(capsys, monkeypatch):
