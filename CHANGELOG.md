@@ -7,6 +7,13 @@ Commit hashes name the change in `git log`.
 
 ## [Unreleased]
 
+### Added
+- `FROZEN_COPY_OVER_DENIES` is the one list of the frozen guard copy's 29 known over-denies, each denied by the copy and allowed by the scanner alone, grouped by root cause, with the dangerous neighbours that the scanner alone must still deny (issues #3 to #7). Older tests that pinned the same commands are folded into it. Three strict `xfail` tests pin a scanner under-deny that the copy hides: a shell that reads its script from a heredoc (issue #10).
+
+### Changed
+- SPEC.md (Backstop) defines the clean review that retires the frozen copy: a review round in which no critic finds a scanner under-deny, and a differential run of the copy and the scanner over the commands the tests run, in which every command the copy denies and the scanner allows is in `FROZEN_COPY_OVER_DENIES`. It lists the removal steps, and keeps the copy while a strict `xfail` under-deny is left (issue #2).
+- The README pair's Known issues links the milestones that track the guard's over-denies and the hidden under-deny.
+
 ## [0.4.0-beta.42] - 2026-10-22
 
 Askaway 0.4.0-beta.42 stops the Bash guard's scanner from reading the script of `sed -i` as a file it writes, and lists the data edits the frozen copy still over-denies (ff413d3).
