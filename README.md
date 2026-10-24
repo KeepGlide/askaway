@@ -749,10 +749,10 @@ Found one? [Open an issue](https://github.com/KeepGlide/askaway/issues/new).
 
 | Category | Tests |
 |---|---|
-| Mod (TypeScript), `plugins/askaway/tests/` | 509 |
+| Mod (TypeScript), `plugins/askaway/tests/` | 510 |
 | CLI and hooks (Python), `plugins/askaway/scripts/tests/` | 1487 |
 
-Python count from `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts`, at commit `0dba61c`, 2026-10-24. The mod count is from a fresh run of `claude plugin test plugins/askaway` at the same commit (the runner has no collection mode).
+Python count from `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts`, at commit `0c81838`, 2026-10-24. The mod count is from a fresh run of `claude plugin test plugins/askaway` at the same commit (the runner has no collection mode).
 
 ## 🔧 Development
 
