@@ -505,6 +505,7 @@ function renderQuestion(
           {renderOther(ui, lang, actions, card)}
         </Box>
       )}
+      {!isEnded && !isLeaving && renderUnanswered(ui, lang, card)}
       {renderDivider(ui, view.surface, 'divider-nav')}
       {isEnded ? renderEndedNav(ui, lang, actions, card, screen) : renderNav(ui, lang, actions, card, screen)}
     </Box>
@@ -714,6 +715,24 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
         </Box>
       )}
     </Box>
+  )
+}
+
+// The warning line above the nav while the question has no pick. Keep in the Other field keeps the text without picking it,
+// so with a kept label the line names the Other letter to press.
+function renderUnanswered(ui: Ui, lang: Lang, card: CardContext): RenderElement | false {
+  const { Text } = ui
+  const { question, wizard } = card
+  if (wizard.picks[question.id] !== undefined) return false
+  const letter = otherLetterOf(question.options)
+  const text =
+    wizard.labels[question.id] !== undefined && letter !== undefined
+      ? t(lang, 'card.unansweredKept', { key: letter.toUpperCase() })
+      : t(lang, 'card.unanswered')
+  return (
+    <Text key={`unanswered-${question.id}`} color={URGENCY_COLOR.medium}>
+      {text}
+    </Text>
   )
 }
 

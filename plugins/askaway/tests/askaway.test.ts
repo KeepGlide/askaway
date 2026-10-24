@@ -3271,6 +3271,21 @@ test('the kept label is still drawn after the panel closes and reopens', async (
   await reopened.unmount()
 })
 
+test('the card warns it is not answered until a pick, and names the Other letter once a text is kept', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  const warnings = async () => (await textsOf(pane)).filter(text => text.startsWith('Ainda não respondida'))
+  expect(await warnings()).toEqual(['Ainda não respondida: escolha uma opção.'])
+  await pane.press({ key: 'other-q-l1-aaaaaa' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  expect(await warnings()).toEqual([expect.stringMatching(/^Ainda não respondida: clique em [A-Z] para escolher o seu texto\.$/)])
+  await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
+  expect(await warnings()).toEqual([])
+  await pane.unmount()
+})
+
 test('draft.json has no labels key while no Other text is kept, and writes the label once one is kept', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   const { drafts, clock } = stubHost(on, files)
