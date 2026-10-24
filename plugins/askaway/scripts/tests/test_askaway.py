@@ -5806,6 +5806,25 @@ SHELL_STDIN_SCRIPTS = {
     "answer-fd-redirect-here-string": (f"2>/dev/null \"$SHELL\" <<< 'python3 {SCRIPT} answer q-1-abcdef A'", ANSWER),
     "answer-fd-redirect-bash": (f"2>/dev/null bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
     "answer-fd-dup-sudo-bash": (f"2>&1 sudo bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    # source or . of stdin runs the heredoc or here-string in this shell (issue #13)
+    **{f"answer-{name}-{key}-heredoc": (f"{word} {path} <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER)
+       for name, word in (("source", "source"), ("dot", "."))
+       for key, path in (("dev-stdin", "/dev/stdin"), ("dev-fd-0", "/dev/fd/0"), ("proc-self", "/proc/self/fd/0"),
+                         ("proc-pid", "/proc/$$/fd/0"), ("quoted", "'/dev/stdin'"), ("dotted", "/dev/./stdin"))},
+    **{f"answer-{name}-dev-stdin-here-string": (f"{word} /dev/stdin <<< 'python3 {SCRIPT} answer q-1-abcdef A'", ANSWER)
+       for name, word in (("source", "source"), ("dot", "."))},
+    "answer-builtin-source-dev-stdin": (
+        f"builtin source /dev/stdin <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    # a wrapper before . keeps the . as the command (a wrapper's number needs a digit), and //dev/stdin is stdin
+    **{f"answer-{key}-dot-dev-stdin-here-string": (
+        f"{wrapper} . /dev/stdin <<< 'python3 {SCRIPT} answer q-1-abcdef A'", ANSWER)
+       for key, wrapper in (("builtin", "builtin"), ("command", "command"), ("time", "time"))},
+    "answer-builtin-dot-dev-stdin-heredoc": (
+        f"builtin . /dev/stdin <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-dot-double-slash-here-string": (f". //dev/stdin <<< 'python3 {SCRIPT} answer q-1-abcdef A'", ANSWER),
+    "answer-dot-double-slash-heredoc": (f". //dev/stdin <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "away-source-dev-stdin": (f". /dev/stdin <<'EOF'\npython3 {SCRIPT} away on\nEOF", askaway.AWAY_DENIED),
+    "state-source-dev-stdin": ("source /dev/stdin <<'EOF'\ncd ~/.claude/state\nrm -r askaway\nEOF", STATE),
     "state-expanded-glob": ("ba*sh <<'EOF'\ncd ~/.claude/state\nrm -r askaway\nEOF", STATE),
 }
 
@@ -5836,7 +5855,14 @@ SHELL_STDIN_CONTROLS = {
     "expanded-editor-prose-body": "\"$EDITOR\" <<'EOF'\nsome notes\nEOF",
     "expanded-shell-echo-body": "$SHELL <<'EOF'\necho hello\nEOF",
     "quoted-glob-word-body": "'ba*sh' <<'EOF'\npython3 askaway.py status\nEOF",
+    "source-dev-stdin-echo-body": "source /dev/stdin <<'EOF'\necho hello\nEOF",
 }
+
+
+@pytest.mark.usefixtures("scanner_only")  # a source of a file, not of stdin, leaves the heredoc body data
+def test_a_heredoc_beside_a_source_of_a_file_stays_data(capsys, monkeypatch):
+    command = f"source .venv/bin/activate <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF"
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
 
 
 # A wrapper's prefix (sudo, sudo -u USER, /usr/bin/env) still leaves the command it runs to the other rules.
