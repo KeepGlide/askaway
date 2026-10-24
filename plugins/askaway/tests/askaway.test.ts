@@ -3575,6 +3575,28 @@ test('the card names each question of a group of three by its title, and Back an
   await pane.unmount()
 })
 
+test('a pick that moves on draws the arrival line on the next card for 1.5 s; Next draws none', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { title: 'Cache layer' })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { title: 'Retry policy' })],
+    [path('q', 'q-l3-cccccc'), question('q-l3-cccccc', 3000, { title: 'Log level' })],
+  ])
+  const { clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  const arrival = async () => (await textsOf(pane)).filter(text => text.startsWith('✓ Escolha anterior salva'))
+  expect(await arrival()).toEqual([])
+  await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
+  expect(await textsOf(pane)).toContain('Retry policy')
+  expect(await arrival()).toEqual(['✓ Escolha anterior salva · agora a pergunta 2 de 3'])
+  await clock.advance(1500)
+  expect(await arrival()).toEqual([])
+  await pane.press({ key: 'nav-next' })
+  expect(await textsOf(pane)).toContain('Log level')
+  expect(await arrival()).toEqual([])
+  await pane.unmount()
+})
+
 test('on the last question Submit all is dim until every question has a pick; the pick that completes them keeps the last question, primary', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],

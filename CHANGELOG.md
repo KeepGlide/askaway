@@ -16,6 +16,7 @@ Commit hashes name the change in `git log`.
 
 ### Added
 - A card with no pick shows an orange line above Back and Next: "Not answered yet: pick an option." Keep in the Other field keeps the text without picking it, so with a kept text the line names the Other letter to press ("Not answered yet: press C to choose your text."). The line goes once the question has a pick.
+- A pick that moves the card on draws a green line at the top of the next card for 1.5 s: "✓ Previous pick saved · now question 2 of 3". The move stays instant; Next and Back draw no line.
 - `FROZEN_COPY_OVER_DENIES` is the one list of the frozen guard copy's 29 known over-denies, each denied by the copy and allowed by the scanner alone, grouped by root cause, with the dangerous neighbours that the scanner alone must still deny (issues #3 to #7). Older tests that pinned the same commands are folded into it. Three strict `xfail` tests pin a scanner under-deny that the copy hides: a shell that reads its script from a heredoc (issue #10).
 
 ### Changed

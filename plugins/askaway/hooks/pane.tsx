@@ -55,6 +55,8 @@ export type PaneView = {
   wizard: Wizard
   // A move (a pick, Next or Back) ran within the last MOVE_LOCK_MS: its buttons are drawn disabled until it lifts.
   moveLocked: boolean
+  // The id of the question a pick just moved the card to: that card draws its arrival line meanwhile.
+  arrival: string | null
   screen: Screen | undefined
   surface: RenderSurface
   // The footer line (footerText, hooks/model.ts), set by the register only while no question is open.
@@ -488,6 +490,11 @@ function renderQuestion(
   const details = sectionsOf(lang, question, 'details')
   return (
     <Box key={`card-${question.id}`} flexDirection="column" gap={1} borderStyle="round" borderDimColor={isLeaving} paddingX={1} paddingBottom={1}>
+      {view.arrival === question.id && (
+        <Text key={`arrival-${question.id}`} color={URGENCY_COLOR.low} bold>
+          {t(lang, 'card.arrival', { n: screen.index + 1, total: screen.total })}
+        </Text>
+      )}
       {renderTitleRow(ui, lang, question, isLeaving, view.now, view.surface)}
       {renderUrgency(ui, lang, question, isLeaving)}
       {renderFirstBlock(ui, question, isLeaving)}
