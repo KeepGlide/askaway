@@ -61,6 +61,8 @@ const DRAFT_LOCK_STALE_MINUTES = 1
 const DRAFT_LOCK_STALE_FIND_ARG = `+${DRAFT_LOCK_STALE_MINUTES - 1}`
 // A pick, Next or Back locks the moves for this long: a second press inside the window (a double click) does nothing.
 const MOVE_LOCK_MS = 350
+// How long the card a pick moved to draws its arrival line.
+const ARRIVAL_MS = 1500
 // The `list --open` run that finds the ended sessions repeats at most this often while the linked open questions do not change.
 const ENDED_RECHECK_MS = 30_000
 // The longest text a failed `list --open` run logs after the command's name, in code points: a longer stderr or stdout is cut
@@ -111,6 +113,8 @@ const quietAtom = atom({ plugin: 'askaway', key: 'quiet' } as const, false)
 const wizardAtom = atom({ plugin: 'askaway', key: 'wizard' } as const, flow.EMPTY_WIZARD)
 // Whether a move (a pick, Next or Back) ran within MOVE_LOCK_MS: the pane draws its buttons disabled meanwhile.
 const moveLockAtom = atom({ plugin: 'askaway', key: 'moveLock' } as const, false)
+// The id of the question a pick just moved the card to, for ARRIVAL_MS (markArrival); null otherwise.
+const arrivalAtom = atom({ plugin: 'askaway', key: 'arrival' } as const, null as string | null)
 // The ts of the picks this session last wrote to draft.json or applied from it. A draft with a newer ts is applied.
 let draftTs = 0
 // Whether a move (a pick, Next or Back) ran within MOVE_LOCK_MS; cleared by the timer set in moveOnce. The atom mirrors it.
@@ -1130,6 +1134,15 @@ async function pickOption($: EngineInterface, id: string, choice: Pick): Promise
   const { open, group, leaving: fading } = await snapshot($)
   if (group === undefined || fading[id] !== undefined || !group.questions.some(question => question.id === id)) return
   await changeWizard($, prev => flow.choose(prunedWizard(prev, open), group, id, choice))
+  const arrived = (await read($, wizardAtom)).questionId
+  if (arrived !== null && arrived !== id) await markArrival($, arrived)
+}
+
+// Marks the card a pick moved to, so it draws its arrival line for ARRIVAL_MS: the move itself is instant, and two cards of
+// one group often look alike. A later arrival replaces it; the timer clears only its own.
+async function markArrival($: EngineInterface, id: string): Promise<void> {
+  await update($, arrivalAtom, () => id)
+  $.clock.after(ARRIVAL_MS, () => report($, update($, arrivalAtom, prev => (prev === id ? null : prev))))
 }
 
 // Moves the wizard with the group on screen; a move that needs the group goes through here. The move starts from the
@@ -1389,6 +1402,7 @@ export const register: Register = on => {
       wizard,
       screen,
       moveLocked: await read($, moveLockAtom),
+      arrival: await read($, arrivalAtom),
       surface: e.surface,
     }
     return renderPane($.ui.resolve(e), view, actionsFor($), lang, heldFor(e.surface, e.requestId))

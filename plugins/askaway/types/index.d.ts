@@ -125,6 +125,8 @@ declare module 'claude-code' {
       leaving: Record<string, number>
       // The move lock (350 ms after a pick, Next or Back): the option, Other, Next and Back buttons are drawn disabled and presses do nothing.
       moveLock: boolean
+      // The question a pick just moved the card to (1.5 s): that card draws its arrival line. Null otherwise.
+      arrival: string | null
       // Whether this session is inside a model turn of its own (turn.start to turn.complete; subagent turns excluded).
       turn: { isBusy: boolean }
       // Ids of open questions whose asking session has ended (`list --open` marks them `ended`): their card shows a notice.

@@ -55,6 +55,8 @@ export type PaneView = {
   wizard: Wizard
   // A move (a pick, Next or Back) ran within the last MOVE_LOCK_MS: its buttons are drawn disabled until it lifts.
   moveLocked: boolean
+  // The id of the question a pick just moved the card to: that card draws its arrival line meanwhile.
+  arrival: string | null
   screen: Screen | undefined
   surface: RenderSurface
   // The footer line (footerText, hooks/model.ts), set by the register only while no question is open.
@@ -488,6 +490,11 @@ function renderQuestion(
   const details = sectionsOf(lang, question, 'details')
   return (
     <Box key={`card-${question.id}`} flexDirection="column" gap={1} borderStyle="round" borderDimColor={isLeaving} paddingX={1} paddingBottom={1}>
+      {view.arrival === question.id && (
+        <Text key={`arrival-${question.id}`} color={URGENCY_COLOR.low} bold>
+          {t(lang, 'card.arrival', { n: screen.index + 1, total: screen.total })}
+        </Text>
+      )}
       {renderTitleRow(ui, lang, question, isLeaving, view.now, view.surface)}
       {renderUrgency(ui, lang, question, isLeaving)}
       {renderFirstBlock(ui, question, isLeaving)}
@@ -505,6 +512,7 @@ function renderQuestion(
           {renderOther(ui, lang, actions, card)}
         </Box>
       )}
+      {!isEnded && !isLeaving && renderUnanswered(ui, lang, card)}
       {renderDivider(ui, view.surface, 'divider-nav')}
       {isEnded ? renderEndedNav(ui, lang, actions, card, screen) : renderNav(ui, lang, actions, card, screen)}
     </Box>
@@ -714,6 +722,24 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
         </Box>
       )}
     </Box>
+  )
+}
+
+// The warning line above the nav while the question has no pick. Keep in the Other field keeps the text without picking it,
+// so with a kept label the line names the Other letter to press.
+function renderUnanswered(ui: Ui, lang: Lang, card: CardContext): RenderElement | false {
+  const { Text } = ui
+  const { question, wizard } = card
+  if (wizard.picks[question.id] !== undefined) return false
+  const letter = otherLetterOf(question.options)
+  const text =
+    wizard.labels[question.id] !== undefined && letter !== undefined
+      ? t(lang, 'card.unansweredKept', { key: letter.toUpperCase() })
+      : t(lang, 'card.unanswered')
+  return (
+    <Text key={`unanswered-${question.id}`} color={URGENCY_COLOR.medium}>
+      {text}
+    </Text>
   )
 }
 

@@ -3271,6 +3271,21 @@ test('the kept label is still drawn after the panel closes and reopens', async (
   await reopened.unmount()
 })
 
+test('the card warns it is not answered until a pick, and names the Other letter once a text is kept', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  const warnings = async () => (await textsOf(pane)).filter(text => text.startsWith('Ainda não respondida'))
+  expect(await warnings()).toEqual(['Ainda não respondida: escolha uma opção.'])
+  await pane.press({ key: 'other-q-l1-aaaaaa' })
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  expect(await warnings()).toEqual([expect.stringMatching(/^Ainda não respondida: clique em [A-Z] para escolher o seu texto\.$/)])
+  await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
+  expect(await warnings()).toEqual([])
+  await pane.unmount()
+})
+
 test('draft.json has no labels key while no Other text is kept, and writes the label once one is kept', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   const { drafts, clock } = stubHost(on, files)
@@ -3557,6 +3572,28 @@ test('the card names each question of a group of three by its title, and Back an
   await clock.advance(350)
   await pane.press({ key: 'nav-back' })
   expect(await textsOf(pane)).toContain('Retry policy')
+  await pane.unmount()
+})
+
+test('a pick that moves on draws the arrival line on the next card for 1.5 s; Next draws none', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { title: 'Cache layer' })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { title: 'Retry policy' })],
+    [path('q', 'q-l3-cccccc'), question('q-l3-cccccc', 3000, { title: 'Log level' })],
+  ])
+  const { clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  const arrival = async () => (await textsOf(pane)).filter(text => text.startsWith('✓ Escolha anterior salva'))
+  expect(await arrival()).toEqual([])
+  await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
+  expect(await textsOf(pane)).toContain('Retry policy')
+  expect(await arrival()).toEqual(['✓ Escolha anterior salva · agora a pergunta 2 de 3'])
+  await clock.advance(1500)
+  expect(await arrival()).toEqual([])
+  await pane.press({ key: 'nav-next' })
+  expect(await textsOf(pane)).toContain('Log level')
+  expect(await arrival()).toEqual([])
   await pane.unmount()
 })
 
