@@ -17,6 +17,9 @@ Commit hashes name the change in `git log`.
 - The review draws the answers in the group's tree, as the open tree does: the group's name on top, then its sessions and one row per answer, above the title and the hint.
 - The card keeps a row for the arrival line and one for the unanswered line, blank when they do not apply, so the card no longer shifts when a line comes or goes (gauntlet 1, uiuxs2-2).
 
+### Changed
+- SPEC.md (Bash and file guard) states the guard's threat: an agent of the same user that answers its own question or turns away mode on the plain way, out of haste or because text it read told it to. Deliberate evasion is a known limit, listed there, not a bug to chase, and no OS sandbox backs the guard (owner decision after gauntlet 1: the sandbox would change every Bash command of every session).
+
 ## [0.4.0-beta.43] - 2026-10-25
 
 Askaway 0.4.0-beta.43 makes the Bash guard's scanner read heredocs and here-strings that a shell, `source` or an `eval` script runs (issues #10 to #14), and adds three card cues: the unanswered line, the arrival line and the review before Submit all.
