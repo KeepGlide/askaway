@@ -128,7 +128,7 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
       {view.askWho && view.questions.length > 0 && renderAskWho(ui, lang, actions, held)}
       {view.damagedPauses?.map(id => renderDamagedPause(ui, lang, actions, held, id))}
       {screen !== undefined &&
-        (view.review && screen.canSubmit
+        (view.review && screen.canSubmit && screen.total > 1
           ? renderReview(ui, lang, view, actions, screen, held)
           : renderQuestion(ui, lang, view, actions, screen, held))}
       {view.history.length > 0 && renderHistory(tree, view.history)}
@@ -497,11 +497,9 @@ function renderQuestion(
   const details = sectionsOf(lang, question, 'details')
   return (
     <Box key={`card-${question.id}`} flexDirection="column" gap={1} borderStyle="round" borderDimColor={isLeaving} paddingX={1} paddingBottom={1}>
-      {view.arrival === question.id && (
-        <Text key={`arrival-${question.id}`} color={URGENCY_COLOR.low} bold>
-          {t(lang, 'card.arrival', { n: screen.index + 1, total: screen.total })}
-        </Text>
-      )}
+      <Text key={`arrival-${question.id}`} color={URGENCY_COLOR.low} bold>
+        {view.arrival === question.id ? t(lang, 'card.arrival', { n: screen.index + 1, total: screen.total }) : STATUS_BLANK}
+      </Text>
       {renderTitleRow(ui, lang, question, isLeaving, view.now, view.surface)}
       {renderUrgency(ui, lang, question, isLeaving)}
       {renderFirstBlock(ui, question, isLeaving)}
@@ -519,7 +517,7 @@ function renderQuestion(
           {renderOther(ui, lang, actions, card)}
         </Box>
       )}
-      {!isEnded && !isLeaving && renderUnanswered(ui, lang, card)}
+      {renderUnanswered(ui, lang, card, !isEnded && !isLeaving)}
       {renderDivider(ui, view.surface, 'divider-nav')}
       {isEnded ? renderEndedNav(ui, lang, actions, card, screen) : renderNav(ui, lang, actions, card, screen)}
     </Box>
@@ -732,20 +730,25 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
   )
 }
 
+// The text of a status row with no line. A non-breaking space keeps the row's height, so the card does not move when a
+// status line comes or goes (the arrival line above the title, the unanswered line above the separator).
+const STATUS_BLANK = '\u00a0'
+
 // The warning line above the nav while the question has no pick. Keep in the Other field keeps the text without picking it,
-// so with a kept label the line names the Other letter to press.
-function renderUnanswered(ui: Ui, lang: Lang, card: CardContext): RenderElement | false {
+// so with a kept label the line names the Other letter to press. The row is always drawn: blank when shown is false (an
+// ended or fading card) or the question is picked.
+function renderUnanswered(ui: Ui, lang: Lang, card: CardContext, shown: boolean): RenderElement {
   const { Text } = ui
   const { question, wizard } = card
-  if (wizard.picks[question.id] !== undefined) return false
   const letter = otherLetterOf(question.options)
   const text =
     wizard.labels[question.id] !== undefined && letter !== undefined
       ? t(lang, 'card.unansweredKept', { key: letter.toUpperCase() })
       : t(lang, 'card.unanswered')
+  const isOpen = shown && wizard.picks[question.id] === undefined
   return (
     <Text key={`unanswered-${question.id}`} color={URGENCY_COLOR.medium}>
-      {text}
+      {isOpen ? text : STATUS_BLANK}
     </Text>
   )
 }
@@ -828,28 +831,53 @@ function renderReview(
     held,
     surface: view.surface,
   }
-  const backLabel = t(lang, 'nav.back')
-  const rows = (view.active?.questions ?? []).map((question, index) => {
+  const isBackOff = card.isMoveLocked
+  const backLabel = navLabelOf(card, 'back', t(lang, 'nav.back'))
+  const hotkey = letterFor(card, 'back')
+  const group = view.active
+  const order = (group?.questions ?? []).map(question => question.id)
+  // One answer's row, at its place in the group's tree: the question's number and title, then the answer chosen for it.
+  const reviewRow = (question: Question) => (place: RowPlace) => {
     const pick = view.wizard.picks[question.id]
     const answer = pick === undefined ? '' : answerNameOf(lang, pick, question)
-    return treeLink(ui, held, {
-      key: `review-jump-${question.id}`,
-      lead: '',
-      label: `${index + 1}. ${questionLabel(localizedQuestion(question, lang))} → ${singleLine(answer)}`,
-      href: linkHref('jump', question.id),
-      bold: false,
-      onPress: () => actions.jump(question.id),
-    })
-  })
+    return (
+      <Box key={`review-row-${question.id}`} paddingLeft={place.indent} flexDirection="row">
+        {treeLink(ui, held, {
+          key: `review-jump-${question.id}`,
+          lead: place.lead,
+          mark: '○',
+          label: `${order.indexOf(question.id) + 1}. ${questionLabel(localizedQuestion(question, lang))} → ${singleLine(answer)}`,
+          href: linkHref('jump', question.id),
+          bold: false,
+          onPress: () => actions.jump(question.id),
+        })}
+      </Box>
+    )
+  }
+  // The answers sit in the group's tree, as the open questions do: the group's name on top, then its sessions and rows.
+  const tree =
+    group === undefined
+      ? false
+      : renderBranch(ui, {
+          key: `review-group-${group.key}`,
+          label: groupLabelOf(group.questions[0], lang),
+          sessions: group.sessions.flatMap(questions => {
+            const [first] = questions
+            if (first === undefined) return []
+            return [{ key: `review-session-${first.id}`, label: sessionLabelOf(first, lang), isRoot: isRootSession(first), rows: questions.map(reviewRow) }]
+          }),
+        })
   return (
     <Box key="review" flexDirection="column" gap={1} borderStyle="round" paddingX={1} paddingBottom={1}>
-      <Text bold>{t(lang, 'review.title')}</Text>
-      <Text dimColor>{t(lang, 'review.hint')}</Text>
-      <Box flexDirection="column">{rows}</Box>
+      {tree}
+      <Box flexDirection="column">
+        <Text bold>{t(lang, 'review.title')}</Text>
+        <Text dimColor>{t(lang, 'review.hint')}</Text>
+      </Box>
       {renderDivider(ui, view.surface, 'divider-review')}
       <Box flexDirection="row" justifyContent="space-between">
-        {held.hold('review-back', [backLabel], () => actions.leaveReview(), press => (
-          <Button key="review-back" label={backLabel} variant="secondary" onPress={press} />
+        {held.hold('review-back', [backLabel, isBackOff, hotkey], () => !isBackOff && actions.leaveReview(), press => (
+          <Button key="review-back" label={backLabel} variant="secondary" dimColor={isBackOff} hotkey={hotkey} onPress={press} />
         ))}
         {renderSubmitAll(ui, lang, actions, card, screen)}
       </Box>

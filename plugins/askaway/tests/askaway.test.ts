@@ -1747,7 +1747,8 @@ test('a legacy question with tradeoff and no how, gains, losses or session title
   expect(texts).toContain('💡 Por que A: It is smaller.')
   expect(texts).toContain('└ Cheap · aderência 80')
   expect(texts.filter(text => /^(🛠️|🎁|⚖️)/u.test(text))).toEqual([])
-  expect(texts.filter(text => text.trim() === '')).toEqual([])
+  // The arrival row is the one blank text the card draws (a non-breaking space, no line applies); no empty section is.
+  expect(texts.filter(text => text.trim() === '')).toEqual([' '])
   await pane.unmount()
 })
 
@@ -2988,6 +2989,7 @@ test('a pick changed on the last card while an earlier answer is written is the 
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
   await clock.advance(350)
   await pane.press({ key: 'review-back' })
+  await clock.advance(350)
   const write = gate()
   holds.write = write.promise
   const pressed = pane.press({ key: 'submit-all' })
@@ -3633,6 +3635,14 @@ test('on the last question Submit all is dim until every question has a pick; th
   await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
   expect(await textsOf(pane)).toContain('Revise as suas respostas')
+  // The answers sit in the group's tree: the group's name on top, as in the open tree, then the rows, then the title.
+  const texts = await textsOf(pane)
+  const title = texts.indexOf('Revise as suas respostas')
+  const firstRow = texts.findIndex(text => text.includes('1. Title q-l1-aaaaaa →'))
+  const groupName = texts[firstRow - 1] ?? ''
+  expect(firstRow).toBeGreaterThan(0)
+  expect(firstRow).toBeLessThan(title)
+  expect(texts.indexOf(groupName)).toBeLessThan(firstRow - 1)
   expect((await submit())?.props.variant).toBe('primary')
   expect((await submit())?.props.dimColor).toBe(false)
   expect(writes).toEqual([])
@@ -3663,7 +3673,8 @@ test('the pick that completes a group shows the review: each answer links to its
   await clock.advance(350)
   await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
   expect(await rows()).toEqual([expect.stringMatching(/1\. Cache layer → Keep/), expect.stringMatching(/2\. Retry policy → Keep/)])
-  // Back leaves the review for the last card, which keeps its own Submit all.
+  // Back leaves the review for the last card, which keeps its own Submit all. The pick above starts the move lock.
+  await clock.advance(350)
   await pane.press({ key: 'review-back' })
   expect(await textsOf(pane)).toContain('Retry policy')
   expect(await textsOf(pane)).not.toContain('Revise as suas respostas')
@@ -3673,6 +3684,121 @@ test('the pick that completes a group shows the review: each answer links to its
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb')])
   expect(readJson(files, path('a', 'q-l2-bbbbbb'))).toMatchObject({ key: 'B' })
+  await pane.unmount()
+})
+
+test('a one-question group drawn after a submitted two-question group shows no review: the review is reset with the group sent', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  const { clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  await clock.advance(350)
+  await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
+  expect(await textsOf(pane)).toContain('Revise as suas respostas')
+  await pane.press({ key: 'submit-all' })
+  files.set(path('q', 'q-l3-cccccc'), question('q-l3-cccccc', 3000, { project: '/work/other' }))
+  await clock.advance(5000)
+  await pane.press({ key: 'opt-q-l3-cccccc-A' })
+  expect(await textsOf(pane)).toContain('Title q-l3-cccccc')
+  expect(await textsOf(pane)).not.toContain('Revise as suas respostas')
+  await pane.unmount()
+})
+
+test('Back on the review is under the move lock: dim and no-op for 350 ms after the pick that drew it, then it leaves the review', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  const { clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  await clock.advance(350)
+  await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
+  expect(await textsOf(pane)).toContain('Revise as suas respostas')
+  expect((await pane.find({ type: 'Button', key: 'review-back' }))?.props.dimColor).toBe(true)
+  await pane.press({ key: 'review-back' })
+  expect(await textsOf(pane)).toContain('Revise as suas respostas')
+  await clock.advance(350)
+  expect((await pane.find({ type: 'Button', key: 'review-back' }))?.props.dimColor).toBe(false)
+  await pane.press({ key: 'review-back' })
+  expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
+  expect(await textsOf(pane)).not.toContain('Revise as suas respostas')
+  await pane.unmount()
+})
+
+test('the review Back carries the card Back hotkey and label: z and "← Voltar (z)" on the terminal, the same letter as the card', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+  ])
+  const { clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  await clock.advance(350)
+  await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
+  expect((await pane.find({ type: 'Button', key: 'review-back' }))?.props.hotkey).toBe('z')
+  expect(await labelOf(pane, 'review-back')).toBe('← Voltar (z)')
+  await clock.advance(350)
+  await pane.press({ key: 'review-back' })
+  expect((await pane.find({ type: 'Button', key: 'nav-back' }))?.props.hotkey).toBe('z')
+  await pane.unmount()
+})
+
+test('a move or a jump clears the arrival line: Next and a tree jump draw none, the arrival line only follows a pick', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+    [path('q', 'q-l3-cccccc'), question('q-l3-cccccc', 3000)],
+  ])
+  const { clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  const arrival = async () => (await textsOf(pane)).filter(text => text.startsWith('✓ Escolha anterior salva'))
+  await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  expect(await arrival()).toHaveLength(1)
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  expect(await textsOf(pane)).toContain('Title q-l3-cccccc')
+  expect(await arrival()).toEqual([])
+  await clock.advance(350)
+  await pane.press({ key: 'opt-q-l3-cccccc-B' })
+  expect(await arrival()).toHaveLength(1)
+  await pressTreeLink(pane, 'jump', 'q-l1-aaaaaa')
+  expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
+  expect(await arrival()).toEqual([])
+  await pane.unmount()
+})
+
+test('the arrival and unanswered rows are always drawn, blank when they have no line: the card keeps its rows and its title row as the lines come and go', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
+    [path('q', 'q-l3-cccccc'), question('q-l3-cccccc', 3000)],
+  ])
+  const { clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  // The rows the card of a question lays out, by type, in order: the card's own rows, so the tree above it does not count.
+  const rowsOf = async (id: string) =>
+    ((nodesOf(await pane.drawn()).find(node => keyOfNode(node) === `card-${id}`)?.children ?? []) as Record<string, unknown>[]).map(
+      row => row.type,
+    )
+  const before = await rowsOf('q-l1-aaaaaa')
+  await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
+  expect(await rowsOf('q-l2-bbbbbb')).toEqual(before)
+  await clock.advance(1500)
+  expect(await rowsOf('q-l2-bbbbbb')).toEqual(before)
+  await clock.advance(350)
+  await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
+  expect(await textsOf(pane)).toContain('Title q-l3-cccccc')
+  expect(await rowsOf('q-l3-cccccc')).toEqual(before)
   await pane.unmount()
 })
 
@@ -7323,6 +7449,7 @@ test('gauntlet 7 pane-exec3-1: a text a kept label set aside is dropped once Nex
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
   await clock.advance(350)
   await pane.press({ key: 'review-back' })
+  await clock.advance(350)
   await pane.press({ key: 'nav-back' })
   await clock.advance(350)
   await moveRing($, 'other-input-q-l1-aaaaaa-1')

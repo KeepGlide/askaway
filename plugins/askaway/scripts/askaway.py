@@ -276,6 +276,9 @@ TOO_DEEP_DENIED: Final = ("Denied: the Askaway guard could not read this command
 BACKSTOP_DENIED: Final = "Askaway guard backstop missing: reinstall the plugin (scripts/askaway_guard_baseline.py)."
 SCAN_DEPTH_LIMIT: Final = 64  # nested scans (command substitutions, eval, sh -c, comments) the scanner follows
 SCAN_SIZE_LIMIT: Final = 64 * 1024  # characters: a longer command is not scanned, and is denied
+FED_SCAN_LIMIT: Final = 64 * 1024  # characters the scan reads from a line's substitutions' heredocs; past it, denied
+FED_READ_COST: Final = 128  # characters charged to each such read on top of its text, so short reads are bounded too
+PRINTF_CONVERSION: Final = re.compile(r"%(%|[-+ #0*\d.]*[a-zA-Z])")  # a printf conversion, or %%
 TOO_LONG_DENIED: Final = ("Denied: the Askaway guard does not read a command longer than 64K characters. Split it into "
                           "smaller commands, or write large content to a file with the Write tool.")
 FORCE_PRUNE_DENIED: Final = ("Denied: prune --force is for the user's own terminal only. It removes an open question "
@@ -2335,22 +2338,77 @@ def _shell_tokens(text: str, bodies: list[str] | None = None) -> list[tuple[str,
         pos = end
 
 
-def _here_string_texts(raw: str) -> list[str]:
+HERE_VARIABLE: Final = re.compile(r"\"?\$\{?(\w+)\}?\"?")  # a here-string word that is one variable, quoted or not
+
+
+def _c_escapes(text: str) -> str:
+    """The text with its C escapes decoded, as bash decodes a $'...' word and printf a format."""
+    return codecs.decode(text.encode("latin-1", "backslashreplace"), "unicode_escape", "replace")
+
+
+def _here_string_texts(raw: str, values: Mapping[str, str]) -> list[str]:
     """The text a here-string's word feeds: a $'...' or $"..." word loses its $ and quotes, and a $'...' word is also
-    read with its C escapes decoded, as bash runs it, so $'\\x61nswer' is read as answer too."""
+    read with its C escapes decoded, as bash runs it, so $'\\x61nswer' is read as answer too. A word that is one
+    variable takes the literal value the line gave it (values), when there is one."""
+    if (variable := HERE_VARIABLE.fullmatch(raw)) is not None and variable[1] in values:
+        return [values[variable[1]]]
     if len(raw) >= 3 and raw[0] == "$" and raw[1] in "'\"" and raw[-1] == raw[1]:
         inner = raw[2:-1]
         if raw[1] == "'" and "\\" in inner:
-            return [inner, codecs.decode(inner.encode("latin-1", "backslashreplace"), "unicode_escape", "replace")]
+            return [inner, _c_escapes(inner)]
         return [inner]
     return [_quoted_text(raw)]
 
 
-def _here_strings(tokens: Sequence[tuple[str, str]]) -> list[str]:
-    """The text of each here-string's word: _shell_tokens reads <<< as << then <, so the word after that pair is it."""
-    return [text for index in range(len(tokens) - 2)
-            if tokens[index] == ("op", "<<") and tokens[index + 1] == ("op", "<") and tokens[index + 2][0] == "word"
-            for text in _here_string_texts(tokens[index + 2][1])]
+def _word_value(raw: str) -> str:
+    """The text a word gives its command: a $'...' word with its C escapes decoded, a $"..." word without its $ and
+    quotes, and any other word with its quotes removed."""
+    if len(raw) >= 3 and raw[0] == "$" and raw[1] in "'\"" and raw[-1] == raw[1]:
+        inner = raw[2:-1]
+        return _c_escapes(inner) if raw[1] == "'" else inner
+    return _quoted_text(raw)
+
+
+def _printf_output(template: str, args: Sequence[str]) -> str:
+    """What printf writes for a format and its arguments: each conversion takes the next argument, empty once they run
+    out (%% writes a %), and the format repeats while arguments remain."""
+    out: list[str] = []
+    taken = 0
+    while True:
+        start, cursor = taken, 0
+        for match in PRINTF_CONVERSION.finditer(template):
+            out.append(template[cursor:match.start()])
+            cursor = match.end()
+            if match[1] == "%":
+                out.append("%")
+            else:
+                out.append(args[taken] if taken < len(args) else "")
+                taken += 1
+        out.append(template[cursor:])
+        if taken == start or taken >= len(args):
+            return "".join(out)
+
+
+def _output_texts(argv: Sequence[str]) -> list[str]:
+    """The literal text an echo or printf writes, as a shell reads it: printf's output for its format over its arguments
+    (with the format's escapes decoded, and with each argument's decoded, as %b reads it), echo's arguments joined by
+    spaces, and the arguments joined with no separator, by spaces and by newlines; each also with C escapes decoded."""
+    name = _command_name(argv)
+    if name not in ("echo", "printf"):
+        return []
+    values = [_word_value(word) for word in argv[1:]]
+    while values and values[0].startswith("-"):  # the options: echo -n or -e, printf --
+        del values[0]
+    if not values:
+        return []
+    if name == "echo":
+        outputs = [" ".join(values)]
+    else:
+        template, args = values[0], values[1:]
+        outputs = [_printf_output(template, args), _printf_output(_c_escapes(template), args),
+                   _printf_output(template, [_c_escapes(arg) for arg in args])]
+    joined = ["".join(values), " ".join(values), "\n".join(values)]
+    return [text for line in dict.fromkeys([*outputs, *joined]) for text in (line, _c_escapes(line))]
 
 
 def _joined_lines(command: str) -> str:
@@ -2364,31 +2422,49 @@ class _Simple(NamedTuple):
     writes: list[str]  # raw targets of its write redirections
     comments: list[str]  # text after a # the scan reads as a comment: also read as a command, in case the shell does
     heredoc: bool  # does a << or <<- redirect the command's own stdin?
+    bodies: list[str]  # the bodies of its own heredocs, which feed its stdin
+    here: list[str]  # the raw words of its here-strings, which feed its stdin (_here_string_texts)
+    depth: int  # how many ( ... ) subshells enclose it: the variables it sets stay in them
 
 
-def _simple_commands(tokens: Sequence[tuple[str, str]]) -> list[_Simple]:
+def _simple_commands(tokens: Sequence[tuple[str, str]], bodies: Sequence[str] = ()) -> list[_Simple]:
+    """The simple commands of a line. bodies holds the line's heredoc bodies in the order of their << operators; a
+    here-string is read as << then <, so its << takes no body."""
     commands: list[_Simple] = []
     words: list[str] = []
     writes: list[str] = []
     comments: list[str] = []
+    own_bodies: list[str] = []
+    here: list[str] = []
     heredoc = False
-    redirect: str | None = None  # the redirection operator whose target is the next word
+    redirect: str | None = None  # the redirection operator whose target is the next word; <<< is "<<<"
+    body_iter = iter(bodies)
+    depth = 0
     for kind, value in tokens:
         if kind == "op" and value in SHELL_OPERATORS:
-            commands.append(_Simple(words, writes, comments, heredoc))
-            words, writes, comments, heredoc, redirect = [], [], [], False, None
+            commands.append(_Simple(words, writes, comments, heredoc, own_bodies, here, depth))
+            words, writes, comments, own_bodies, here = [], [], [], [], []
+            heredoc, redirect = False, None
+            if value == "(":
+                depth += 1
+            elif value == ")" and depth:
+                depth -= 1
         elif kind == "comment":
             comments.append(value)
         elif kind == "op":
-            redirect = value
+            redirect = "<<<" if value == "<" and redirect == "<<" else value
             heredoc = heredoc or value in ("<<", "<<-")
         elif redirect is None:
             words.append(value)
         else:
-            if redirect in WRITE_REDIRECTS and not value.isdigit():
+            if redirect == "<<<":
+                here.append(value)
+            elif redirect in ("<<", "<<-"):
+                own_bodies.append(next(body_iter, ""))
+            elif redirect in WRITE_REDIRECTS and not value.isdigit():
                 writes.append(value)
             redirect = None
-    commands.append(_Simple(words, writes, comments, heredoc))
+    commands.append(_Simple(words, writes, comments, heredoc, own_bodies, here, depth))
     return commands
 
 
@@ -2484,6 +2560,19 @@ def _script_texts(argv: Sequence[str]) -> list[str]:
     return [args[script]]
 
 
+def _script_reads_stdin(script: str) -> bool:
+    """Does a sh -c script start something that reads its stdin: a command that reads it, or an eval, or a command word
+    that may expand? A script that does not read as a line may, so it counts."""
+    tokens = _shell_tokens(script)
+    if tokens is None:
+        return True
+    for simple in _simple_commands(tokens):
+        argv = _strip_prefix(simple.words)[1]
+        if _reads_stdin_script(simple) or (argv and _command_name(argv) == "eval"):
+            return True
+    return False
+
+
 def _reads_stdin_script(simple: _Simple) -> bool:
     """Is this command a shell? With no -c script it reads its script from stdin, and a -c script may start a shell
     that does (sh -c 'bash'), so a heredoc or here-string on the line may be run. A sudo -i or -s with no command
@@ -2493,6 +2582,8 @@ def _reads_stdin_script(simple: _Simple) -> bool:
     argv = _strip_prefix(simple.words)[1]
     if argv and _command_name(argv) in SOURCE_NAMES:
         return any(_may_expand(word) or STDIN_PATH.fullmatch(os.path.normpath(_unquote(word))) for word in argv[1:])
+    if argv and _command_name(argv) in SHELL_NAMES and (scripts := _script_texts(argv)):
+        return any(_script_reads_stdin(script) for script in scripts)  # sh -c reads stdin only if its script does
     if argv:
         return _command_name(argv) in SHELL_NAMES or _may_expand(argv[0])
     words = [_unquote(word) for word in simple.words]
@@ -2778,13 +2869,25 @@ def _unreadable_reason(command: str) -> str | None:
     return AWAY_DENIED if "askaway" in command and AWAY_SWITCH_TEXT.search(command) else None
 
 
+class _FedTexts:
+    """The substitutions of one line with the heredoc bodies and here-strings inside each, shared by the nested scans.
+    read_upto counts, per working directory, the entries read there; reads counts the texts read in all, which the
+    scan bounds (FED_SCAN_LIMIT), so a line costs at most that many reads however its cds and evals alternate."""
+
+    def __init__(self) -> None:
+        self.texts: dict[str, tuple[list[str], list[str]]] = {}  # substitution text -> (its bodies, its here-string words)
+        self.read_upto: dict[tuple[str, tuple[tuple[str, str], ...]], int] = {}  # cwd and variables -> entries read there
+        self.spent = 0  # characters read in all: each read costs its text and FED_READ_COST
+
+
 class _ShellScan:
     """One Bash command read as the shell runs it: the working directory, whether the guard knows it, and the
     ASKAWAY_HOME it exports."""
 
     def __init__(self, cwd: str, exported: Mapping[str, str], roots: tuple[str, ...], cwd_known: bool = True,
                  written: list[str] | None = None, depth: int = 0, *, hinted: bool | None = None, prose: bool = False,
-                 strict: bool = False, fed: dict[str, list[str]] | None = None) -> None:
+                 strict: bool = False, fed: _FedTexts | None = None,
+                 variables: Mapping[str, str] | None = None) -> None:
         self.hinted = hinted  # does the whole command mention the state folder? set by the first text() call
         self.strict = strict  # does the unknown directory come from more than a cd to a variable?
         self.prose = prose  # is this text inside a git or gh command, whose heredoc is message text?
@@ -2797,9 +2900,9 @@ class _ShellScan:
         self.written: list[str] = [] if written is None else written
         self.command = ""  # the text being scanned, for a comment that cannot be read alone
         self.tail_checked = False  # whether a lone-quote comment's tail was already read as an unreadable command
-        # the heredoc bodies and here-strings inside the line's substitutions, by the substitution's text, emptied once
-        # scanned (_fed_reason); nested scans share it, so each substitution is read once and each text scanned once
-        self.fed: dict[str, list[str]] = {} if fed is None else fed
+        # the heredoc bodies and here-strings inside the line's substitutions (_fed_reason); nested scans share it
+        self.fed: _FedTexts = _FedTexts() if fed is None else fed
+        self.variables: dict[str, str] = dict(variables or {})  # the shell variables set so far, for here-strings
 
     def text(self, command: str) -> str | None:
         if self.depth > SCAN_DEPTH_LIMIT:
@@ -2817,19 +2920,30 @@ class _ShellScan:
         self.command = command
         if self.hinted is None:
             self.hinted = STATE_HINT.search(command) is not None
-        simple_commands = _simple_commands(tokens)
+        simple_commands = _simple_commands(tokens, bodies)
         self._record_fed([word for simple in simple_commands for word in simple.words])
         if not self._prose(simple_commands) and "<<" in command and (
                 reason := _code_reason(_heredoc_code(command), sandboxed=False)) is not None:
             return reason  # a heredoc body is code too, except an inbox call's JSON body and git or gh message text
-        return self._run_simple_commands(simple_commands, [*bodies, *_here_strings(tokens)])
+        return self._run_simple_commands(simple_commands)
 
-    def _run_simple_commands(self, simple_commands: Sequence[_Simple], stdin_texts: list[str]) -> str | None:
-        """The first denial among the line's simple commands. A shell that reads its script from stdin runs the line's
-        heredoc bodies and here-strings, scanned once at that shell's place in the line, as the shell runs them."""
+    def _run_simple_commands(self, simple_commands: Sequence[_Simple]) -> str | None:
+        """The first denial among the line's simple commands. A shell that reads its script from stdin runs the texts
+        fed to it, scanned at that shell in the directory it runs in: the heredoc bodies and here-strings of its own
+        command, and the text of the echo or printf commands and heredocs before it that no shell has read yet (a pipe
+        or a file may feed it; the scan does not follow which, an over-deny kept on purpose)."""
+        stdin_texts: list[str] = []
+        outer: list[tuple[dict[str, str], dict[str, str]]] = []  # the variables and exports outside each open ( ... )
         for simple in simple_commands:
+            while len(outer) < simple.depth:
+                outer.append((dict(self.variables), dict(self.exported)))
+            while len(outer) > simple.depth:
+                self.variables, self.exported = outer.pop()
             if (reason := self._simple(simple)) is not None:
                 return reason
+            argv = _strip_prefix(simple.words)[1]
+            here = [text for raw in simple.here for text in _here_string_texts(raw, {**self.exported, **self.variables})]
+            stdin_texts += [*simple.bodies, *here, *_output_texts(argv)]
             if _reads_stdin_script(simple):  # echo "$(cat <<'EOF' ...)" | bash runs what the substitution printed
                 if (reason := self._stdin_reason(stdin_texts) or self._fed_reason()) is not None:
                     return reason
@@ -2839,6 +2953,9 @@ class _ShellScan:
     def _stdin_reason(self, texts: Sequence[str]) -> str | None:
         """The first denial among texts a shell reads from its stdin, each scanned as a command line of its own."""
         for text in texts:
+            self.fed.spent += FED_READ_COST + len(text)  # every read of stdin text counts, so FED_SCAN_LIMIT bounds them all
+            if self.fed.spent > FED_SCAN_LIMIT:
+                return UNREADABLE_DENIED
             if (reason := self._child(self.exported).text(text)) is not None:
                 return reason
         return None
@@ -2849,21 +2966,27 @@ class _ShellScan:
         pending = [text for word in words for text in _substitutions(word)]
         while pending:
             text = pending.pop()
-            if text in self.fed:
+            if text in self.fed.texts:
                 continue
             bodies: list[str] = []
             tokens = _shell_tokens(text, bodies) or []
-            self.fed[text] = [*bodies, *_here_strings(tokens)]
+            self.fed.texts[text] = (bodies, [raw for simple in _simple_commands(tokens) for raw in simple.here])
             pending += [inner for kind, word in tokens if kind == "word" for inner in _substitutions(word)]
 
     def _fed_reason(self) -> str | None:
-        """Scan the recorded substitution texts not scanned yet, as a shell would run what the substitutions printed.
-        Each is emptied before the scan, so a body that itself runs an eval does not scan itself again."""
-        texts: list[str] = []
-        for key, fed in list(self.fed.items()):
-            texts += fed
-            self.fed[key] = []
-        return self._stdin_reason(texts)
+        """Scan the recorded substitution texts as a shell or an eval runs what they printed, once per working directory:
+        a cd between two evals changes where the second one runs the text. An entry is counted read before its texts
+        are scanned, so a body that itself runs an eval does not scan itself again in the same directory."""
+        lookup = {**self.exported, **self.variables}
+        state = (self.cwd, tuple(sorted(lookup.items())))  # a here-string reads the variables as they are now
+        while (start := self.fed.read_upto.get(state, 0)) < len(self.fed.texts):
+            end = len(self.fed.texts)
+            self.fed.read_upto[state] = end
+            for bodies, here in islice(self.fed.texts.values(), start, end):
+                for text in [*bodies, *(read for raw in here for read in _here_string_texts(raw, lookup))]:
+                    if (reason := self._stdin_reason([text])) is not None:
+                        return reason
+        return None
 
     def _prose(self, simple_commands: Sequence[_Simple]) -> bool:
         """Is a heredoc here commit, PR or issue text? Yes when every command is a git or gh message command (see
@@ -2879,6 +3002,10 @@ class _ShellScan:
     def _simple(self, simple: _Simple) -> str | None:
         env, argv = _strip_prefix(simple.words)
         name = _command_name(argv)
+        if not argv:
+            self.variables.update(env)  # a plain assignment sets the variable in this shell
+        elif name in (*SHELL_VAR_NAMES, "export"):
+            self.variables.update(_assignments(argv[1:]))
         if name == "export":
             exported = _assignments(argv[1:])
             self.exported.update(exported)
@@ -2920,7 +3047,8 @@ class _ShellScan:
         """A scan of text nested in this command: it shares the line's written paths, substitution texts and what the
         whole command hints."""
         return _ShellScan(self.cwd, exported, self.roots, self.cwd_known, self.written, self.depth + 1,
-                          hinted=self.hinted, strict=self.strict, prose=self.prose or prose, fed=self.fed)
+                          hinted=self.hinted, strict=self.strict, prose=self.prose or prose, fed=self.fed,
+                          variables=self.variables)
 
     def _directory_untracked(self, name: str, argv: Sequence[str], env: Mapping[str, str]) -> bool:
         """Does the command move this shell's directory where the scan cannot follow it?

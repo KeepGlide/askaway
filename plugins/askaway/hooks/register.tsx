@@ -1099,6 +1099,8 @@ async function submitGroup($: EngineInterface, group: Group): Promise<void> {
     }
     const ids = await settledIds($, items.map(item => item.id))
     await changeWizard($, prev => clearPicks(prev, ids, group.questions[0]?.id ?? null))
+    // The review belongs to the group just sent: a later group must not draw it with one question picked.
+    await update($, reviewAtom, () => false)
   } finally {
     submitting.delete(group.key)
   }
@@ -1142,8 +1144,12 @@ async function pickOption($: EngineInterface, id: string, choice: Pick): Promise
   if (after.questionId !== null && after.questionId !== id) await markArrival($, after.questionId)
 }
 
-// Leaves the review for the card of the question on screen (Back on the review, a jump, a move).
-const leaveReview = ($: EngineInterface): Promise<void> => update($, reviewAtom, () => false)
+// Leaves the review for the card of the question on screen (Back on the review, a jump, a move). The arrival line goes
+// too: it marks the pick that just moved the card, and a move or a jump away from that card is no longer that pick.
+const leaveReview = async ($: EngineInterface): Promise<void> => {
+  await update($, reviewAtom, () => false)
+  await update($, arrivalAtom, () => null)
+}
 
 // Marks the card a pick moved to, so it draws its arrival line for ARRIVAL_MS: the move itself is instant, and two cards of
 // one group often look alike. A later arrival replaces it; the timer clears only its own.
@@ -1283,8 +1289,8 @@ function setMoveLock($: EngineInterface, locked: boolean): Promise<void> {
   return update($, moveLockAtom, () => locked)
 }
 
-// Runs a move (a pick, Next or Back) unless one ran within MOVE_LOCK_MS; while the lock holds, the pane draws those buttons
-// disabled. Submit and the other actions are not moves.
+// Runs a move (a pick, Next, Back or the review's Back) unless one ran within MOVE_LOCK_MS; while the lock holds, the pane
+// draws those buttons disabled. Submit and the other actions are not moves.
 function moveOnce($: EngineInterface, move: () => void): void {
   if (moveLocked) return
   report($, setMoveLock($, true))
@@ -1310,7 +1316,7 @@ const actionsFor = ($: EngineInterface): PaneActions => ({
   back: () => moveOnce($, () => report($, afterPendingOther($, () => moveWizard($, (current, group) => flow.back(current, group))))),
   next: () => moveOnce($, () => report($, afterPendingOther($, () => moveWizard($, (current, group) => flow.next(current, group))))),
   submit: () => report($, afterPendingOther($, () => submitCurrent($), flow.submittedTypedOther)),
-  leaveReview: () => report($, leaveReview($)),
+  leaveReview: () => moveOnce($, () => report($, leaveReview($))),
   saveWho: text => report($, saveWho($, text)),
   skipWho: () => report($, saveWho($, '')),
 })

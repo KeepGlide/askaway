@@ -7,6 +7,19 @@ Commit hashes name the change in `git log`.
 
 ## [Unreleased]
 
+### Fixed
+- The Bash guard's scanner scans each shell's own heredocs and here-strings in the directory that shell runs in, so `bash <<< 'true'; cd` into the state folder, then a second `bash <<<` that writes there, is denied by the scanner alone (gauntlet 1, rule1-1).
+- The Bash guard's scanner reads a heredoc or here-string held by a substitution again for each directory an `eval` or `-c` script runs it in, so the same `eval "$x"` after a `cd` into the state folder is denied. Each read of a stdin or substitution text costs its length plus `FED_READ_COST`, and a line whose reads pass `FED_SCAN_LIMIT` (64 KiB) is denied as unreadable, so a dense 61 KB line scans in about 0.3 s instead of up to 7 s (gauntlet 1, rule1-2).
+- The Bash guard's scanner reads the text that `echo` or `printf` pipes into a shell, with the `printf` format applied as bash applies it and `$'...'` words decoded, and a here-string that is one variable, set earlier on the same line by an assignment, `export`, `declare`, `typeset` or `readonly` (an assignment inside `( ... )` ends with the subshell). So `printf '%s %s %s' python3 <askaway.py> answer | bash`, `echo $'\x70ython3 ...' | bash` and `x=ok; export x='<answer line>'; bash <<< "$x"` are denied by the scanner alone and by the full guard; all were allowed before. A `sh -c` script reads stdin only when its own commands do, so `echo '<answer line>' > notes.md && bash -c 'make test'` stays allowed while `echo ... > f; bash < f` is denied (gauntlet 1, safe5-1).
+- After Submit all, the review no longer shows on the next group, and it is drawn only for groups of two or more questions (gauntlet 1, uiuxs2-1).
+- The review's Back button goes through the move lock and has the same hotkey as the card's Back (gauntlet 1, uiuxs2-3, uiuxs2-4).
+- The arrival line goes on Next, Back and a jump; only a pick draws it (gauntlet 1, uiuxs2-5).
+- The review draws the answers in the group's tree, as the open tree does: the group's name on top, then its sessions and one row per answer, above the title and the hint.
+- The card keeps a row for the arrival line and one for the unanswered line, blank when they do not apply, so the card no longer shifts when a line comes or goes (gauntlet 1, uiuxs2-2).
+
+### Changed
+- SPEC.md (Bash and file guard) states the guard's threat: an agent of the same user that answers its own question or turns away mode on the plain way, out of haste or because text it read told it to. Deliberate evasion is a known limit, listed there, not a bug to chase, and no OS sandbox backs the guard (owner decision after gauntlet 1: the sandbox would change every Bash command of every session).
+
 ## [0.4.0-beta.43] - 2026-10-25
 
 Askaway 0.4.0-beta.43 makes the Bash guard's scanner read heredocs and here-strings that a shell, `source` or an `eval` script runs (issues #10 to #14), and adds three card cues: the unanswered line, the arrival line and the review before Submit all.

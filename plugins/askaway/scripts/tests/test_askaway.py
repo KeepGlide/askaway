@@ -5848,6 +5848,28 @@ SHELL_STDIN_SCRIPTS = {
         f"f(){{ eval \"$x\"; }}; x=$(cat <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n); f", ANSWER),
     "answer-loop-eval-before-assignment": (
         f"for i in 1 2; do eval \"$x\"; x=$(cat <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n); done", ANSWER),
+    # each shell runs its own here-string in the directory it runs in, not the first shell's (rule (2), rule1-1)
+    "state-second-here-string-after-cd": (
+        "bash <<< 'true'; cd ~/.claude/state/askaway; bash <<< 'echo x > ask.json'", STATE),
+    # a substitution's text is read again in the directory of each eval, not only in the first one's (rule1-2)
+    "state-eval-after-cd": (
+        "x=$(cat <<'EOF'\necho x > ask.json\nEOF\n); eval \"$x\"; cd ~/.claude/state/askaway; eval \"$x\"", STATE),
+    # what echo or printf writes into a shell, and a here-string that expands a variable assigned on the line (safe5-1)
+    "answer-printf-pipe-bash": (f"printf '%s\\n' 'python3 {SCRIPT} answer q-1-abcdef A' | bash", ANSWER),
+    "answer-printf-escaped-newline-pipe-bash": (
+        f"printf 'ls\\npython3 {SCRIPT} answer q-1-abcdef A' | bash", ANSWER),
+    "answer-echo-pipe-sh": (f"echo 'python3 {SCRIPT} answer q-1-abcdef A' | sh", ANSWER),
+    "answer-assigned-here-string": (f"X='python3 {SCRIPT} answer q-1-abcdef A'; bash <<< \"$X\"", ANSWER),
+    # printf applies its format and repeats it while arguments remain; echo and printf read $'...' words decoded
+    "answer-printf-format-spread": ("printf '%s %s %s' python3 /opt/askaway.py answer | bash", ANSWER),
+    "answer-printf-format-literal": ("printf 'python3 /opt/askaway.py %s\\n' answer | bash", ANSWER),
+    "answer-printf-args-no-separator": ("printf '%s' 'python3' ' /opt/askaway.py' ' answer' | bash", ANSWER),
+    "answer-echo-ansi-c-word": ("echo $'\\x70ython3 /opt/askaway.py answer' | bash", ANSWER),
+    # a variable set by export, declare or typeset is the value a here-string reads, as a plain assignment is
+    "answer-exported-here-string": ("x=ok; export x='python3 /opt/askaway.py answer'; bash <<< \"$x\"", ANSWER),
+    "answer-declared-here-string": ("x=ok; declare x='python3 /opt/askaway.py answer'; bash <<< \"$x\"", ANSWER),
+    # echo text that a shell reads from a file redirection is fed to that shell
+    "answer-echo-file-then-bash-stdin": ("echo 'python3 /opt/askaway.py answer' > f; bash < f", ANSWER),
 }
 
 
@@ -5860,6 +5882,13 @@ def test_a_shell_reading_its_script_from_a_heredoc_is_denied(command, reason, ca
 @pytest.mark.parametrize(("command", "reason"), SHELL_STDIN_SCRIPTS.values(), ids=SHELL_STDIN_SCRIPTS.keys())
 def test_the_scanner_alone_denies_a_shell_reading_its_script_from_a_heredoc(command, reason, capsys, monkeypatch):
     assert bash_denial(capsys, monkeypatch, command) == reason
+
+
+@pytest.mark.usefixtures("scanner_only")  # the reads of substitution texts stay bounded: a cd before each eval, many times
+def test_the_scanner_alone_bounds_the_reads_of_substitution_texts(capsys, monkeypatch):
+    defs = "; ".join(f"x{i}=$(cat <<'EOF'\necho {i}\nEOF\n)" for i in range(150))
+    alternating = "; ".join(f"cd /tmp/askaway-cd-{i}; eval \"$x0\"" for i in range(600))
+    assert bash_denial(capsys, monkeypatch, defs + "; " + alternating) == askaway.UNREADABLE_DENIED
 
 
 # A shell that runs harmless text from a heredoc stays allowed by the scanner and by the full guard.
@@ -5883,6 +5912,19 @@ SHELL_STDIN_CONTROLS = {
     "eval-cat-eval-ssh-agent-body": "eval \"$(cat <<'EOF'\neval \"$(ssh-agent -s)\"\nEOF\n)\"",
     "eval-direnv-hook": "eval \"$(direnv hook bash)\"",
     "git-commit-m-cat-prose": f"git commit -m \"$(cat <<'EOF'\nfix: python3 {SCRIPT} answer q-1-abcdef A\nEOF\n)\"",
+    # the reads of each shell and of each eval stay narrow: text that feeds no shell, a shell that reads no text, a cd
+    # that is not the state folder
+    "echo-pipe-grep": "echo hi | grep h",
+    "printf-pipe-sort": "printf '%s\\n' a b | sort",
+    "assigned-here-string-echo": "X=1; bash <<< \"echo $X\"",
+    "cd-tmp-here-string-ls": "cd /tmp; bash <<< 'ls'",
+    "here-string-then-cd-tmp-here-string": "bash <<< 'true'; cd /tmp; bash <<< 'ls'",
+    "eval-after-cd-tmp": "x=$(cat <<'EOF'\necho x > ask.json\nEOF\n); eval \"$x\"; cd /tmp; eval \"$x\"",
+    "echo-text-feeds-no-shell": f"echo python3 {SCRIPT} answer q-1-abcdef A",
+    # echo or printf text feeds no shell that reads stdin: a -c shell that starts none, and a variable in a subshell
+    "echo-file-then-bash-c-make": "echo \"python3 /opt/askaway.py answer\" > notes.md && bash -c 'make test'",
+    "printf-file-then-bash-c-true": "printf '%s\\n' 'python3 /opt/askaway.py answer' > n2.txt; bash -c 'true'",
+    "subshell-assignment-not-read": "( x='python3 /opt/askaway.py answer' ); bash <<< \"$x\"",
 }
 
 
