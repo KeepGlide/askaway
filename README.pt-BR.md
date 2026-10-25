@@ -750,9 +750,9 @@ Encontrou um? [Abra uma issue](https://github.com/KeepGlide/askaway/issues/new).
 | Categoria | Testes |
 |---|---|
 | Mod (TypeScript), `plugins/askaway/tests/` | 510 |
-| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 1487 |
+| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 1521 |
 
-Contagem Python de `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts`, no commit `0c81838`, em 2026-10-24. A contagem do mod vem de uma execução nova de `claude plugin test plugins/askaway` no mesmo commit (o runner não tem modo de coleta).
+Contagem Python de `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts`, no commit `c4f43a7`, em 2026-10-24. A contagem do mod vem de uma execução nova de `claude plugin test plugins/askaway` no mesmo commit (o runner não tem modo de coleta).
 
 ## 🔧 Desenvolvimento
 

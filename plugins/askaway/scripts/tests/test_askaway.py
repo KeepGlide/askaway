@@ -5826,6 +5826,28 @@ SHELL_STDIN_SCRIPTS = {
     "away-source-dev-stdin": (f". /dev/stdin <<'EOF'\npython3 {SCRIPT} away on\nEOF", askaway.AWAY_DENIED),
     "state-source-dev-stdin": ("source /dev/stdin <<'EOF'\ncd ~/.claude/state\nrm -r askaway\nEOF", STATE),
     "state-expanded-glob": ("ba*sh <<'EOF'\ncd ~/.claude/state\nrm -r askaway\nEOF", STATE),
+    # eval or -c runs what a substitution printed from a heredoc or here-string (issue #14)
+    "answer-eval-cat-heredoc": (f"eval \"$(cat <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n)\"", ANSWER),
+    "answer-bash-c-cat-heredoc": (f"bash -c \"$(cat <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n)\"", ANSWER),
+    "answer-assigned-eval": (f"x=$(cat <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n); eval \"$x\"", ANSWER),
+    "answer-assigned-sh-c": (f"x=$(cat <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n)\nsh -c \"$x\"", ANSWER),
+    "answer-eval-backquote-heredoc": (f"eval \"`cat <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n`\"", ANSWER),
+    "answer-eval-cat-here-string": (f"eval \"$(cat <<< 'python3 {SCRIPT} answer q-1-abcdef A')\"", ANSWER),
+    "answer-eval-nested-substitution": (
+        f"eval \"$(echo \"$(cat <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n)\")\"", ANSWER),
+    "away-eval-cat-heredoc": (f"eval \"$(cat <<'EOF'\npython3 {SCRIPT} away on\nEOF\n)\"", askaway.AWAY_DENIED),
+    "state-eval-cat-heredoc": ("eval \"$(cat <<'EOF'\ncd ~/.claude/state\nrm -r askaway\nEOF\n)\"", STATE),
+    # -c -- runs the word after the --; a substitution as the command word, or piped to a shell, runs what it printed;
+    # an eval in a function or loop may run before the assignment it reads in the line
+    "answer-bash-c-dashdash-cat-heredoc": (
+        f"bash -c -- \"$(cat <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n)\"", ANSWER),
+    "answer-substitution-command-word": (f"$(cat <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n)", ANSWER),
+    "answer-echo-substitution-pipe-bash": (
+        f"echo \"$(cat <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n)\" | bash", ANSWER),
+    "answer-function-eval-before-assignment": (
+        f"f(){{ eval \"$x\"; }}; x=$(cat <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n); f", ANSWER),
+    "answer-loop-eval-before-assignment": (
+        f"for i in 1 2; do eval \"$x\"; x=$(cat <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n); done", ANSWER),
 }
 
 
@@ -5856,7 +5878,18 @@ SHELL_STDIN_CONTROLS = {
     "expanded-shell-echo-body": "$SHELL <<'EOF'\necho hello\nEOF",
     "quoted-glob-word-body": "'ba*sh' <<'EOF'\npython3 askaway.py status\nEOF",
     "source-dev-stdin-echo-body": "source /dev/stdin <<'EOF'\necho hello\nEOF",
+    "eval-cat-echo-body": "eval \"$(cat <<'EOF'\necho hello\nEOF\n)\"",
+    "eval-ssh-agent": "eval \"$(ssh-agent -s)\"",
+    "eval-cat-eval-ssh-agent-body": "eval \"$(cat <<'EOF'\neval \"$(ssh-agent -s)\"\nEOF\n)\"",
+    "eval-direnv-hook": "eval \"$(direnv hook bash)\"",
+    "git-commit-m-cat-prose": f"git commit -m \"$(cat <<'EOF'\nfix: python3 {SCRIPT} answer q-1-abcdef A\nEOF\n)\"",
 }
+
+
+@pytest.mark.usefixtures("scanner_only")  # no eval or -c runs the variable, so the substituted body stays data
+def test_a_heredoc_substitution_no_script_runs_stays_data(capsys, monkeypatch):
+    command = f"x=$(cat <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n); echo \"$x\""
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
 
 
 @pytest.mark.usefixtures("scanner_only")  # a source of a file, not of stdin, leaves the heredoc body data

@@ -2466,15 +2466,22 @@ def _substitutions(raw: str) -> list[str]:
     return found
 
 
+SCRIPT_EXPANSION: Final = re.compile(r"[$`]")  # an eval or -c script with a $ or ` may run what a substitution printed
+
+
 def _script_texts(argv: Sequence[str]) -> list[str]:
-    """The text an sh -c or eval runs, so the scan reads it as a command line of its own."""
+    """The text an sh -c or eval runs, so the scan reads it as a command line of its own (sh -c -- 'x' runs x)."""
     name = _command_name(argv)
     args = [_quoted_text(word) for word in argv[1:]]
     if name == "eval":
         return [" ".join(args)]
     if name not in SHELL_NAMES:
         return []
-    return next(([args[index + 1]] for index, arg in enumerate(args[:-1]) if SHELL_C_FLAG.fullmatch(arg)), [])
+    index = next((index for index, arg in enumerate(args[:-1]) if SHELL_C_FLAG.fullmatch(arg)), None)
+    if index is None:
+        return []
+    script = index + 2 if args[index + 1] == "--" and index + 2 < len(args) else index + 1
+    return [args[script]]
 
 
 def _reads_stdin_script(simple: _Simple) -> bool:
@@ -2777,7 +2784,7 @@ class _ShellScan:
 
     def __init__(self, cwd: str, exported: Mapping[str, str], roots: tuple[str, ...], cwd_known: bool = True,
                  written: list[str] | None = None, depth: int = 0, *, hinted: bool | None = None, prose: bool = False,
-                 strict: bool = False) -> None:
+                 strict: bool = False, fed: dict[str, list[str]] | None = None) -> None:
         self.hinted = hinted  # does the whole command mention the state folder? set by the first text() call
         self.strict = strict  # does the unknown directory come from more than a cd to a variable?
         self.prose = prose  # is this text inside a git or gh command, whose heredoc is message text?
@@ -2790,6 +2797,9 @@ class _ShellScan:
         self.written: list[str] = [] if written is None else written
         self.command = ""  # the text being scanned, for a comment that cannot be read alone
         self.tail_checked = False  # whether a lone-quote comment's tail was already read as an unreadable command
+        # the heredoc bodies and here-strings inside the line's substitutions, by the substitution's text, emptied once
+        # scanned (_fed_reason); nested scans share it, so each substitution is read once and each text scanned once
+        self.fed: dict[str, list[str]] = {} if fed is None else fed
 
     def text(self, command: str) -> str | None:
         if self.depth > SCAN_DEPTH_LIMIT:
@@ -2808,6 +2818,7 @@ class _ShellScan:
         if self.hinted is None:
             self.hinted = STATE_HINT.search(command) is not None
         simple_commands = _simple_commands(tokens)
+        self._record_fed([word for simple in simple_commands for word in simple.words])
         if not self._prose(simple_commands) and "<<" in command and (
                 reason := _code_reason(_heredoc_code(command), sandboxed=False)) is not None:
             return reason  # a heredoc body is code too, except an inbox call's JSON body and git or gh message text
@@ -2819,8 +2830,8 @@ class _ShellScan:
         for simple in simple_commands:
             if (reason := self._simple(simple)) is not None:
                 return reason
-            if stdin_texts and _reads_stdin_script(simple):
-                if (reason := self._stdin_reason(stdin_texts)) is not None:
+            if _reads_stdin_script(simple):  # echo "$(cat <<'EOF' ...)" | bash runs what the substitution printed
+                if (reason := self._stdin_reason(stdin_texts) or self._fed_reason()) is not None:
                     return reason
                 stdin_texts = []
         return None
@@ -2831,6 +2842,28 @@ class _ShellScan:
             if (reason := self._child(self.exported).text(text)) is not None:
                 return reason
         return None
+
+    def _record_fed(self, words: Sequence[str]) -> None:
+        """Record the heredoc bodies and here-strings inside the words' substitutions, nested ones included, before the
+        line runs, so an eval "$x" before the x=$(cat <<'EOF' ...) that sets it (a function, a loop) still sees them."""
+        pending = [text for word in words for text in _substitutions(word)]
+        while pending:
+            text = pending.pop()
+            if text in self.fed:
+                continue
+            bodies: list[str] = []
+            tokens = _shell_tokens(text, bodies) or []
+            self.fed[text] = [*bodies, *_here_strings(tokens)]
+            pending += [inner for kind, word in tokens if kind == "word" for inner in _substitutions(word)]
+
+    def _fed_reason(self) -> str | None:
+        """Scan the recorded substitution texts not scanned yet, as a shell would run what the substitutions printed.
+        Each is emptied before the scan, so a body that itself runs an eval does not scan itself again."""
+        texts: list[str] = []
+        for key, fed in list(self.fed.items()):
+            texts += fed
+            self.fed[key] = []
+        return self._stdin_reason(texts)
 
     def _prose(self, simple_commands: Sequence[_Simple]) -> bool:
         """Is a heredoc here commit, PR or issue text? Yes when every command is a git or gh message command (see
@@ -2884,9 +2917,10 @@ class _ShellScan:
         return None
 
     def _child(self, exported: Mapping[str, str], *, prose: bool = False) -> "_ShellScan":
-        """A scan of text nested in this command: it shares the line's written paths and what the whole command hints."""
+        """A scan of text nested in this command: it shares the line's written paths, substitution texts and what the
+        whole command hints."""
         return _ShellScan(self.cwd, exported, self.roots, self.cwd_known, self.written, self.depth + 1,
-                          hinted=self.hinted, strict=self.strict, prose=self.prose or prose)
+                          hinted=self.hinted, strict=self.strict, prose=self.prose or prose, fed=self.fed)
 
     def _directory_untracked(self, name: str, argv: Sequence[str], env: Mapping[str, str]) -> bool:
         """Does the command move this shell's directory where the scan cannot follow it?
@@ -2977,13 +3011,19 @@ class _ShellScan:
         return os.path.realpath(os.path.join(self.cwd, literal))
 
     def _nested(self, simple: _Simple, env: Mapping[str, str], argv: Sequence[str]) -> str | None:
-        """Text the command runs on its own: $(...) or `...` (with the exports so far), sh -c or eval (with the prefix)."""
+        """Text the command runs on its own: $(...) or `...` (with the exports so far), sh -c or eval (with the prefix).
+        An eval or -c script that may expand, or a command word that may expand, runs what a substitution printed, so
+        the heredoc bodies and here-strings inside the line's substitutions (x=$(cat <<'EOF' ...); eval "$x") are
+        scanned as command lines too (_fed_reason)."""
+        scripts = _script_texts(argv)
         scans = [(self.exported, text) for word in simple.words for text in _substitutions(word)]
-        scans += [({**self.exported, **env}, text) for text in _script_texts(argv)]
+        scans += [({**self.exported, **env}, text) for text in scripts]
         for exported, text in scans:
             reason = self._child(exported, prose=_message_command(env, argv, own_heredoc=False)).text(text)
             if reason is not None:
                 return reason
+        if any(SCRIPT_EXPANSION.search(text) for text in scripts) or (argv and _may_expand(argv[0])):
+            return self._fed_reason()
         return None
 
     def _change_directory(self, name: str, argv: Sequence[str]) -> None:
