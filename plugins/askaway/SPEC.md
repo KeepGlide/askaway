@@ -390,8 +390,9 @@ status list). `hooks/pane.tsx`, `renderPane`.
   and 28px after the Submit all button (key `keepglide-submit`, `KEEPGLIDE_SUBMIT_SIZE`). The terminal draws no mark.
 - **Question card**, one question at a time, bordered, rows separated by a gap. Top to bottom:
   - for 1.5 s after a pick moved the card to this question (`ARRIVAL_MS`, `markArrival`, `hooks/register.tsx`), a
-    bold line in the `success` colour above the title: "✓ Previous pick saved · now question <n> of <total>" (pt "✓ Escolha
-    anterior salva · agora a pergunta <n> de <total>", `card.arrival`); the move itself stays instant, and Next, Back and
+    bold line in the `success` colour above the title: "✓ Previous pick kept for Submit all · now question <n> of <total>" (pt "✓ Escolha
+    anterior guardada para Enviar tudo · agora a pergunta <n> de <total>", `card.arrival`; the button name is the one the card
+    draws, "Submit all" or "Enviar tudo"; no answer is written until Submit all); the move itself stays instant, and Next, Back and
     a jump draw no such line. The line sits in a row that is always drawn, blank when it has none, as the unanswered line
     below the options does, so the card does not move when either comes or goes;
   - the title row (`renderTitleRow`): where the surface draws Markdown, one heading, "### <title> - See session ↗ - <risk
@@ -460,8 +461,10 @@ status list). `hooks/pane.tsx`, `renderPane`.
 
   - while the question has no pick, a line in the `warning` colour: "Not answered yet: pick an option." (pt "Ainda não
     respondida: escolha uma opção."); with a kept Other label, which Apply keeps without picking it, "Not answered yet: press
-    <L> to choose your text." (pt "Ainda não respondida: clique em <L> para escolher o seu texto."), <L> the Other letter
-    (`renderUnanswered`, `card.unanswered`, `card.unansweredKept`); blank (its row kept) on an ended or fading card, and once the question is picked;
+    <L> to choose your text." (pt "Ainda não respondida: aperte <L> para escolher o seu texto."), <L> the Other letter
+    (`renderUnanswered`, `card.unanswered`, `card.unansweredKept`); the same line while the question's pick is picked but a
+    submit did not deliver it (its pick stays a draft): "Not delivered yet: press Submit all again." (pt "Ainda não entregue:
+    aperte Enviar tudo de novo.", `card.undelivered`, `undeliveredAtom`); blank (its row kept) on an ended or fading card, and once the question is picked and delivered;
   - a separator: a 1px rule on the desktop, a row of "─" on the terminal (`renderDivider`);
   - the nav row: [← Back] (Portuguese: "← Voltar") on every question, dim on the first; [Next →] (Portuguese:
     "Próxima →") on every question but the last; on the last one, [Submit all (n)] (Portuguese: "Enviar tudo (n)"),
@@ -474,7 +477,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
   so no hotkey fires from typing.
 - **Choosing**: an option records the pick and moves on: to the first question without a pick after the current one
   (wrapping to the start), or, once every question of the group has a pick, to the last question, where Submit all is.
-  In a group of two or more questions, the pick that leaves every question picked draws the **review** in place of the
+  In a group of two or more questions, the pick that leaves every question picked, or the Other text recorded from its field that does (see Other…), draws the **review** in place of the
   card (`reviewAtom`, `renderReview`): a bordered block that opens with the group's tree, drawn as the open tree draws
   it (the group's name on top, then its sessions), with one link row per question, "○ <n>. <title> → <chosen answer>"
   (the option label, or an Other text in typographic quotes, `answerNameOf`), whose press jumps to that question's card;
@@ -483,7 +486,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
   Back on the review shows the last question's card, which keeps its own Submit all; a jump, Next or Back leaves the
   review (`leaveReview`), and a pick that completes the group again draws it again. The review is drawn only while every
   question of the group is picked, so a new question in the group brings the card back.
-  "Other…" with its typed text records the pick when the field loses focus or a nav action runs, and keeps the card; Enter in its field is Apply, which keeps the text as the button's label and drops an Other pick, so a click on the button picks it (see above). After each pick the group
+  "Other…" with its typed text records the pick when the field loses focus or a nav action runs; the card stays, unless that record completes the group, and then the review is drawn as after an option pick (the same check, `reviewIfComplete`, `hooks/register.tsx`). Enter in its field is Apply, which keeps the text as the button's label and drops an Other pick, so a click on the button picks it (see above). After each pick the group
   stays selected. No answer is written until Submit all; the picks are shared through `draft.json` (see "Shared picks").
   A card that is fading after a press takes no pick.
 - **Move lock**: a pick, Next or Back (the card's Back, or the review's Back) starts a 350 ms move lock (`MOVE_LOCK_MS`, `moveOnce`, `hooks/register.tsx`); a second move while it holds does nothing. Submit all and the row Submit are not locked.
@@ -501,7 +504,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
   field and followed straight by a click on Submit all is the answer, with no Enter and no focus move. The answers go out one after another, in the group's order, one CLI run each
   (`askaway.py answer --by panel`, see the answer record above), which writes `a/` first-writer-wins; each card dims when its own answer goes out, not at the press (`startFade` marks only that question, `submitGroup`, `writeAnswer`, `hooks/register.tsx`), so the card on screen, the last question, where Submit all is, dims only after the CLI runs of the questions before it. A card stays dimmed until the CLI has written its reply: the written record takes it off, and a refused or failed reply undims it at once. When the CLI says the reply was written but `a/<id>.json` does not read back yet, a local copy of the reply (`by: panel`, the press time) stands in on the board until a poll reads the file, so the card does not come back active. That copy carries the who the CLI stamps (`panelWho`, `hooks/register.tsx`): the stored name, else the window's `ASKAWAY_WHO`, else the first non-empty of `LOGNAME`, `USER`, `LNAME`, `USERNAME`, else `unknown` (the pane cannot reach getpass's password-database fallback). Then the
   picks of those questions are cleared and the step goes back to the first question. When other groups stay open, the
-  card then shows the first question of the first group still open. A reply that fails does not stop the round: Submit all goes on to the next question and clears only the picks whose reply is on the board or whose session ended (`submitGroup`, `hooks/register.tsx`).
+  card then shows the first question of the first group still open. A reply that fails does not stop the round: Submit all goes on to the next question and clears only the picks whose reply is on the board or whose session ended (`submitGroup`, `hooks/register.tsx`). A question whose reply failed keeps its pick as a draft, and its card shows the not-delivered line until a later submit delivers it or the pick changes (`setUndelivered`, `forgetUndelivered`); a row's Submit that fails does the same for its question.
 - **Picks** survive a re-poll. Picks, and an open Other field, of questions that are no longer open are dropped.
 - **Shared picks**: every session of the state folder shows the same picks. Each change of the picks (an option, an Other text, Submit all, a row's Submit) writes `draft.json` with the picks and the write's `ts` (`changeWizard`, `saveDraft`, `hooks/register.tsx`). Each session's poll applies a draft whose `ts` is newer than the last one it wrote or applied (`applyDraft`; a malformed file is ignored), so the newest write wins; a `draft.json` that exists but does not read holds this session's first write (the picks are kept and retried at the next poll, with `toast.pickNotSaved`), and the retry overwrites it from this session's picks and logs it; the poll's retry skips its turn while a save of this window is in flight, so it does not meet that save's `draft.lock` and report a failure (`draftSaves`, `retryDraft`); a session that starts applies the folder's draft at its first poll. Only the picks and the kept Other labels (`labels`, merged per id like the picks) are shared: the step, the group and the card stay per session. Each write merges this session's changed ids into the file's picks (`saveDraft` reads the file first), so the picks another session made within the same poll interval (5 s) are kept; two sessions that change the same id within that interval keep the later write. Each write's ts is the later of the clock and the last draft ts this session wrote or applied plus one (`saveDraft`), and `applyDraft` applies a draft more than DRAFT_SKEW_MS (60 s) ahead of the clock and pulls its stamp back to the clock; the next draft write restamps the file. After a clock step back larger than a minute, a window's drafts sit ahead of the other windows' clocks and are applied by them, their stamp pulled back to the clock; no pick is lost, since the merge is per id. An answer stays first-writer-wins: a second reply to a question already answered is refused by the CLI (`written: false`), and the pane takes the stored answer. A refused reply raises `toast.replyHeld`, which names the key that holds the question (`writeAnswer`, `hooks/register.tsx`).
 - **History** (under the card, above the footer; `historyOf`, `hooks/model.ts`; `renderHistory`, `hooks/pane.tsx`): the answers

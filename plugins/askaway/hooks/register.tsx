@@ -118,6 +118,9 @@ const arrivalAtom = atom({ plugin: 'askaway', key: 'arrival' } as const, null as
 // Whether the pane draws the review (every chosen answer, Back and Submit all) in place of the card: set by the pick that
 // completes the group, cleared by Back on the review, a jump or a move (leaveReview).
 const reviewAtom = atom({ plugin: 'askaway', key: 'review' } as const, false)
+// The questions whose last Submit all (or row Submit) did not deliver: the card says so until a submit delivers the pick or
+// the pick changes (setUndelivered, forgetUndelivered).
+const undeliveredAtom = atom({ plugin: 'askaway', key: 'undelivered' } as const, [] as string[])
 // The ts of the picks this session last wrote to draft.json or applied from it. A draft with a newer ts is applied.
 let draftTs = 0
 // Whether a move (a pick, Next or Back) ran within MOVE_LOCK_MS; cleared by the timer set in moveOnce. The atom mirrors it.
@@ -1081,6 +1084,13 @@ async function settledIds($: EngineInterface, ids: readonly string[]): Promise<s
   return ids.filter(id => stored.has(id) || ended.has(id))
 }
 
+// Records the outcome of a submit for the questions it asked: one that is not settled keeps its pick as a draft, and its card
+// says so; the others leave the list. Questions that were not asked keep their entries.
+async function setUndelivered($: EngineInterface, asked: readonly string[], settled: readonly string[]): Promise<void> {
+  const failed = asked.filter(id => !settled.includes(id))
+  await update($, undeliveredAtom, prev => [...prev.filter(id => !asked.includes(id)), ...failed])
+}
+
 // Submit all: the draft other windows wrote is applied first (H5), then each question of the group gets its answer through the
 // answer path, and the picks that settled are cleared with the step back on the first question. Nothing is written unless
 // every question has a pick.
@@ -1098,6 +1108,7 @@ async function submitGroup($: EngineInterface, group: Group): Promise<void> {
       if (pick !== undefined) await answerEntry($, folder, id, pick.key, pick.text)
     }
     const ids = await settledIds($, items.map(item => item.id))
+    await setUndelivered($, items.map(item => item.id), ids)
     await changeWizard($, prev => clearPicks(prev, ids, group.questions[0]?.id ?? null))
     // The review belongs to the group just sent: a later group must not draw it with one question picked.
     await update($, reviewAtom, () => false)
@@ -1127,6 +1138,7 @@ async function submitOne($: EngineInterface, id: string): Promise<void> {
     if (group === undefined || pick === undefined || fading[id] !== undefined) return
     await answerEntry($, folder, id, pick.key, pick.text)
     const ids = await settledIds($, [id])
+    await setUndelivered($, [id], ids)
     await changeWizard($, prev => clearPicks(prev, ids))
   } finally {
     submitting.delete(submittingOne(id))
@@ -1139,9 +1151,23 @@ async function pickOption($: EngineInterface, id: string, choice: Pick): Promise
   const { open, group, leaving: fading } = await snapshot($)
   if (group === undefined || fading[id] !== undefined || !group.questions.some(question => question.id === id)) return
   await changeWizard($, prev => flow.choose(prunedWizard(prev, open), group, id, choice))
+  await forgetUndelivered($, id)
+  if (await reviewIfComplete($, group)) return
   const after = await read($, wizardAtom)
-  if (group.questions.length > 1 && flow.submittable(group, after) !== undefined) return update($, reviewAtom, () => true)
   if (after.questionId !== null && after.questionId !== id) await markArrival($, after.questionId)
+}
+
+// The review after a pick, or after an Other text recorded from its field: drawn when that leaves every question of a group of
+// two or more picked (SPEC, Review). Returns whether it drew the review.
+async function reviewIfComplete($: EngineInterface, group: Group): Promise<boolean> {
+  if (group.questions.length < 2 || flow.submittable(group, await read($, wizardAtom)) === undefined) return false
+  await update($, reviewAtom, () => true)
+  return true
+}
+
+// A pick that changes is no longer the one a submit failed on, so its card drops the not-delivered line.
+async function forgetUndelivered($: EngineInterface, id: string): Promise<void> {
+  await update($, undeliveredAtom, prev => prev.filter(one => one !== id))
 }
 
 // Leaves the review for the card of the question on screen (Back on the review, a jump, a move). The arrival line goes
@@ -1208,6 +1234,10 @@ async function submitOther($: EngineInterface, id: string, text: string, record:
   const { open, leaving: fading } = await snapshot($)
   if (fading[id] !== undefined || !open.some(question => question.id === id)) return
   await changeWizard($, prev => record(prunedWizard(prev, open), id, text))
+  await forgetUndelivered($, id)
+  // The recorded text may complete the group: the review follows, as after an option pick.
+  const group = flow.groupsOf(open).find(one => one.questions.some(question => question.id === id))
+  if (group !== undefined) await reviewIfComplete($, group)
 }
 
 // Keep in the "Other…" field (Enter, or the Keep button) moves its text to the question's label and empties the field: the
@@ -1420,6 +1450,7 @@ export const register: Register = on => {
       moveLocked: await read($, moveLockAtom),
       arrival: await read($, arrivalAtom),
       review: await read($, reviewAtom),
+      undelivered: await read($, undeliveredAtom),
       surface: e.surface,
     }
     return renderPane($.ui.resolve(e), view, actionsFor($), lang, heldFor(e.surface, e.requestId))

@@ -129,6 +129,9 @@ declare module 'claude-code' {
       arrival: string | null
       // Whether the review of every chosen answer is drawn in place of the card (set by the pick that completes the group).
       review: boolean
+      // Ids of questions whose last Submit all (or row Submit) did not deliver their pick: the pick stays a draft and the card
+      // says so until a later submit delivers it or the pick changes.
+      undelivered: string[]
       // Whether this session is inside a model turn of its own (turn.start to turn.complete; subagent turns excluded).
       turn: { isBusy: boolean }
       // Ids of open questions whose asking session has ended (`list --open` marks them `ended`): their card shows a notice.

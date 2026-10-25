@@ -3040,6 +3040,23 @@ test('Submit all drawn off with an Other text on one of two questions records th
   await pane.unmount()
 })
 
+test('an Other text recorded from its field that completes a group of two draws the review, as an option pick does', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { title: 'Cache layer' })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { title: 'Retry policy' })],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  await moveRing($, 'other-input-q-l2-bbbbbb')
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l2-bbbbbb', text: 'Use a fork', kind: 'change' })
+  expect(await textsOf(pane)).not.toContain('Revise as suas respostas')
+  await moveRing($, 'nav-back')
+  expect(await textsOf(pane)).toContain('Revise as suas respostas')
+  await pane.unmount()
+})
+
 test('an option pick records the pending Other text first, so the pick stands and no older draft overrides it on Next', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
@@ -3283,9 +3300,34 @@ test('the card warns it is not answered until a pick, and names the Other letter
   expect(await warnings()).toEqual(['Ainda não respondida: escolha uma opção.'])
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
-  expect(await warnings()).toEqual([expect.stringMatching(/^Ainda não respondida: clique em [A-Z] para escolher o seu texto\.$/)])
+  expect(await warnings()).toEqual([expect.stringMatching(/^Ainda não respondida: aperte [A-Z] para escolher o seu texto\.$/)])
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
   expect(await warnings()).toEqual([])
+  await pane.unmount()
+})
+
+test('the pt lines that name a key tell the person to press it; the review hint keeps its click', () => {
+  expect(t('pt', 'card.unansweredKept', { key: 'C' })).toBe('Ainda não respondida: aperte C para escolher o seu texto.')
+  expect(t('pt', 'review.hint')).toBe('Clique numa pergunta para mudar a resposta.')
+})
+
+test('a Submit all whose reply fails keeps the pick and says it is not delivered, until a later submit delivers it', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const holds: Holds = { answerExit: 1 }
+  stubHost(on, files, true, {}, holds)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  const notDelivered = async () => (await textsOf(pane)).filter(text => text.startsWith('Ainda não entregue'))
+  const variantOf = async (key: string): Promise<unknown> => (await pane.find({ type: 'Button', key }))?.props.variant
+  await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
+  expect(await notDelivered()).toEqual([])
+  await pane.press({ key: 'submit-all' })
+  expect(await notDelivered()).toEqual(['Ainda não entregue: aperte Enviar tudo de novo.'])
+  expect(await variantOf('opt-q-l1-aaaaaa-B')).toBe('primary')
+  holds.answerExit = undefined
+  await pane.press({ key: 'submit-all' })
+  expect(await notDelivered()).toEqual([])
+  expect(files.has(path('a', 'q-l1-aaaaaa'))).toBe(true)
   await pane.unmount()
 })
 
@@ -3587,11 +3629,11 @@ test('a pick that moves on draws the arrival line on the next card for 1.5 s; Ne
   const { clock } = stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
-  const arrival = async () => (await textsOf(pane)).filter(text => text.startsWith('✓ Escolha anterior salva'))
+  const arrival = async () => (await textsOf(pane)).filter(text => text.startsWith('✓ Escolha anterior guardada'))
   expect(await arrival()).toEqual([])
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
   expect(await textsOf(pane)).toContain('Retry policy')
-  expect(await arrival()).toEqual(['✓ Escolha anterior salva · agora a pergunta 2 de 3'])
+  expect(await arrival()).toEqual(['✓ Escolha anterior guardada para Enviar tudo · agora a pergunta 2 de 3'])
   await clock.advance(1500)
   expect(await arrival()).toEqual([])
   await pane.press({ key: 'nav-next' })
@@ -3648,6 +3690,22 @@ test('on the last question Submit all is dim until every question has a pick; th
   expect(writes).toEqual([])
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb'), path('a', 'q-l3-cccccc')])
+  await pane.unmount()
+})
+
+test('the arrival line names the Submit all button the last card draws, so the line and the button agree', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { title: 'Cache layer' })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { title: 'Retry policy' })],
+  ])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
+  expect((await textsOf(pane)).find(text => text.startsWith('✓ Escolha anterior guardada'))).toBe(
+    '✓ Escolha anterior guardada para Enviar tudo · agora a pergunta 2 de 2',
+  )
+  expect(await labelOf(pane, 'submit-all')).toEqual(expect.stringContaining('Enviar tudo'))
   await pane.unmount()
 })
 
@@ -3759,7 +3817,7 @@ test('a move or a jump clears the arrival line: Next and a tree jump draw none, 
   const { clock } = stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
-  const arrival = async () => (await textsOf(pane)).filter(text => text.startsWith('✓ Escolha anterior salva'))
+  const arrival = async () => (await textsOf(pane)).filter(text => text.startsWith('✓ Escolha anterior guardada'))
   await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
   expect(await arrival()).toHaveLength(1)
   await clock.advance(350)
