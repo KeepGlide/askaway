@@ -2,10 +2,14 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.43, set by the beta.43 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.44, set by the beta.44 release commit.
 Commit hashes name the change in `git log`.
 
 ## [Unreleased]
+
+## [0.4.0-beta.44] - 2026-10-25
+
+Askaway 0.4.0-beta.44 ships the fixes of gauntlet 1 round 1: the Bash guard's scanner reads shell input per directory and from `echo`, `printf` and variables, the review draws the answers in the group's tree, the arrival and unanswered lines keep the card still, and SPEC.md states the guard's threat and its known limits.
 
 ### Fixed
 - The Bash guard's scanner scans each shell's own heredocs and here-strings in the directory that shell runs in, so `bash <<< 'true'; cd` into the state folder, then a second `bash <<<` that writes there, is denied by the scanner alone (gauntlet 1, rule1-1).
@@ -756,7 +760,8 @@ Third gauntlet round (40 personas over betas 14 to 25): 150 findings, 64 adopted
 - The README describes the away flow and what each card carries, matches every claim to the plugin, and adds a screenshot (150ad49, 6020300).
 - SPEC.md records the 0.4.0-beta.5 live check of the pane layout (0f43a9f).
 
-[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.43...HEAD
+[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.44...HEAD
+[0.4.0-beta.44]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.43...v0.4.0-beta.44
 [0.4.0-beta.43]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.42...v0.4.0-beta.43
 [0.4.0-beta.42]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.41...v0.4.0-beta.42
 [0.4.0-beta.41]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.40...v0.4.0-beta.41
