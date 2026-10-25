@@ -389,6 +389,10 @@ status list). `hooks/pane.tsx`, `renderPane`.
   drawn on the desktop only: 24px after the counter in the header (key `keepglide-counter`, `KEEPGLIDE_HEADER_SIZE`)
   and 28px after the Submit all button (key `keepglide-submit`, `KEEPGLIDE_SUBMIT_SIZE`). The terminal draws no mark.
 - **Question card**, one question at a time, bordered, rows separated by a gap. Top to bottom:
+  - for 1.5 s after a pick moved the card to this question (`ARRIVAL_MS`, `markArrival`, `hooks/register.tsx`), a
+    bold line in the `success` colour above the title: "✓ Previous pick saved · now question <n> of <total>" (pt "✓ Escolha
+    anterior salva · agora a pergunta <n> de <total>", `card.arrival`); the move itself stays instant, and Next, Back and
+    a jump draw no such line;
   - the title row (`renderTitleRow`): where the surface draws Markdown, one heading, "### <title> - See session ↗ - <risk
     label> · <age label>" (`riskLabel`, `ageLabel`), the title a size up from the body; "See session ↗" ("Ver sessão ↗",
     `card.session`; the arrow marks the link, since the desktop draws no underline) is a link to the asking session's Desktop window, `#<desktop_session>`, left out with its dashes when
@@ -453,6 +457,10 @@ status list). `hooks/pane.tsx`, `renderPane`.
     (kept in memory, dropped on close); a kept text is a draft label, shared through `draft.json` `labels` and so kept
     across a close and seen by the other windows. A draft's Other pick whose text differs from the kept label is drawn and sent as that label.
 
+  - while the question has no pick, a line in the `warning` colour: "Not answered yet: pick an option." (pt "Ainda não
+    respondida: escolha uma opção."); with a kept Other label, which Apply keeps without picking it, "Not answered yet: press
+    <L> to choose your text." (pt "Ainda não respondida: clique em <L> para escolher o seu texto."), <L> the Other letter
+    (`renderUnanswered`, `card.unanswered`, `card.unansweredKept`); not drawn on an ended or fading card;
   - a separator: a 1px rule on the desktop, a row of "─" on the terminal (`renderDivider`);
   - the nav row: [← Back] (Portuguese: "← Voltar") on every question, dim on the first; [Next →] (Portuguese:
     "Próxima →") on every question but the last; on the last one, [Submit all (n)] (Portuguese: "Enviar tudo (n)"),
@@ -465,6 +473,14 @@ status list). `hooks/pane.tsx`, `renderPane`.
   so no hotkey fires from typing.
 - **Choosing**: an option records the pick and moves on: to the first question without a pick after the current one
   (wrapping to the start), or, once every question of the group has a pick, to the last question, where Submit all is.
+  In a group of two or more questions, the pick that leaves every question picked draws the **review** in place of the
+  card (`reviewAtom`, `renderReview`): a bordered block titled "Review your answers" (pt "Revise as suas respostas"),
+  the hint "Press a question to change its answer." (pt "Clique numa pergunta para mudar a resposta."), one link row
+  per question, "<n>. <title> → <chosen answer>" (the option label, or an Other text in typographic quotes,
+  `answerNameOf`), whose press jumps to that question's card, then a separator and [← Back] with [Submit all (n)].
+  Back on the review shows the last question's card, which keeps its own Submit all; a jump, Next or Back leaves the
+  review (`leaveReview`), and a pick that completes the group again draws it again. The review is drawn only while every
+  question of the group is picked, so a new question in the group brings the card back.
   "Other…" with its typed text records the pick when the field loses focus or a nav action runs, and keeps the card; Enter in its field is Apply, which keeps the text as the button's label and drops an Other pick, so a click on the button picks it (see above). After each pick the group
   stays selected. No answer is written until Submit all; the picks are shared through `draft.json` (see "Shared picks").
   A card that is fading after a press takes no pick.
