@@ -50,7 +50,7 @@
 
 ## 📌 Status
 
-**Beta** (`0.4.0-beta.42`, early access). Askaway follows [SemVer](https://semver.org/): while the version is `0.y.z`, anything may change at any time. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
+**Beta** (`0.4.0-beta.43`, early access). Askaway follows [SemVer](https://semver.org/): while the version is `0.y.z`, anything may change at any time. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
 > The mod API moves between Claude Code releases, so expect changes until a stable release.
@@ -791,6 +791,7 @@ The changes of each version are in [CHANGELOG.md](CHANGELOG.md), in the [Keep a 
 | beta.40 | 2026-10-22 | One copy of each answer per recipient (`d/` and `s/`); the recommended mark drawn once; commands over 64K characters denied; a deleted working directory no longer allows; `MultiEdit` covered; an unreadable hook event denied. |
 | beta.41 | 2026-10-22 | The README records the decisions, trade-offs and limits; the public history is rewritten with neutral wording, so every commit and tag sha changed. |
 | beta.42 | 2026-10-22 | The guard's scanner reads the first operand of `sed -i` as its script, not as a file it writes; Known issues lists the data edits the frozen copy still over-denies. |
+| beta.43 | 2026-10-25 | The guard's scanner reads heredocs and here-strings run by a shell, a wrapper, `source` or an `eval` script (issues #10 to #14); the card shows an unanswered line, an arrival line and a review before Submit all. |
 
 ## 🤝 Contributing
 

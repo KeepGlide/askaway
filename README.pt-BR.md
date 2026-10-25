@@ -50,7 +50,7 @@
 
 ## 📌 Status
 
-**Beta** (`0.4.0-beta.42`, acesso antecipado). O Askaway segue o [SemVer](https://semver.org/): enquanto a versão for `0.y.z`, qualquer coisa pode mudar a qualquer momento. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
+**Beta** (`0.4.0-beta.43`, acesso antecipado). O Askaway segue o [SemVer](https://semver.org/): enquanto a versão for `0.y.z`, qualquer coisa pode mudar a qualquer momento. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
 > A API de mods muda entre as versões do Claude Code, então espere mudanças até uma versão estável.
@@ -791,6 +791,7 @@ As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md), no formato 
 | beta.40 | 2026-10-22 | Uma cópia de cada resposta por destinatário (`d/` e `s/`); a marca de recomendada desenhada uma vez; comandos com mais de 64K caracteres negados; um diretório de trabalho apagado não libera mais; `MultiEdit` coberto; um evento de gancho ilegível negado. |
 | beta.41 | 2026-10-22 | O README registra as decisões, as escolhas e os limites; o histórico público foi reescrito com texto neutro, então todos os shas de commits e tags mudaram. |
 | beta.42 | 2026-10-22 | O scanner do guarda lê o primeiro operando de `sed -i` como o script, não como um arquivo que ele grava; Problemas conhecidos lista as edições de dados que a cópia congelada ainda nega a mais. |
+| beta.43 | 2026-10-25 | O scanner do guarda lê heredocs e here-strings executados por um shell, um wrapper, `source` ou um script de `eval` (issues #10 a #14); o card mostra a linha de não respondida, a linha de chegada e uma revisão antes de Enviar todas. |
 
 ## 🤝 Contribuição
 

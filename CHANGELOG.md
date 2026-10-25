@@ -2,10 +2,14 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.42, set by the beta.42 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.43, set by the beta.43 release commit.
 Commit hashes name the change in `git log`.
 
 ## [Unreleased]
+
+## [0.4.0-beta.43] - 2026-10-25
+
+Askaway 0.4.0-beta.43 makes the Bash guard's scanner read heredocs and here-strings that a shell, `source` or an `eval` script runs (issues #10 to #14), and adds three card cues: the unanswered line, the arrival line and the review before Submit all.
 
 ### Fixed
 - The Bash guard's scanner reads a heredoc or here-string that a substitution prints into an `eval` or `-c` script, so `eval "$(cat <<'EOF' ...)"`, `bash -c "$(cat <<'EOF' ...)"`, `x=$(cat <<'EOF' ...); eval "$x"`, `bash -c -- "$(...)"`, a substitution used as the command word, `echo "$(...)" | bash`, an `eval "$x"` in a function or loop before the assignment, and the backquote, here-string and nested forms with an `answer`, `away on` or state-folder line are denied by the scanner alone. Every heredoc body and here-string inside the line's substitutions is recorded before the line runs and read once when an `eval` or `-c` script holds a `$` or a backquote, the command word may expand, or a shell reads stdin, an over-deny kept on purpose; `git commit -m "$(cat <<'EOF' ...)"` stays prose (issue #14; `_record_fed`, `_fed_reason`, `SCRIPT_EXPANSION`).
@@ -739,7 +743,8 @@ Third gauntlet round (40 personas over betas 14 to 25): 150 findings, 64 adopted
 - The README describes the away flow and what each card carries, matches every claim to the plugin, and adds a screenshot (150ad49, 6020300).
 - SPEC.md records the 0.4.0-beta.5 live check of the pane layout (0f43a9f).
 
-[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.42...HEAD
+[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.43...HEAD
+[0.4.0-beta.43]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.42...v0.4.0-beta.43
 [0.4.0-beta.42]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.41...v0.4.0-beta.42
 [0.4.0-beta.41]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.40...v0.4.0-beta.41
 [0.4.0-beta.40]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.39...v0.4.0-beta.40
