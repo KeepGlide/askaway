@@ -3635,6 +3635,14 @@ test('on the last question Submit all is dim until every question has a pick; th
   await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
   expect(await textsOf(pane)).toContain('Revise as suas respostas')
+  // The answers sit in the group's tree: the group's name on top, as in the open tree, then the rows, then the title.
+  const texts = await textsOf(pane)
+  const title = texts.indexOf('Revise as suas respostas')
+  const firstRow = texts.findIndex(text => text.includes('1. Title q-l1-aaaaaa →'))
+  const groupName = texts[firstRow - 1] ?? ''
+  expect(firstRow).toBeGreaterThan(0)
+  expect(firstRow).toBeLessThan(title)
+  expect(texts.indexOf(groupName)).toBeLessThan(firstRow - 1)
   expect((await submit())?.props.variant).toBe('primary')
   expect((await submit())?.props.dimColor).toBe(false)
   expect(writes).toEqual([])

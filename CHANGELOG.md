@@ -14,6 +14,7 @@ Commit hashes name the change in `git log`.
 - After Submit all, the review no longer shows on the next group, and it is drawn only for groups of two or more questions (gauntlet 1, uiuxs2-1).
 - The review's Back button goes through the move lock and has the same hotkey as the card's Back (gauntlet 1, uiuxs2-3, uiuxs2-4).
 - The arrival line goes on Next, Back and a jump; only a pick draws it (gauntlet 1, uiuxs2-5).
+- The review draws the answers in the group's tree, as the open tree does: the group's name on top, then its sessions and one row per answer, above the title and the hint.
 - The card keeps a row for the arrival line and one for the unanswered line, blank when they do not apply, so the card no longer shifts when a line comes or goes (gauntlet 1, uiuxs2-2).
 
 ## [0.4.0-beta.43] - 2026-10-25

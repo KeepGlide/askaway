@@ -475,10 +475,11 @@ status list). `hooks/pane.tsx`, `renderPane`.
 - **Choosing**: an option records the pick and moves on: to the first question without a pick after the current one
   (wrapping to the start), or, once every question of the group has a pick, to the last question, where Submit all is.
   In a group of two or more questions, the pick that leaves every question picked draws the **review** in place of the
-  card (`reviewAtom`, `renderReview`): a bordered block titled "Review your answers" (pt "Revise as suas respostas"),
-  the hint "Press a question to change its answer." (pt "Clique numa pergunta para mudar a resposta."), one link row
-  per question, "<n>. <title> → <chosen answer>" (the option label, or an Other text in typographic quotes,
-  `answerNameOf`), whose press jumps to that question's card, then a separator and [← Back] with [Submit all (n)].
+  card (`reviewAtom`, `renderReview`): a bordered block that opens with the group's tree, drawn as the open tree draws
+  it (the group's name on top, then its sessions), with one link row per question, "○ <n>. <title> → <chosen answer>"
+  (the option label, or an Other text in typographic quotes, `answerNameOf`), whose press jumps to that question's card;
+  then the title "Review your answers" (pt "Revise as suas respostas") and the hint "Press a question to change its
+  answer." (pt "Clique numa pergunta para mudar a resposta."), then a separator and [← Back] with [Submit all (n)].
   Back on the review shows the last question's card, which keeps its own Submit all; a jump, Next or Back leaves the
   review (`leaveReview`), and a pick that completes the group again draws it again. The review is drawn only while every
   question of the group is picked, so a new question in the group brings the card back.

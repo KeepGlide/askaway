@@ -834,23 +834,46 @@ function renderReview(
   const isBackOff = card.isMoveLocked
   const backLabel = navLabelOf(card, 'back', t(lang, 'nav.back'))
   const hotkey = letterFor(card, 'back')
-  const rows = (view.active?.questions ?? []).map((question, index) => {
+  const group = view.active
+  const order = (group?.questions ?? []).map(question => question.id)
+  // One answer's row, at its place in the group's tree: the question's number and title, then the answer chosen for it.
+  const reviewRow = (question: Question) => (place: RowPlace) => {
     const pick = view.wizard.picks[question.id]
     const answer = pick === undefined ? '' : answerNameOf(lang, pick, question)
-    return treeLink(ui, held, {
-      key: `review-jump-${question.id}`,
-      lead: '',
-      label: `${index + 1}. ${questionLabel(localizedQuestion(question, lang))} → ${singleLine(answer)}`,
-      href: linkHref('jump', question.id),
-      bold: false,
-      onPress: () => actions.jump(question.id),
-    })
-  })
+    return (
+      <Box key={`review-row-${question.id}`} paddingLeft={place.indent} flexDirection="row">
+        {treeLink(ui, held, {
+          key: `review-jump-${question.id}`,
+          lead: place.lead,
+          mark: '○',
+          label: `${order.indexOf(question.id) + 1}. ${questionLabel(localizedQuestion(question, lang))} → ${singleLine(answer)}`,
+          href: linkHref('jump', question.id),
+          bold: false,
+          onPress: () => actions.jump(question.id),
+        })}
+      </Box>
+    )
+  }
+  // The answers sit in the group's tree, as the open questions do: the group's name on top, then its sessions and rows.
+  const tree =
+    group === undefined
+      ? false
+      : renderBranch(ui, {
+          key: `review-group-${group.key}`,
+          label: groupLabelOf(group.questions[0], lang),
+          sessions: group.sessions.flatMap(questions => {
+            const [first] = questions
+            if (first === undefined) return []
+            return [{ key: `review-session-${first.id}`, label: sessionLabelOf(first, lang), isRoot: isRootSession(first), rows: questions.map(reviewRow) }]
+          }),
+        })
   return (
     <Box key="review" flexDirection="column" gap={1} borderStyle="round" paddingX={1} paddingBottom={1}>
-      <Text bold>{t(lang, 'review.title')}</Text>
-      <Text dimColor>{t(lang, 'review.hint')}</Text>
-      <Box flexDirection="column">{rows}</Box>
+      {tree}
+      <Box flexDirection="column">
+        <Text bold>{t(lang, 'review.title')}</Text>
+        <Text dimColor>{t(lang, 'review.hint')}</Text>
+      </Box>
       {renderDivider(ui, view.surface, 'divider-review')}
       <Box flexDirection="row" justifyContent="space-between">
         {held.hold('review-back', [backLabel, isBackOff, hotkey], () => !isBackOff && actions.leaveReview(), press => (
