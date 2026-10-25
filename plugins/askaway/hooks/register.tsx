@@ -115,6 +115,9 @@ const wizardAtom = atom({ plugin: 'askaway', key: 'wizard' } as const, flow.EMPT
 const moveLockAtom = atom({ plugin: 'askaway', key: 'moveLock' } as const, false)
 // The id of the question a pick just moved the card to, for ARRIVAL_MS (markArrival); null otherwise.
 const arrivalAtom = atom({ plugin: 'askaway', key: 'arrival' } as const, null as string | null)
+// Whether the pane draws the review (every chosen answer, Back and Submit all) in place of the card: set by the pick that
+// completes the group, cleared by Back on the review, a jump or a move (leaveReview).
+const reviewAtom = atom({ plugin: 'askaway', key: 'review' } as const, false)
 // The ts of the picks this session last wrote to draft.json or applied from it. A draft with a newer ts is applied.
 let draftTs = 0
 // Whether a move (a pick, Next or Back) ran within MOVE_LOCK_MS; cleared by the timer set in moveOnce. The atom mirrors it.
@@ -1134,9 +1137,13 @@ async function pickOption($: EngineInterface, id: string, choice: Pick): Promise
   const { open, group, leaving: fading } = await snapshot($)
   if (group === undefined || fading[id] !== undefined || !group.questions.some(question => question.id === id)) return
   await changeWizard($, prev => flow.choose(prunedWizard(prev, open), group, id, choice))
-  const arrived = (await read($, wizardAtom)).questionId
-  if (arrived !== null && arrived !== id) await markArrival($, arrived)
+  const after = await read($, wizardAtom)
+  if (group.questions.length > 1 && flow.submittable(group, after) !== undefined) return update($, reviewAtom, () => true)
+  if (after.questionId !== null && after.questionId !== id) await markArrival($, after.questionId)
 }
+
+// Leaves the review for the card of the question on screen (Back on the review, a jump, a move).
+const leaveReview = ($: EngineInterface): Promise<void> => update($, reviewAtom, () => false)
 
 // Marks the card a pick moved to, so it draws its arrival line for ARRIVAL_MS: the move itself is instant, and two cards of
 // one group often look alike. A later arrival replaces it; the timer clears only its own.
@@ -1150,6 +1157,7 @@ async function markArrival($: EngineInterface, id: string): Promise<void> {
 async function moveWizard($: EngineInterface, move: (current: Wizard, group: Group) => Wizard): Promise<void> {
   const { open, group } = await snapshot($)
   if (group === undefined) return
+  await leaveReview($)
   await update($, wizardAtom, prev => move(prunedWizard(prev, open), group))
 }
 
@@ -1166,6 +1174,7 @@ async function jumpToQuestion($: EngineInterface, id: string): Promise<void> {
   if (fading[id] !== undefined) return
   const target = flow.groupsOf(open).find(group => group.questions.some(question => question.id === id))
   if (target === undefined) return
+  await leaveReview($)
   await update($, wizardAtom, prev => flow.jumpTo(prunedWizard(prev, open), target, id))
   await $.ui.scroll({ in: PANE, to: { key: `card-${id}` }, block: 'start' })
 }
@@ -1301,6 +1310,7 @@ const actionsFor = ($: EngineInterface): PaneActions => ({
   back: () => moveOnce($, () => report($, afterPendingOther($, () => moveWizard($, (current, group) => flow.back(current, group))))),
   next: () => moveOnce($, () => report($, afterPendingOther($, () => moveWizard($, (current, group) => flow.next(current, group))))),
   submit: () => report($, afterPendingOther($, () => submitCurrent($), flow.submittedTypedOther)),
+  leaveReview: () => report($, leaveReview($)),
   saveWho: text => report($, saveWho($, text)),
   skipWho: () => report($, saveWho($, '')),
 })
@@ -1403,6 +1413,7 @@ export const register: Register = on => {
       screen,
       moveLocked: await read($, moveLockAtom),
       arrival: await read($, arrivalAtom),
+      review: await read($, reviewAtom),
       surface: e.surface,
     }
     return renderPane($.ui.resolve(e), view, actionsFor($), lang, heldFor(e.surface, e.requestId))

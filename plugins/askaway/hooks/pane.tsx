@@ -15,6 +15,7 @@ import {
   OTHER_KEY,
   SUBMIT_ALL_KEY,
   ageLabel,
+  answerNameOf,
   clearableIdsOf,
   counterText,
   escapeMarkdown,
@@ -57,6 +58,8 @@ export type PaneView = {
   moveLocked: boolean
   // The id of the question a pick just moved the card to: that card draws its arrival line meanwhile.
   arrival: string | null
+  // The pick that completed the group asked for the review: it is drawn in place of the card while the group stays complete.
+  review: boolean
   screen: Screen | undefined
   surface: RenderSurface
   // The footer line (footerText, hooks/model.ts), set by the register only while no question is open.
@@ -88,6 +91,7 @@ export type PaneActions = {
   back: () => void
   next: () => void
   submit: () => void
+  leaveReview: () => void
 }
 
 // What one question card draws from: the question, the wizard state and whether it is fading out after a press.
@@ -123,7 +127,10 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
       {view.groups.length > 0 && renderTree(tree)}
       {view.askWho && view.questions.length > 0 && renderAskWho(ui, lang, actions, held)}
       {view.damagedPauses?.map(id => renderDamagedPause(ui, lang, actions, held, id))}
-      {screen !== undefined && renderQuestion(ui, lang, view, actions, screen, held)}
+      {screen !== undefined &&
+        (view.review && screen.canSubmit
+          ? renderReview(ui, lang, view, actions, screen, held)
+          : renderQuestion(ui, lang, view, actions, screen, held))}
       {view.history.length > 0 && renderHistory(tree, view.history)}
       {view.footer !== undefined && view.questions.length === 0 && renderFooter(ui, view.footer)}
       {clearCount > 0 && renderDivider(ui, view.surface, 'divider-history')}
@@ -800,6 +807,54 @@ function renderNext(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext,
   return card.held.hold('nav-next', [label, isOff, hotkey], onPress, press => (
     <Button key="nav-next" label={label} variant={isOff ? 'secondary' : 'primary'} dimColor={isOff} hotkey={hotkey} onPress={press} />
   ))
+}
+
+// The review, drawn in place of the card once every question of the group has a pick: one link per question with the
+// answer chosen for it (a press jumps to its card to change it), then Back (to the card of the last question) and Submit all.
+function renderReview(
+  ui: Ui,
+  lang: Lang,
+  view: PaneView,
+  actions: PaneActions,
+  screen: Screen,
+  held: HeldButtons,
+): RenderElement {
+  const { Box, Button, Text } = ui
+  const card: CardContext = {
+    question: localizedQuestion(screen.question, lang),
+    wizard: view.wizard,
+    isLeaving: view.leaving[screen.question.id] !== undefined,
+    isMoveLocked: view.moveLocked,
+    held,
+    surface: view.surface,
+  }
+  const backLabel = t(lang, 'nav.back')
+  const rows = (view.active?.questions ?? []).map((question, index) => {
+    const pick = view.wizard.picks[question.id]
+    const answer = pick === undefined ? '' : answerNameOf(lang, pick, question)
+    return treeLink(ui, held, {
+      key: `review-jump-${question.id}`,
+      lead: '',
+      label: `${index + 1}. ${questionLabel(localizedQuestion(question, lang))} → ${singleLine(answer)}`,
+      href: linkHref('jump', question.id),
+      bold: false,
+      onPress: () => actions.jump(question.id),
+    })
+  })
+  return (
+    <Box key="review" flexDirection="column" gap={1} borderStyle="round" paddingX={1} paddingBottom={1}>
+      <Text bold>{t(lang, 'review.title')}</Text>
+      <Text dimColor>{t(lang, 'review.hint')}</Text>
+      <Box flexDirection="column">{rows}</Box>
+      {renderDivider(ui, view.surface, 'divider-review')}
+      <Box flexDirection="row" justifyContent="space-between">
+        {held.hold('review-back', [backLabel], () => actions.leaveReview(), press => (
+          <Button key="review-back" label={backLabel} variant="secondary" onPress={press} />
+        ))}
+        {renderSubmitAll(ui, lang, actions, card, screen)}
+      </Box>
+    </Box>
+  )
 }
 
 function renderSubmitAll(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: Screen): RenderElement {

@@ -127,6 +127,8 @@ declare module 'claude-code' {
       moveLock: boolean
       // The question a pick just moved the card to (1.5 s): that card draws its arrival line. Null otherwise.
       arrival: string | null
+      // Whether the review of every chosen answer is drawn in place of the card (set by the pick that completes the group).
+      review: boolean
       // Whether this session is inside a model turn of its own (turn.start to turn.complete; subagent turns excluded).
       turn: { isBusy: boolean }
       // Ids of open questions whose asking session has ended (`list --open` marks them `ended`): their card shows a notice.

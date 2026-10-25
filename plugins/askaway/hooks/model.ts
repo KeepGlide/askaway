@@ -355,7 +355,7 @@ export function withLocalAnswers(next: Board, prev: Board): Board {
 }
 
 // The free text of an "other" answer as askaway.py quotes it: format characters deleted, then one line, capped in code points.
-function otherTextOf(answer: Answer): string | undefined {
+function otherTextOf(answer: { key: string; text?: string }): string | undefined {
   if (answer.key !== OTHER_KEY || answer.text === undefined) return undefined
   const oneLine = singleLine(deleteFormat(answer.text))
   const text = Array.from(oneLine).slice(0, OTHER_TEXT_MAX).join('')
@@ -616,7 +616,7 @@ export function optionLabelOf(lang: Lang, option: QuestionOption): string {
 // The answer as its History row and footer name it: the label of the option it chose, in the pane's language; an Other reply
 // its whole typed text, in typographic quotes so it is told apart from an option label, or the Other label when it has none.
 // A key the question no longer lists (its question is gone) is drawn as its letter.
-function answerNameOf(lang: Lang, answer: Answer, question: Question | undefined): string {
+export function answerNameOf(lang: Lang, answer: { key: string; text?: string }, question: Question | undefined): string {
   if (answer.key === OTHER_KEY) {
     const text = otherTextOf(answer)
     return text === undefined ? t(lang, 'option.other') : `“${text}”`

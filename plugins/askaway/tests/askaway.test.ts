@@ -1317,8 +1317,8 @@ test('a click picks and advances; Submit all on the last question writes every a
   await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
   expect(writes).toEqual([])
-  // Every question picked: the card stays on the last one, where Submit all is primary.
-  expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
+  // Every question picked: the review takes the card's place, with Submit all primary.
+  expect(await textsOf(pane)).toContain('Revise as suas respostas')
   expect((await pane.find({ type: 'Button', key: 'submit-all' }))?.props.variant).toBe('primary')
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb')])
@@ -2987,6 +2987,7 @@ test('a pick changed on the last card while an earlier answer is written is the 
   await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
   await clock.advance(350)
+  await pane.press({ key: 'review-back' })
   const write = gate()
   holds.write = write.promise
   const pressed = pane.press({ key: 'submit-all' })
@@ -3597,7 +3598,7 @@ test('a pick that moves on draws the arrival line on the next card for 1.5 s; Ne
   await pane.unmount()
 })
 
-test('on the last question Submit all is dim until every question has a pick; the pick that completes them keeps the last question, primary', async ($, on) => {
+test('on the last question Submit all is dim until every question has a pick; the pick that completes them shows the review, Submit all primary', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
@@ -3631,12 +3632,47 @@ test('on the last question Submit all is dim until every question has a pick; th
   await pane.press({ key: 'nav-back' })
   await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
-  expect(await textsOf(pane)).toContain('Title q-l3-cccccc')
+  expect(await textsOf(pane)).toContain('Revise as suas respostas')
   expect((await submit())?.props.variant).toBe('primary')
   expect((await submit())?.props.dimColor).toBe(false)
   expect(writes).toEqual([])
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb'), path('a', 'q-l3-cccccc')])
+  await pane.unmount()
+})
+
+test('the pick that completes a group shows the review: each answer links to its card, Back returns to the last card, and Submit all sends', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { title: 'Cache layer' })],
+    [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { title: 'Retry policy' })],
+  ])
+  const { writes, clock } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  const rows = async () => (await textsOf(pane)).filter(text => /^\S+ \d\. /.test(text))
+  await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
+  await clock.advance(350)
+  expect(await textsOf(pane)).not.toContain('Revise as suas respostas')
+  await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
+  expect(await textsOf(pane)).toContain('Revise as suas respostas')
+  expect(await rows()).toEqual([expect.stringMatching(/1\. Cache layer → Rewrite/), expect.stringMatching(/2\. Retry policy → Keep/)])
+  // A row jumps to its card; changing the pick there completes the group again, so the review comes back.
+  await pane.press({ key: 'review-jump-q-l1-aaaaaa', link: { href: 'file:///askaway/jump/q-l1-aaaaaa' } })
+  expect(await textsOf(pane)).toContain('Cache layer')
+  expect(await textsOf(pane)).not.toContain('Revise as suas respostas')
+  await clock.advance(350)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  expect(await rows()).toEqual([expect.stringMatching(/1\. Cache layer → Keep/), expect.stringMatching(/2\. Retry policy → Keep/)])
+  // Back leaves the review for the last card, which keeps its own Submit all.
+  await pane.press({ key: 'review-back' })
+  expect(await textsOf(pane)).toContain('Retry policy')
+  expect(await textsOf(pane)).not.toContain('Revise as suas respostas')
+  await clock.advance(350)
+  await pane.press({ key: 'opt-q-l2-bbbbbb-B' })
+  expect(writes).toEqual([])
+  await pane.press({ key: 'submit-all' })
+  expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb')])
+  expect(readJson(files, path('a', 'q-l2-bbbbbb'))).toMatchObject({ key: 'B' })
   await pane.unmount()
 })
 
@@ -7286,6 +7322,7 @@ test('gauntlet 7 pane-exec3-1: a text a kept label set aside is dropped once Nex
   await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
   await clock.advance(350)
+  await pane.press({ key: 'review-back' })
   await pane.press({ key: 'nav-back' })
   await clock.advance(350)
   await moveRing($, 'other-input-q-l1-aaaaaa-1')
