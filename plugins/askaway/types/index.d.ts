@@ -132,6 +132,8 @@ declare module 'claude-code' {
       // Ids of questions whose last Submit all (or row Submit) did not deliver their pick: the pick stays a draft and the card
       // says so until a later submit delivers it or the pick changes.
       undelivered: string[]
+      // The height in rows of each question's Other field while text is typed in it (3 to 10); absent, 3.
+      otherRows: Record<string, number>
       // Whether this session is inside a model turn of its own (turn.start to turn.complete; subagent turns excluded).
       turn: { isBusy: boolean }
       // Ids of open questions whose asking session has ended (`list --open` marks them `ended`): their card shows a notice.

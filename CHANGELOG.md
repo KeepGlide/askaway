@@ -8,6 +8,7 @@ Commit hashes name the change in `git log`.
 ## [Unreleased]
 
 ### Changed
+- The Other field opens three rows tall and grows with the text typed in it, up to ten rows, then scrolls (needs a Claude Code runtime whose `Input` takes `rows`; 2.1.308 does, 2.1.296 draws one row).
 - The arrival line says the pick is kept for Submit all, not saved, and names the Submit all button the card draws (pt "Enviar tudo"); no answer is written until Submit all.
 - The pt lines that name a key letter tell the person to press it ("aperte", not "clique em"); the review hint keeps its click.
 

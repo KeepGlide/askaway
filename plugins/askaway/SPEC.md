@@ -439,7 +439,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
   - "<L> · Other…", where <L> is the letter after the last option's key ("C · Other…" with options A and B; Portuguese:
     "C · Outra…"), a plain Button, its text underlined after a dim link mark `▪ ` (`LINK_MARK`), bold while its pick is Other. With a kept label that is the pick, it is the primary button with "✓ " before its label, as a picked option is (`renderOther`, `isKeptChosen`). Its field is on the row under it,
     prefixed with the same "└ " branch glyph the option sub-rows draw (`BRANCH_PREFIX`), indented one cell and hidden
-    while the card fades (it is not drawn then), with no label: its placeholder is the only text. The field is always open (no press needed, no
+    while the card fades (it is not drawn then), with no label: its placeholder is the only text. It fills the row to the card's edge (`flexGrow`) and opens three rows tall (`rows`), growing with the text typed in it, a line longer than 60 characters counting as the rows it wraps to, up to ten rows; past that it scrolls (`otherRowsOf`, `otherRowsAtom`: a key redraws the pane only when it changes the height). The field is always open (no press needed, no
     autofocus, so the keys stay with the card until the person clicks in). Pressing the link only focuses that field
     (`$.ui.focus`, key `other-input-<id>`). The field has no `value` prop: it keeps the text the person types, across
     redraws. Each change of the text (the Input's `onInput`, `typeOther`) only keeps it in the pane's memory: no store

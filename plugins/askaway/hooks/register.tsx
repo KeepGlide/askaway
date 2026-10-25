@@ -45,6 +45,8 @@ import {
   NO_DESKTOP_GROUPS,
   parseDesktopGroups,
   withDesktopGroup,
+  otherRowsOf,
+  OTHER_MIN_ROWS,
   type DesktopGroups,
 } from './model'
 import * as flow from './wizard'
@@ -121,6 +123,8 @@ const reviewAtom = atom({ plugin: 'askaway', key: 'review' } as const, false)
 // The questions whose last Submit all (or row Submit) did not deliver: the card says so until a submit delivers the pick or
 // the pick changes (setUndelivered, forgetUndelivered).
 const undeliveredAtom = atom({ plugin: 'askaway', key: 'undelivered' } as const, [] as string[])
+// The height of each question's Other field while text is typed in it (otherRowsOf); absent, the field is OTHER_MIN_ROWS tall.
+const otherRowsAtom = atom({ plugin: 'askaway', key: 'otherRows' } as const, {} as Record<string, number>)
 // The ts of the picks this session last wrote to draft.json or applied from it. A draft with a newer ts is applied.
 let draftTs = 0
 // Whether a move (a pick, Next or Back) ran within MOVE_LOCK_MS; cleared by the timer set in moveOnce. The atom mirrors it.
@@ -1214,6 +1218,8 @@ async function jumpToQuestion($: EngineInterface, id: string): Promise<void> {
 // The Other text typed but not recorded yet, by question id. Typing keeps it here, not in the store, so a key does not
 // redraw the pane; it is recorded when the field loses focus and before a nav action (recordPendingOther), and Keep drops it.
 const pendingOther = new Map<string, string>()
+// The height last drawn for each Other field (otherRowsAtom), so a key that keeps the height does not redraw.
+const fieldRows = new Map<string, number>()
 
 // How a typed Other text becomes the pick: the label rule (flow.submittedOther) or Submit all's (flow.submittedTypedOther).
 type OtherRecord = typeof flow.submittedOther
@@ -1338,9 +1344,17 @@ const actionsFor = ($: EngineInterface): PaneActions => ({
   jump: id => report($, afterPendingOther($, () => jumpToQuestion($, id))),
   typeOther: (id, text) => {
     pendingOther.set(id, text)
+    // A key redraws the pane only when it changes the field's height.
+    const rows = otherRowsOf(text)
+    if ((fieldRows.get(id) ?? OTHER_MIN_ROWS) !== rows) {
+      fieldRows.set(id, rows)
+      report($, update($, otherRowsAtom, prev => ({ ...prev, [id]: rows })))
+    }
   },
   keepOther: (id, text) => {
     pendingOther.delete(id)
+    fieldRows.delete(id)
+    report($, update($, otherRowsAtom, ({ [id]: _, ...rest }) => rest))
     report($, keepOther($, id, text))
   },
   back: () => moveOnce($, () => report($, afterPendingOther($, () => moveWizard($, (current, group) => flow.back(current, group))))),
@@ -1451,6 +1465,7 @@ export const register: Register = on => {
       arrival: await read($, arrivalAtom),
       review: await read($, reviewAtom),
       undelivered: await read($, undeliveredAtom),
+      otherRows: await read($, otherRowsAtom),
       surface: e.surface,
     }
     return renderPane($.ui.resolve(e), view, actionsFor($), lang, heldFor(e.surface, e.requestId))

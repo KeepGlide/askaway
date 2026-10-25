@@ -39,6 +39,7 @@ import {
   type HistoryGroup,
   type Leaving,
   type Section,
+  OTHER_MIN_ROWS,
 } from './model'
 import type { Group, Pick, Screen, Wizard } from './wizard'
 
@@ -62,6 +63,8 @@ export type PaneView = {
   review: boolean
   // The ids of questions whose last submit did not deliver their pick: their card draws the not-delivered line.
   undelivered: readonly string[]
+  // The height of each question's Other field, grown with its typed text (otherRowsOf); absent, OTHER_MIN_ROWS.
+  otherRows: Readonly<Record<string, number>>
   screen: Screen | undefined
   surface: RenderSurface
   // The footer line (footerText, hooks/model.ts), set by the register only while no question is open.
@@ -99,6 +102,8 @@ export type PaneActions = {
 // What one question card draws from: the question, the wizard state and whether it is fading out after a press.
 type CardContext = {
   question: Question
+  // The height of the Other field (renderOther); the review draws no field.
+  otherRows?: number
   wizard: Wizard
   isLeaving: boolean
   // The pick of this question was not delivered by the last submit (PaneView.undelivered).
@@ -492,6 +497,7 @@ function renderQuestion(
     wizard: view.wizard,
     isLeaving: view.leaving[question.id] !== undefined,
     isUndelivered: view.undelivered.includes(question.id),
+    otherRows: view.otherRows[question.id] ?? OTHER_MIN_ROWS,
     isMoveLocked: view.moveLocked,
     held,
     surface: view.surface,
@@ -725,6 +731,7 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
               key={otherInputKey(question.id, wizard.fieldRound)}
               placeholder={t(lang, 'input.placeholder')}
               submitLabel={t(lang, 'input.send')}
+              rows={card.otherRows ?? OTHER_MIN_ROWS}
               onInput={text => actions.typeOther(question.id, text)}
               onSubmit={text => actions.keepOther(question.id, text)}
             />

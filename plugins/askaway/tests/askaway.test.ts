@@ -2755,6 +2755,20 @@ test('typing in Other… changes nothing drawn and writes nothing: no pick, no b
   await pane.unmount()
 })
 
+test('the Other field opens three rows tall and grows with the typed text up to ten', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  const rows = async () => (await pane.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa' }))?.props.rows
+  expect(await rows()).toBe(3)
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'a\nb\nc\nd\ne', kind: 'change' })
+  expect(await rows()).toBe(5)
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'x'.repeat(2000), kind: 'change' })
+  expect(await rows()).toBe(10)
+  await pane.unmount()
+})
+
 test('Next records the Other text typed and not confirmed, before the card moves on, so Submit all writes it', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
