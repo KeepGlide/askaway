@@ -874,3 +874,13 @@ export function piecesOf(text: string): TextPiece[] {
   if (last < text.length) pieces.push({ text: text.slice(last), isName: false })
   return pieces
 }
+
+// The Other field opens OTHER_MIN_ROWS tall and grows with the text typed in it, up to OTHER_MAX_ROWS; past that it scrolls.
+// The field's width is not known here, so a line longer than OTHER_LINE_CHARS counts as the rows it would wrap to.
+export const OTHER_MIN_ROWS = 3
+export const OTHER_MAX_ROWS = 10
+const OTHER_LINE_CHARS = 60
+export const otherRowsOf = (text: string): number => {
+  const rows = text.split('\n').reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / OTHER_LINE_CHARS)), 0)
+  return Math.min(OTHER_MAX_ROWS, Math.max(OTHER_MIN_ROWS, rows))
+}

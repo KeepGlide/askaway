@@ -39,6 +39,7 @@ import {
   type HistoryGroup,
   type Leaving,
   type Section,
+  OTHER_MIN_ROWS,
 } from './model'
 import type { Group, Pick, Screen, Wizard } from './wizard'
 
@@ -60,6 +61,10 @@ export type PaneView = {
   arrival: string | null
   // The pick that completed the group asked for the review: it is drawn in place of the card while the group stays complete.
   review: boolean
+  // The ids of questions whose last submit did not deliver their pick: their card draws the not-delivered line.
+  undelivered: readonly string[]
+  // The height of each question's Other field, grown with its typed text (otherRowsOf); absent, OTHER_MIN_ROWS.
+  otherRows: Readonly<Record<string, number>>
   screen: Screen | undefined
   surface: RenderSurface
   // The footer line (footerText, hooks/model.ts), set by the register only while no question is open.
@@ -97,8 +102,12 @@ export type PaneActions = {
 // What one question card draws from: the question, the wizard state and whether it is fading out after a press.
 type CardContext = {
   question: Question
+  // The height of the Other field (renderOther); the review draws no field.
+  otherRows?: number
   wizard: Wizard
   isLeaving: boolean
+  // The pick of this question was not delivered by the last submit (PaneView.undelivered).
+  isUndelivered: boolean
   isMoveLocked: boolean
   held: HeldButtons
   surface: RenderSurface
@@ -487,6 +496,8 @@ function renderQuestion(
     question,
     wizard: view.wizard,
     isLeaving: view.leaving[question.id] !== undefined,
+    isUndelivered: view.undelivered.includes(question.id),
+    otherRows: view.otherRows[question.id] ?? OTHER_MIN_ROWS,
     isMoveLocked: view.moveLocked,
     held,
     surface: view.surface,
@@ -720,6 +731,7 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
               key={otherInputKey(question.id, wizard.fieldRound)}
               placeholder={t(lang, 'input.placeholder')}
               submitLabel={t(lang, 'input.send')}
+              rows={card.otherRows ?? OTHER_MIN_ROWS}
               onInput={text => actions.typeOther(question.id, text)}
               onSubmit={text => actions.keepOther(question.id, text)}
             />
@@ -734,18 +746,22 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
 // status line comes or goes (the arrival line above the title, the unanswered line above the separator).
 const STATUS_BLANK = '\u00a0'
 
-// The warning line above the nav while the question has no pick. Keep in the Other field keeps the text without picking it,
-// so with a kept label the line names the Other letter to press. The row is always drawn: blank when shown is false (an
-// ended or fading card) or the question is picked.
+// The warning line above the nav while the question has no pick, or its pick was not delivered by the last submit (the pick
+// stays a draft: press Submit all again). Keep in the Other field keeps the text without picking it, so with a kept label
+// the line names the Other letter to press. The row is always drawn: blank when shown is false (an ended or fading card),
+// or when the question is picked and that pick was delivered.
 function renderUnanswered(ui: Ui, lang: Lang, card: CardContext, shown: boolean): RenderElement {
   const { Text } = ui
   const { question, wizard } = card
   const letter = otherLetterOf(question.options)
-  const text =
-    wizard.labels[question.id] !== undefined && letter !== undefined
+  const isPicked = wizard.picks[question.id] !== undefined
+  const isUndelivered = isPicked && card.isUndelivered
+  const text = isUndelivered
+    ? t(lang, 'card.undelivered')
+    : wizard.labels[question.id] !== undefined && letter !== undefined
       ? t(lang, 'card.unansweredKept', { key: letter.toUpperCase() })
       : t(lang, 'card.unanswered')
-  const isOpen = shown && wizard.picks[question.id] === undefined
+  const isOpen = shown && (!isPicked || isUndelivered)
   return (
     <Text key={`unanswered-${question.id}`} color={URGENCY_COLOR.medium}>
       {isOpen ? text : STATUS_BLANK}
@@ -827,6 +843,7 @@ function renderReview(
     question: localizedQuestion(screen.question, lang),
     wizard: view.wizard,
     isLeaving: view.leaving[screen.question.id] !== undefined,
+    isUndelivered: view.undelivered.includes(screen.question.id),
     isMoveLocked: view.moveLocked,
     held,
     surface: view.surface,

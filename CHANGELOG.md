@@ -7,6 +7,15 @@ Commit hashes name the change in `git log`.
 
 ## [Unreleased]
 
+### Changed
+- The Other field opens three rows tall and grows with the text typed in it, up to ten rows, then scrolls (needs a Claude Code runtime whose `Input` takes `rows`; 2.1.308 does, 2.1.296 draws one row).
+- The arrival line says the pick is kept for Submit all, not saved, and names the Submit all button the card draws (pt "Enviar tudo"); no answer is written until Submit all.
+- The pt lines that name a key letter tell the person to press it ("aperte", not "clique em"); the review hint keeps its click.
+
+### Fixed
+- A Submit all, or a row's Submit, whose reply fails keeps the pick as a draft, and the card says "Not delivered yet: press Submit all again." until a later submit delivers it.
+- An Other text typed in its field that completes a group of two or more questions draws the review, as a completing option pick does; the two SPEC sentences that disagreed are reconciled.
+
 ## [0.4.0-beta.44] - 2026-10-25
 
 Askaway 0.4.0-beta.44 ships the fixes of gauntlet 1 round 1: the Bash guard's scanner reads shell input per directory and from `echo`, `printf` and variables, the review draws the answers in the group's tree, the arrival and unanswered lines keep the card still, and SPEC.md states the guard's threat and its known limits.
