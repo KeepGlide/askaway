@@ -7,6 +7,9 @@ Commit hashes name the change in `git log`.
 
 ## [Unreleased]
 
+### Fixed
+- The Bash guard's scanner reads a heredoc or here-string run through `su`, `runuser`, `pkexec`, `setpriv`, `xargs`, `chroot`, `flock`, `stdbuf` or `setsid`, and the `-c` text of `su`, `runuser` and `flock`, so those forms are denied by the scanner alone (issue #15).
+
 ## [0.4.0-beta.45] - 2026-10-28
 
 Askaway 0.4.0-beta.45 applies the owner's card decisions from gauntlet 1 (the arrival line says the pick is kept for Submit all, an undelivered submit is marked on the card, a typed Other that completes the group draws the review, pt key hints say "aperte") and grows the Other field from three to ten rows.

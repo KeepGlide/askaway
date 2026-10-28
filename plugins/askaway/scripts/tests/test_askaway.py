@@ -5745,8 +5745,14 @@ def test_the_neighbours_of_the_over_denies_stay_denied_by_the_scanner_alone_too(
 
 # A shell that reads its script from a heredoc or here-string runs the text: the frozen copy reads most of these as
 # commands; the scanner alone reads the body and the here-string words of any line that runs a shell (issue #10).
+# the wrappers of issue #15: each starts a shell, or runs its next word as the command, so a heredoc on it is read
+WRAPPER_SHELL_COMMANDS = {
+    "su": "su", "su-root": "su root", "su-c-bash": "su -c bash", "runuser-u-root": "runuser -u root -- bash",
+    "pkexec": "pkexec bash", "setpriv": "setpriv --reuid=0 bash", "xargs": "xargs bash", "chroot": "chroot / bash",
+    "flock": "flock /dev/null bash", "stdbuf": "stdbuf -o0 bash", "setsid": "setsid bash",
+}
 SHELL_STDIN_SCRIPTS = {
-    "answer-quoted": (f"bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-quoted":(f"bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
     "answer-unquoted": (f"bash <<EOF\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
     "state-quoted": ("bash <<'EOF'\ncd ~/.claude/state\nrm -r askaway\nEOF", STATE),
     "answer-bash-s": (f"bash -s <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
@@ -5870,6 +5876,13 @@ SHELL_STDIN_SCRIPTS = {
     "answer-declared-here-string": ("x=ok; declare x='python3 /opt/askaway.py answer'; bash <<< \"$x\"", ANSWER),
     # echo text that a shell reads from a file redirection is fed to that shell
     "answer-echo-file-then-bash-stdin": ("echo 'python3 /opt/askaway.py answer' > f; bash < f", ANSWER),
+    # the wrappers of issue #15, as a heredoc and as a here-string; su -lc is a cluster that ends in its -c
+    **{f"answer-{key}": (f"{command} <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER)
+       for key, command in WRAPPER_SHELL_COMMANDS.items()},
+    **{f"answer-{key}-here-string": (f"{command} <<< 'python3 {SCRIPT} answer q-1-abcdef A'", ANSWER)
+       for key, command in WRAPPER_SHELL_COMMANDS.items()},
+    "answer-su-lc-bash": (f"su -lc bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    "answer-flock-fd-bash": (f"flock 9 bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
 }
 
 
@@ -5889,6 +5902,20 @@ def test_the_scanner_alone_bounds_the_reads_of_substitution_texts(capsys, monkey
     defs = "; ".join(f"x{i}=$(cat <<'EOF'\necho {i}\nEOF\n)" for i in range(150))
     alternating = "; ".join(f"cd /tmp/askaway-cd-{i}; eval \"$x0\"" for i in range(600))
     assert bash_denial(capsys, monkeypatch, defs + "; " + alternating) == askaway.UNREADABLE_DENIED
+
+
+# su, runuser and flock run the text of their -c option as sh -c, so the scanner reads it as a command line (issue #15)
+@pytest.mark.usefixtures("scanner_only")
+@pytest.mark.parametrize("command", [
+    f"su -c 'python3 {SCRIPT} answer q-1-abcdef A' root",
+    f"su -lc 'python3 {SCRIPT} answer q-1-abcdef A' root",
+    f"su -c'python3 {SCRIPT} answer q-1-abcdef A' root",
+    f"su --command='python3 {SCRIPT} answer q-1-abcdef A' root",
+    f"runuser -u root -c 'python3 {SCRIPT} answer q-1-abcdef A'",
+    f"flock /tmp/x -c 'python3 {SCRIPT} answer q-1-abcdef A'",
+])
+def test_the_scanner_alone_reads_the_text_of_a_command_option_of_su_runuser_or_flock(command, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == ANSWER
 
 
 # A shell that runs harmless text from a heredoc stays allowed by the scanner and by the full guard.
@@ -5925,6 +5952,12 @@ SHELL_STDIN_CONTROLS = {
     "echo-file-then-bash-c-make": "echo \"python3 /opt/askaway.py answer\" > notes.md && bash -c 'make test'",
     "printf-file-then-bash-c-true": "printf '%s\\n' 'python3 /opt/askaway.py answer' > n2.txt; bash -c 'true'",
     "subshell-assignment-not-read": "( x='python3 /opt/askaway.py answer' ); bash <<< \"$x\"",
+    # the wrappers of issue #15 that run a harmless command: their operands and options are skipped, not read as it
+    "flock-file-make": "flock /tmp/x make",
+    "xargs-rm-list": "xargs rm -f < list.txt",
+    "stdbuf-grep": "stdbuf -o0 grep x file",
+    "su-c-ls-root": "su -c 'ls /tmp' root",
+    "chroot-dir-ls": "chroot /srv/x ls",
 }
 
 
