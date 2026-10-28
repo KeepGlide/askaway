@@ -6,7 +6,7 @@ Askaway is pre-stable (`0.y.z`). Fixes land on the latest `0.4.0` beta.
 
 | Version | Supported |
 | ------- | --------- |
-| `0.4.0-beta.44` (latest `0.4.0` beta) | ✅ |
+| `0.4.0-beta.45` (latest `0.4.0` beta) | ✅ |
 | Older `0.4.0` betas and earlier `0.x` releases | ❌ |
 
 ## Reporting a vulnerability

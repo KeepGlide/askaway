@@ -50,7 +50,7 @@
 
 ## 📌 Status
 
-**Beta** (`0.4.0-beta.44`, acesso antecipado). O Askaway segue o [SemVer](https://semver.org/): enquanto a versão for `0.y.z`, qualquer coisa pode mudar a qualquer momento. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
+**Beta** (`0.4.0-beta.45`, acesso antecipado). O Askaway segue o [SemVer](https://semver.org/): enquanto a versão for `0.y.z`, qualquer coisa pode mudar a qualquer momento. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
 > A API de mods muda entre as versões do Claude Code, então espere mudanças até uma versão estável.
@@ -750,10 +750,10 @@ Encontrou um? [Abra uma issue](https://github.com/KeepGlide/askaway/issues/new).
 
 | Categoria | Testes |
 |---|---|
-| Mod (TypeScript), `plugins/askaway/tests/` | 516 |
+| Mod (TypeScript), `plugins/askaway/tests/` | 521 |
 | CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 1558 |
 
-Contagem Python de `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts`, no commit `0119de2`, em 2026-10-25. A contagem do mod vem de uma execução nova de `claude plugin test plugins/askaway` no mesmo commit (o runner não tem modo de coleta).
+Contagem Python de `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts`, no commit `74c2394`, em 2026-10-25. A contagem do mod vem de uma execução nova de `claude plugin test plugins/askaway` no mesmo commit (o runner não tem modo de coleta).
 
 ## 🔧 Desenvolvimento
 
@@ -794,6 +794,7 @@ As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md), no formato 
 | beta.42 | 2026-10-22 | O scanner do guarda lê o primeiro operando de `sed -i` como o script, não como um arquivo que ele grava; Problemas conhecidos lista as edições de dados que a cópia congelada ainda nega a mais. |
 | beta.43 | 2026-10-25 | O scanner do guarda lê heredocs e here-strings executados por um shell, um wrapper, `source` ou um script de `eval` (issues #10 a #14); o card mostra a linha de não respondida, a linha de chegada e uma revisão antes de Enviar todas. |
 | beta.44 | 2026-10-25 | Gauntlet 1, rodada 1: o scanner do guarda lê a entrada do shell por diretório e a de `echo`, `printf` e variáveis; a revisão desenha as respostas na árvore do grupo; a SPEC.md diz qual é a ameaça do guarda e os limites conhecidos. |
+| beta.45 | 2026-10-28 | As decisões do card do gauntlet 1: texto da linha de chegada, a linha de não entregue, a revisão depois de um Outro digitado, "aperte" em pt; o campo do Outro cresce de três a dez linhas. |
 
 ## 🤝 Contribuição
 

@@ -2,10 +2,14 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.44, set by the beta.44 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.45, set by the beta.45 release commit.
 Commit hashes name the change in `git log`.
 
 ## [Unreleased]
+
+## [0.4.0-beta.45] - 2026-10-28
+
+Askaway 0.4.0-beta.45 applies the owner's card decisions from gauntlet 1 (the arrival line says the pick is kept for Submit all, an undelivered submit is marked on the card, a typed Other that completes the group draws the review, pt key hints say "aperte") and grows the Other field from three to ten rows.
 
 ### Changed
 - The Other field opens three rows tall and grows with the text typed in it, up to ten rows, then scrolls (needs a Claude Code runtime whose `Input` takes `rows`; 2.1.308 does, 2.1.296 draws one row).
@@ -769,7 +773,8 @@ Third gauntlet round (40 personas over betas 14 to 25): 150 findings, 64 adopted
 - The README describes the away flow and what each card carries, matches every claim to the plugin, and adds a screenshot (150ad49, 6020300).
 - SPEC.md records the 0.4.0-beta.5 live check of the pane layout (0f43a9f).
 
-[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.44...HEAD
+[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.45...HEAD
+[0.4.0-beta.45]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.44...v0.4.0-beta.45
 [0.4.0-beta.44]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.43...v0.4.0-beta.44
 [0.4.0-beta.43]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.42...v0.4.0-beta.43
 [0.4.0-beta.42]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.41...v0.4.0-beta.42
