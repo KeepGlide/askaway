@@ -1124,13 +1124,14 @@ test('a single-question window: Submit all is dim until its pick, then primary, 
   await $.session.start(SESSION)
   const pane = await mountPane($)
   expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
-  expect(await labelOf(pane, 'submit-all')).toBe('Enviar tudo (1) (w)')
+  expect(await labelOf(pane, 'submit-all')).toBe('Sem resposta · Enviar tudo (1) (w)')
   expect((await pane.find({ type: 'Button', key: 'submit-all' }))?.props.dimColor).toBe(true)
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([])
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
   expect(writes).toEqual([])
   expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
+  expect(await labelOf(pane, 'submit-all')).toBe('Resposta: B · Enviar tudo (1) (w)')
   expect((await pane.find({ type: 'Button', key: 'submit-all' }))?.props.variant).toBe('primary')
   expect((await pane.find({ type: 'Button', key: 'submit-all' }))?.props.dimColor).toBe(false)
   await pane.press({ key: 'submit-all' })
@@ -1198,10 +1199,11 @@ test('a draft.json no newer than the one this session last wrote is not applied'
   await clock.advance(1000)
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
   const own = JSON.parse(drafts[0] ?? '{}') as { ts: number }
-  // An older draft from another session, with a pick for the question the card shows after the press.
+  // An older draft from another session, with a pick for the second question, which the card shows after Next.
   files.set(`${STATE}/draft.json`, JSON.stringify({ ts: own.ts - 1, picks: { 'q-l2-bbbbbb': { key: 'A' } } }))
   await clock.advance(5000)
-  expect((await pane.find({ type: 'Button', key: 'submit-all' }))?.props.dimColor).toBe(true)
+  await pane.press({ key: 'nav-next' })
+  expect(await labelOf(pane, 'nav-back')).toBe('Sem resposta · ← Voltar (z)')
   await pane.unmount()
 })
 
@@ -1234,8 +1236,12 @@ test('Submit all writes draft.json with the submitted questions dropped', async 
   const pane = await mountPane($)
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
   await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
+  await clock.advance(350)
   expect(writes).toEqual([])
+  await pane.press({ key: 'nav-next' })
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb')])
   expect(JSON.parse(drafts[drafts.length - 1] ?? '{}')).toEqual({ ts: expect.any(Number), picks: {} })
@@ -1312,12 +1318,18 @@ test('a click picks and advances; Submit all on the last question writes every a
   const pane = await mountPane($)
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
   expect(writes).toEqual([])
-  // The pick moves the card on to the next question without a pick.
+  // The pick keeps the card on its question; Next moves on to the next question.
+  expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
   await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
   expect(writes).toEqual([])
-  // Every question picked: the review takes the card's place, with Submit all primary.
+  // Next on the last question opens the review, with every answer chosen and Submit all primary.
+  expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Revise as suas respostas')
   expect((await pane.find({ type: 'Button', key: 'submit-all' }))?.props.variant).toBe('primary')
   await pane.press({ key: 'submit-all' })
@@ -1329,17 +1341,22 @@ test('a click picks and advances; Submit all on the last question writes every a
   await pane.unmount()
 })
 
-test('Next moves on without a pick; on the last question Next is gone, and Submit all waits for every pick', async ($, on) => {
+test('Next moves on without a pick; on the last question Next opens the review, and Submit all waits for every pick', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
   ])
-  const { writes } = stubHost(on, files)
+  const { writes, clock } = stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
-  expect(await pane.find({ type: 'Button', key: 'nav-next' })).toBeUndefined()
+  // The last question of a group of two still has a Next; it opens the review instead of moving on.
+  expect(await labelOf(pane, 'nav-next')).toBe('Sem resposta · Próxima → (x)')
+  expect(await pane.find({ type: 'Button', key: 'submit-all' })).toBeUndefined()
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  expect(await textsOf(pane)).toContain('Revise as suas respostas')
   expect((await pane.find({ type: 'Button', key: 'submit-all' }))?.props.dimColor).toBe(true)
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([])
@@ -1376,7 +1393,12 @@ test('two projects are two groups: submit-all answers the first group, and the c
   expect(await textsOf(pane)).toContain('Which way for q-l1-aaaaaa?')
   await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
   await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
   await pane.press({ key: 'opt-q-l3-cccccc-B' })
+  await clock.advance(350)
+  // Next on the last question of the app group opens its review; Submit all there writes the group's two answers.
+  await pane.press({ key: 'nav-next' })
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l3-cccccc')])
   await clock.advance(250)
@@ -1400,7 +1422,10 @@ test('a question answered elsewhere leaves the round: its pick is pruned on the 
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
-  // The card is on q-l2 now: its pick makes every question of the group picked, so q-l2 holds a pick when it is answered elsewhere.
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
+  // The card is on q-l2 now: its pick makes q-l2 hold a pick when it is answered elsewhere.
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
   files.set(path('a', 'q-l2-bbbbbb'), answer('q-l2-bbbbbb', 'A', 500))
   await clock.advance(5000)
@@ -1747,8 +1772,8 @@ test('a legacy question with tradeoff and no how, gains, losses or session title
   expect(texts).toContain('💡 Por que A: It is smaller.')
   expect(texts).toContain('└ Cheap · aderência 80')
   expect(texts.filter(text => /^(🛠️|🎁|⚖️)/u.test(text))).toEqual([])
-  // The arrival row is the one blank text the card draws (a non-breaking space, no line applies); no empty section is.
-  expect(texts.filter(text => text.trim() === '')).toEqual([' '])
+  // No empty section and no blank row: the unanswered line carries its words while the question has no pick.
+  expect(texts.filter(text => text.trim() === '')).toEqual([])
   await pane.unmount()
 })
 
@@ -2440,7 +2465,7 @@ test('/askaway lang en draws the open card in English on the very next draw, wit
   expect(drawn).toContain('Askaway Details:')
   expect(drawn).toContain('Analogy: ')
   expect(drawn).toContain('See session')
-  expect(await labelOf(pane, 'nav-back')).toBe('← Back')
+  expect(await labelOf(pane, 'nav-back')).toBe('No answer · ← Back')
   await pane.unmount()
 })
 
@@ -2571,7 +2596,7 @@ test('/askaway lang en switches the pane to English at once, and the choice is k
   const pane = await mountPane($)
   expect(await pane.find({ type: 'Text', text: '1 pending · 1 group' })).toBeDefined()
   expect(await pane.find({ type: 'Text', text: 'Questions waiting' })).toBeDefined()
-  expect(await labelOf(pane, 'submit-all')).toBe('Submit all (1) (w)')
+  expect(await labelOf(pane, 'submit-all')).toBe('No answer · Submit all (1) (w)')
   await pane.unmount()
   expect(await run($, 'lang xx')).toEqual({ text: 'Use /askaway lang pt-BR, en or auto.' })
   // Object keys of the prototype are not choices either; nothing is stored for them.
@@ -2601,7 +2626,7 @@ test('/askaway lang pt then the pane reads in pt-BR, even when the environment s
   expect((await run($, 'lang pt-BR')).text).toBe('O idioma do Askaway agora é Português.')
   const pane = await mountPane($)
   expect(await pane.find({ type: 'Text', text: 'Perguntas aguardando' })).toBeDefined()
-  expect(await labelOf(pane, 'submit-all')).toBe('Enviar tudo (1) (w)')
+  expect(await labelOf(pane, 'submit-all')).toBe('Sem resposta · Enviar tudo (1) (w)')
   await pane.unmount()
 })
 
@@ -2716,12 +2741,12 @@ test('Other… keeps the text Enter sends as its label, a link click picks it in
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: '   ' })
   expect(await pane.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa' })).toBeDefined()
   expect(drafts).toEqual([])
-  // Enter keeps the trimmed text as the label: nothing is picked, and the same question stays on screen.
+  // Enter keeps the trimmed text as the label and picks it: the same question stays on screen, and nothing is written yet.
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: '  Use a fork  ' })
   expect(writes).toEqual([])
-  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(false)
+  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
   expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
-  // A click on the link picks Other with that text, and Submit all writes it as before.
+  // A click on the link picks Other with that text again, and Submit all writes it as before.
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa')])
@@ -2789,6 +2814,8 @@ test('Next records the Other text typed and not confirmed, before the card moves
   await pane.press({ key: 'nav-next' })
   await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb')])
   expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ key: 'other', text: 'Use a fork' })
@@ -2806,16 +2833,21 @@ test('Enter drops the pending draft: the link picks the text Enter kept, not the
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fo', kind: 'change' })
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  // Enter keeps the text and picks it, so the older typing is gone and the pick is the kept text.
+  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
   await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
   await clock.advance(350)
   await pane.press({ key: 'nav-back' })
-  // Enter dropped the older typing, so Next recorded no pick for it.
-  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(false)
+  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
   await clock.advance(350)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb')])
   expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ key: 'other', text: 'Use a fork' })
@@ -2832,8 +2864,11 @@ test('blank Other… text typed after a recorded Other pick leaves the kept labe
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
-  // Keep moves the text to the link; a click on the link picks it, and the pick moves on to the next question.
+  // Keep moves the text to the link and picks it; a click on the link picks it again, and the card stays on its question.
   await pane.press({ key: 'other-q-l1-aaaaaa' })
+  expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
   await clock.advance(350)
   await pane.press({ key: 'nav-back' })
@@ -2856,12 +2891,12 @@ test('a kept label drawn chosen is the primary button with a ✓ mark and bold, 
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
   const unpicked = await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' })
   expect(unpicked?.props.plain).toBe(true)
   expect(unpicked?.props.variant).not.toBe('primary')
   expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(false)
-  await pane.press({ key: 'other-q-l1-aaaaaa' })
+  // Enter keeps the text and picks it, so the kept label is drawn chosen at once.
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
   const chosen = await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' })
   expect(chosen?.props.plain).toBeUndefined()
   expect(chosen?.props.variant).toBe('primary')
@@ -2961,13 +2996,20 @@ test('Submit all records the Other text typed after the picks, before it writes'
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
   ])
-  const { writes } = stubHost(on, files)
+  const { writes, clock } = stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
+  await clock.advance(350)
   await pane.press({ key: 'other-q-l2-bbbbbb' })
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l2-bbbbbb', text: 'Use a fork', kind: 'change' })
+  // Next on the last question records the typed text first, then opens the review, where Submit all writes both answers.
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb')])
   expect(readJson(files, path('a', 'q-l2-bbbbbb'))).toMatchObject({ key: 'other', text: 'Use a fork' })
@@ -3000,14 +3042,19 @@ test('a pick changed on the last card while an earlier answer is written is the 
   const pane = await mountPane($)
   await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
   await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
   await clock.advance(350)
-  await pane.press({ key: 'review-back' })
+  await pane.press({ key: 'nav-next' })
   await clock.advance(350)
   const write = gate()
   holds.write = write.promise
   const pressed = pane.press({ key: 'submit-all' })
   await clock.settle()
+  // The review's jump to the last card, then a new pick on it, while the write is in flight.
+  await pressTreeLink(pane, 'jump', 'q-l2-bbbbbb')
+  await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-B' })
   write.open()
   await clock.settle()
@@ -3037,36 +3084,51 @@ test('Submit all drawn off with an Other text on one of two questions records th
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
   ])
-  const { writes } = stubHost(on, files)
+  const { writes, clock } = stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
   await pane.press({ key: 'other-q-l2-bbbbbb' })
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l2-bbbbbb', text: 'Use a fork', kind: 'change' })
+  // Next on the last question records the typed text, then opens the review: q-l1-aaaaaa has no answer, so Submit all is dim.
+  await pane.press({ key: 'nav-next' })
+  expect(await textsOf(pane)).toContain('Revise as suas respostas')
+  expect((await pane.find({ type: 'Button', key: 'submit-all' }))?.props.dimColor).toBe(true)
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([])
-  expect(await otherBold(pane, 'q-l2-bbbbbb')).toBe(true)
-  // A blank text typed over it and another press: the pick goes away and still nothing is written.
+  // Back to the last card, a blank text typed over the field, then Next: the Other pick goes away, and nothing is written.
+  await clock.advance(350)
+  await pane.press({ key: 'review-back' })
+  await clock.advance(350)
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l2-bbbbbb', text: '   ', kind: 'change' })
+  await pane.press({ key: 'nav-next' })
+  expect((await textsOf(pane)).filter(text => text.includes('→ Sem resposta'))).toHaveLength(2)
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([])
-  expect(await otherBold(pane, 'q-l2-bbbbbb')).toBe(false)
   await pane.unmount()
 })
 
-test('an Other text recorded from its field that completes a group of two draws the review, as an option pick does', async ($, on) => {
+test('an Other text recorded from its field that completes a group of two keeps the card; Next on the last question draws the review', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { title: 'Cache layer' })],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { title: 'Retry policy' })],
   ])
-  stubHost(on, files)
+  const { clock } = stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   await moveRing($, 'other-input-q-l2-bbbbbb')
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l2-bbbbbb', text: 'Use a fork', kind: 'change' })
   expect(await textsOf(pane)).not.toContain('Revise as suas respostas')
+  // Leaving the field records the text as the pick; the card stays on its question until Next.
   await moveRing($, 'nav-back')
+  expect(await otherBold(pane, 'q-l2-bbbbbb')).toBe(true)
+  expect(await textsOf(pane)).not.toContain('Revise as suas respostas')
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Revise as suas respostas')
   await pane.unmount()
 })
@@ -3140,7 +3202,7 @@ test('Other… text that is itself an option word reaches the CLI as one --text=
   await pane.unmount()
 })
 
-test('Keep in Other… draws the text on the link and empties the field, the card stays; a link click picks it and moves on, Back keeps the pick', async ($, on) => {
+test('Keep in Other… draws the text on the link and picks it, empties the field, and the card stays; a link click picks it again, Back keeps the pick', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
@@ -3150,14 +3212,17 @@ test('Keep in Other… draws the text on the link and empties the field, the car
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
-  // Keep does not move on and does not pick: the same question stays, the field is empty under its new round.
+  // Keep does not move on, and it picks the kept text: the same question stays, the field is empty under its new round.
   expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
   expect(await textsOf(pane)).not.toContain('Title q-l2-bbbbbb')
   expect(await pane.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa' })).toBeUndefined()
   expect(await pane.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa-1' })).toBeDefined()
-  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(false)
-  // The link's click picks Other with the kept text; the pick moves on.
+  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
+  // The link's click picks Other with the kept text again; the card stays, and Next moves on.
   await pane.press({ key: 'other-q-l1-aaaaaa' })
+  expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
   await clock.advance(350)
   await pane.press({ key: 'nav-back' })
@@ -3176,8 +3241,12 @@ test('Keep, click, type without Keep, Next, Back: the pick stays the kept label,
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'First text' })
-  // The link's click picks the kept text and moves on; Back returns to question 1, whose field is under its new round.
+  // Enter picked the kept text and the link's click picks it again; Next moves on, and Back returns to question 1,
+  // whose field is under its new round.
   await pane.press({ key: 'other-q-l1-aaaaaa' })
+  expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
   await clock.advance(350)
   await pane.press({ key: 'nav-back' })
@@ -3231,8 +3300,11 @@ test('blank Enter in Other… changes nothing: the Other pick and its label stay
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
-  // The link's click picks the kept text and moves on to question 2; Back returns to question 1 with the pick.
+  // The link's click picks the kept text again and the card stays; Next and Back bring question 1 back with the pick.
   await pane.press({ key: 'other-q-l1-aaaaaa' })
+  expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
   await clock.advance(350)
   await pane.press({ key: 'nav-back' })
@@ -3244,34 +3316,36 @@ test('blank Enter in Other… changes nothing: the Other pick and its label stay
   await pane.unmount()
 })
 
-test('Keep draws the link as its letter and the text, and empties the field under a new round', async ($, on) => {
+test('Keep draws the link as its letter and the text, picks it, and empties the field under a new round', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: '  Use a fork  ' })
-  expect(await textsOf(pane)).toContain('C · Use a fork')
+  expect(await labelOf(pane, 'other-q-l1-aaaaaa')).toContain('C · Use a fork')
   expect(await pane.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa' })).toBeUndefined()
   expect(await pane.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa-1' })).toBeDefined()
-  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(false)
+  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
   await pane.unmount()
 })
 
-test('Keep again replaces the label and drops the Other pick: only a new click picks the new text', async ($, on) => {
+test('Keep again replaces the label and the Other pick with the new text, and Keep picks that text too', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
-  const { drafts, clock } = stubHost(on, files)
+  const { drafts } = stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
-  await clock.advance(350)
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa-1', text: 'Use a fork two' })
-  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(false)
+  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
   expect(JSON.stringify(await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).toContain('Use a fork two')
-  expect(JSON.parse(drafts[drafts.length - 1] ?? '{}')).toEqual({ ts: expect.any(Number), picks: {}, labels: { 'q-l1-aaaaaa': 'Use a fork two' } })
+  expect(JSON.parse(drafts[drafts.length - 1] ?? '{}')).toMatchObject({
+    picks: { 'q-l1-aaaaaa': { key: 'other', text: 'Use a fork two' } },
+    labels: { 'q-l1-aaaaaa': 'Use a fork two' },
+  })
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
   expect(JSON.parse(drafts[drafts.length - 1] ?? '{}')).toMatchObject({ picks: { 'q-l1-aaaaaa': { key: 'other', text: 'Use a fork two' } } })
@@ -3301,19 +3375,20 @@ test('the kept label is still drawn after the panel closes and reopens', async (
   await pane.unmount()
   const reopened = await mountPane($)
   expect(JSON.stringify(await reopened.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).toContain('Use a fork')
-  expect(await otherBold(reopened, 'q-l1-aaaaaa')).toBe(false)
+  expect(await otherBold(reopened, 'q-l1-aaaaaa')).toBe(true)
   await reopened.unmount()
 })
 
-test('the card warns it is not answered until a pick, and names the Other letter once a text is kept', async ($, on) => {
+test('the card warns it is not answered until a pick, and a kept label with no pick names the Other letter', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
-  stubHost(on, files)
+  const { clock } = stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
   const warnings = async () => (await textsOf(pane)).filter(text => text.startsWith('Ainda não respondida'))
   expect(await warnings()).toEqual(['Ainda não respondida: escolha uma opção.'])
-  await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  // A draft that keeps a label without its pick (written by another session) names the Other letter to press.
+  files.set(`${STATE}/draft.json`, JSON.stringify({ ts: 100, picks: {}, labels: { 'q-l1-aaaaaa': 'Use a fork' } }))
+  await clock.advance(5000)
   expect(await warnings()).toEqual([expect.stringMatching(/^Ainda não respondida: aperte [A-Z] para escolher o seu texto\.$/)])
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
   expect(await warnings()).toEqual([])
@@ -3345,7 +3420,7 @@ test('a Submit all whose reply fails keeps the pick and says it is not delivered
   await pane.unmount()
 })
 
-test('draft.json has no labels key while no Other text is kept, and writes the label once one is kept', async ($, on) => {
+test('draft.json has no labels key while no Other text is kept, and writes the label and the Other pick once one is kept', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   const { drafts, clock } = stubHost(on, files)
   await $.session.start(SESSION)
@@ -3354,10 +3429,10 @@ test('draft.json has no labels key while no Other text is kept, and writes the l
   expect(JSON.parse(drafts[0] ?? '{}')).toEqual({ ts: expect.any(Number), picks: { 'q-l1-aaaaaa': { key: 'B' } } })
   await clock.advance(350)
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
-  // Keep leaves the option pick alone: only an Other pick of that question is dropped.
+  // Keep picks the kept text, which replaces the option pick: the label and the Other pick are written together.
   expect(JSON.parse(drafts[drafts.length - 1] ?? '{}')).toEqual({
     ts: expect.any(Number),
-    picks: { 'q-l1-aaaaaa': { key: 'B' } },
+    picks: { 'q-l1-aaaaaa': { key: 'other', text: 'Use a fork' } },
     labels: { 'q-l1-aaaaaa': 'Use a fork' },
   })
   await pane.unmount()
@@ -3374,21 +3449,22 @@ test('the move lock dims option, Other, Next and Back for 350 ms after a move, p
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
-  // A pick is a move: it lifts the card to question 2 and locks the moves.
+  // A pick is a move: it locks the moves for 350 ms, and the card stays on its question.
   await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
-  expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
-  for (const key of ['opt-q-l2-bbbbbb-A', 'other-q-l2-bbbbbb', 'nav-back', 'nav-next']) {
+  expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
+  for (const key of ['opt-q-l1-aaaaaa-B', 'other-q-l1-aaaaaa', 'nav-next']) {
     expect((await pane.find({ type: 'Button', key }))?.props.dimColor).toBe(true)
   }
-  await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
-  await pane.press({ key: 'other-q-l2-bbbbbb' })
-  await pane.press({ key: 'nav-back' })
+  await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
   await pane.press({ key: 'nav-next' })
-  expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
-  expect((await pane.find({ type: 'Button', key: 'opt-q-l2-bbbbbb-A' }))?.props.variant).not.toBe('primary')
+  expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
+  expect((await pane.find({ type: 'Button', key: 'opt-q-l1-aaaaaa-B' }))?.props.variant).not.toBe('primary')
   await clock.advance(350)
   expect((await pane.find({ type: 'Button', key: 'nav-next' }))?.props.dimColor).toBe(false)
+  await pane.press({ key: 'nav-next' })
+  expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
   // Back works once the window has lifted; its move locks the links on question 1 again.
+  await clock.advance(350)
   await pane.press({ key: 'nav-back' })
   expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
   expect((await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))?.props.dimColor).toBe(true)
@@ -3396,6 +3472,9 @@ test('the move lock dims option, Other, Next and Back for 350 ms after a move, p
   expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(false)
   await clock.advance(350)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
+  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
   await clock.advance(350)
   await pane.press({ key: 'nav-next' })
@@ -3403,7 +3482,7 @@ test('the move lock dims option, Other, Next and Back for 350 ms after a move, p
   await pane.unmount()
 })
 
-test('the card names the question on screen; a pick moves on, and Back returns to it with the pick kept', async ($, on) => {
+test('the card names the question on screen; a pick keeps the card on it, Next moves on, and Back returns to it with the pick kept', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
@@ -3413,6 +3492,9 @@ test('the card names the question on screen; a pick moves on, and Back returns t
   const pane = await mountPane($)
   expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
+  expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
   await clock.advance(350)
   await pane.press({ key: 'nav-back' })
@@ -3421,18 +3503,22 @@ test('the card names the question on screen; a pick moves on, and Back returns t
   await pane.unmount()
 })
 
-test('the forward button on the last question is Submit all (n), and Next is gone there', async ($, on) => {
+test('on the last question of a group of two, Next stays and opens the review, where Submit all (n) waits for every pick', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
   ])
-  const { writes } = stubHost(on, files)
+  const { writes, clock } = stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
-  expect(await labelOf(pane, 'nav-next')).toBe('Próxima → (x)')
+  expect(await labelOf(pane, 'nav-next')).toBe('Sem resposta · Próxima → (x)')
   await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
-  expect(await pane.find({ type: 'Button', key: 'nav-next' })).toBeUndefined()
+  expect(await labelOf(pane, 'nav-next')).toBe('Sem resposta · Próxima → (x)')
+  expect(await pane.find({ type: 'Button', key: 'submit-all' })).toBeUndefined()
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  expect(await textsOf(pane)).toContain('Revise as suas respostas')
   expect(await labelOf(pane, 'submit-all')).toBe('Enviar tudo (2) (w)')
   expect((await pane.find({ type: 'Button', key: 'submit-all' }))?.props.dimColor).toBe(true)
   await pane.press({ key: 'submit-all' })
@@ -3493,13 +3579,15 @@ test('an Other… answer keeps its link bold, with no echo of the typed text und
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  // Keep picked the text: the link is the chosen primary button, bold, with its label and no echo of the text.
+  await clock.advance(350)
   await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
   await clock.advance(350)
   await pane.press({ key: 'nav-back' })
   expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
-  expect(await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' })).toMatchObject({ props: { plain: true } })
-  expect(JSON.stringify(await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).toContain('"underline":true')
+  expect(await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' })).toMatchObject({ props: { variant: 'primary', label: '✓ C · Use a fork' } })
+  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
   expect(await textsOf(pane)).not.toContain('Use a fork')
   await pane.unmount()
 })
@@ -3634,7 +3722,7 @@ test('the card names each question of a group of three by its title, and Back an
   await pane.unmount()
 })
 
-test('a pick that moves on draws the arrival line on the next card for 1.5 s; Next draws none', async ($, on) => {
+test('a pick keeps the card on its question and draws no arrival line, on the card or after Next', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { title: 'Cache layer' })],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { title: 'Retry policy' })],
@@ -3643,15 +3731,16 @@ test('a pick that moves on draws the arrival line on the next card for 1.5 s; Ne
   const { clock } = stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
+  // The arrival line is gone: no text of the card starts with it, before or after a pick and past its old 1.5 s window.
   const arrival = async () => (await textsOf(pane)).filter(text => text.startsWith('✓ Escolha anterior guardada'))
-  expect(await arrival()).toEqual([])
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
-  expect(await textsOf(pane)).toContain('Retry policy')
-  expect(await arrival()).toEqual(['✓ Escolha anterior guardada para Enviar tudo · agora a pergunta 2 de 3'])
+  expect(await textsOf(pane)).toContain('Cache layer')
+  expect(await arrival()).toEqual([])
   await clock.advance(1500)
   expect(await arrival()).toEqual([])
+  await clock.advance(350)
   await pane.press({ key: 'nav-next' })
-  expect(await textsOf(pane)).toContain('Log level')
+  expect(await textsOf(pane)).toContain('Retry policy')
   expect(await arrival()).toEqual([])
   await pane.unmount()
 })
@@ -3666,39 +3755,51 @@ test('on the last question Submit all is dim until every question has a pick; th
   await $.session.start(SESSION)
   const pane = await mountPane($)
   const submit = () => pane.find({ type: 'Button', key: 'submit-all' })
+  const rows = async () => (await textsOf(pane)).filter(text => /^\S+ \d\. /.test(text))
   await pane.press({ key: 'nav-next' })
   await clock.advance(350)
   await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Title q-l3-cccccc')
+  // Next on the last question opens the review even with no pick: every row reads "Sem resposta", and Submit all is dim.
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  expect(await textsOf(pane)).toContain('Revise as suas respostas')
+  expect(await rows()).toEqual([
+    expect.stringMatching(/1\. Title q-l1-aaaaaa → Sem resposta/),
+    expect.stringMatching(/2\. Title q-l2-bbbbbb → Sem resposta/),
+    expect.stringMatching(/3\. Title q-l3-cccccc → Sem resposta/),
+  ])
   expect((await submit())?.props.dimColor).toBe(true)
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([])
-  // A pick with gaps left moves on to the first question without a pick, wrapping from the last one.
+  // A jump to the last card and a pick there: the review still has gaps, so Submit all stays dim.
+  await clock.advance(350)
+  await pressTreeLink(pane, 'jump', 'q-l3-cccccc')
   await clock.advance(350)
   await pane.press({ key: 'opt-q-l3-cccccc-B' })
-  expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
-  await clock.advance(350)
-  await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
-  expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
   await clock.advance(350)
   await pane.press({ key: 'nav-next' })
-  expect(await textsOf(pane)).toContain('Title q-l3-cccccc')
+  expect(await textsOf(pane)).toContain('Revise as suas respostas')
+  expect(await rows()).toEqual([
+    expect.stringMatching(/1\. Title q-l1-aaaaaa → Sem resposta/),
+    expect.stringMatching(/2\. Title q-l2-bbbbbb → Sem resposta/),
+    expect.stringMatching(/3\. Title q-l3-cccccc → Rewrite/),
+  ])
   expect((await submit())?.props.dimColor).toBe(true)
-  await pane.press({ key: 'submit-all' })
-  expect(writes).toEqual([])
+  // The gaps filled from the cards: the review's rows follow, and Submit all turns primary.
   await clock.advance(350)
-  await pane.press({ key: 'nav-back' })
+  await pressTreeLink(pane, 'jump', 'q-l1-aaaaaa')
+  await clock.advance(350)
+  await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Revise as suas respostas')
-  // The answers sit in the group's tree: the group's name on top, as in the open tree, then the rows, then the title.
-  const texts = await textsOf(pane)
-  const title = texts.indexOf('Revise as suas respostas')
-  const firstRow = texts.findIndex(text => text.includes('1. Title q-l1-aaaaaa →'))
-  const groupName = texts[firstRow - 1] ?? ''
-  expect(firstRow).toBeGreaterThan(0)
-  expect(firstRow).toBeLessThan(title)
-  expect(texts.indexOf(groupName)).toBeLessThan(firstRow - 1)
   expect((await submit())?.props.variant).toBe('primary')
   expect((await submit())?.props.dimColor).toBe(false)
   expect(writes).toEqual([])
@@ -3707,7 +3808,7 @@ test('on the last question Submit all is dim until every question has a pick; th
   await pane.unmount()
 })
 
-test('the arrival line names the Submit all button the last card draws, so the line and the button agree', async ($, on) => {
+test('a pick draws no arrival line, and the card\'s Next names the answer it has: "Resposta: B · Próxima →"', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { title: 'Cache layer' })],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { title: 'Retry policy' })],
@@ -3715,15 +3816,14 @@ test('the arrival line names the Submit all button the last card draws, so the l
   stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
+  expect(await labelOf(pane, 'nav-next')).toBe('Sem resposta · Próxima → (x)')
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
-  expect((await textsOf(pane)).find(text => text.startsWith('✓ Escolha anterior guardada'))).toBe(
-    '✓ Escolha anterior guardada para Enviar tudo · agora a pergunta 2 de 2',
-  )
-  expect(await labelOf(pane, 'submit-all')).toEqual(expect.stringContaining('Enviar tudo'))
+  expect((await textsOf(pane)).some(text => text.startsWith('✓ Escolha anterior guardada'))).toBe(false)
+  expect(await labelOf(pane, 'nav-next')).toBe('Resposta: B · Próxima → (x)')
   await pane.unmount()
 })
 
-test('the pick that completes a group shows the review: each answer links to its card, Back returns to the last card, and Submit all sends', async ($, on) => {
+test('Next on the last question shows the review: each answer links to its card, Back returns to the last card, and Submit all sends', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { title: 'Cache layer' })],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000, { title: 'Retry policy' })],
@@ -3734,18 +3834,27 @@ test('the pick that completes a group shows the review: each answer links to its
   const rows = async () => (await textsOf(pane)).filter(text => /^\S+ \d\. /.test(text))
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
   await clock.advance(350)
-  expect(await textsOf(pane)).not.toContain('Revise as suas respostas')
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
+  // The pick keeps the card on its question: the review waits for Next.
+  expect(await textsOf(pane)).not.toContain('Revise as suas respostas')
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Revise as suas respostas')
   expect(await rows()).toEqual([expect.stringMatching(/1\. Cache layer → Rewrite/), expect.stringMatching(/2\. Retry policy → Keep/)])
-  // A row jumps to its card; changing the pick there completes the group again, so the review comes back.
+  // A row jumps to its card; changing the pick there and walking back with Next brings the review back with the new answer.
   await pane.press({ key: 'review-jump-q-l1-aaaaaa', link: { href: 'file:///askaway/jump/q-l1-aaaaaa' } })
   expect(await textsOf(pane)).toContain('Cache layer')
   expect(await textsOf(pane)).not.toContain('Revise as suas respostas')
   await clock.advance(350)
   await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   expect(await rows()).toEqual([expect.stringMatching(/1\. Cache layer → Keep/), expect.stringMatching(/2\. Retry policy → Keep/)])
-  // Back leaves the review for the last card, which keeps its own Submit all. The pick above starts the move lock.
+  // Back leaves the review for the last card, which keeps its own answer. The move lock lifts before the next press.
   await clock.advance(350)
   await pane.press({ key: 'review-back' })
   expect(await textsOf(pane)).toContain('Retry policy')
@@ -3753,6 +3862,8 @@ test('the pick that completes a group shows the review: each answer links to its
   await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-B' })
   expect(writes).toEqual([])
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb')])
   expect(readJson(files, path('a', 'q-l2-bbbbbb'))).toMatchObject({ key: 'B' })
@@ -3769,7 +3880,11 @@ test('a one-question group drawn after a submitted two-question group shows no r
   const pane = await mountPane($)
   await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
   await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Revise as suas respostas')
   await pane.press({ key: 'submit-all' })
   files.set(path('q', 'q-l3-cccccc'), question('q-l3-cccccc', 3000, { project: '/work/other' }))
@@ -3790,7 +3905,11 @@ test('Back on the review is under the move lock: dim and no-op for 350 ms after 
   const pane = await mountPane($)
   await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
   await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Revise as suas respostas')
   expect((await pane.find({ type: 'Button', key: 'review-back' }))?.props.dimColor).toBe(true)
   await pane.press({ key: 'review-back' })
@@ -3813,16 +3932,21 @@ test('the review Back carries the card Back hotkey and label: z and "← Voltar 
   const pane = await mountPane($)
   await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
   await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   expect((await pane.find({ type: 'Button', key: 'review-back' }))?.props.hotkey).toBe('z')
-  expect(await labelOf(pane, 'review-back')).toBe('← Voltar (z)')
+  // The review's Back names the answer of the card it leads to, first; the letter is the same as the card's.
+  expect(await labelOf(pane, 'review-back')).toBe('Resposta: A · ← Voltar (z)')
   await clock.advance(350)
   await pane.press({ key: 'review-back' })
   expect((await pane.find({ type: 'Button', key: 'nav-back' }))?.props.hotkey).toBe('z')
   await pane.unmount()
 })
 
-test('a move or a jump clears the arrival line: Next and a tree jump draw none, the arrival line only follows a pick', async ($, on) => {
+test('a pick, Next and a tree jump draw no arrival line, and the card stays on the question it moves to', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
@@ -3831,23 +3955,25 @@ test('a move or a jump clears the arrival line: Next and a tree jump draw none, 
   const { clock } = stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
+  // The arrival line is gone, so no card draws one: no text starts with its words after any move.
   const arrival = async () => (await textsOf(pane)).filter(text => text.startsWith('✓ Escolha anterior guardada'))
   await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
-  expect(await arrival()).toHaveLength(1)
-  await clock.advance(350)
-  await pane.press({ key: 'nav-next' })
-  expect(await textsOf(pane)).toContain('Title q-l3-cccccc')
   expect(await arrival()).toEqual([])
   await clock.advance(350)
-  await pane.press({ key: 'opt-q-l3-cccccc-B' })
-  expect(await arrival()).toHaveLength(1)
+  await pane.press({ key: 'nav-next' })
+  expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
+  expect(await arrival()).toEqual([])
+  await clock.advance(350)
+  await pane.press({ key: 'opt-q-l2-bbbbbb-B' })
+  expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
+  expect(await arrival()).toEqual([])
   await pressTreeLink(pane, 'jump', 'q-l1-aaaaaa')
   expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
   expect(await arrival()).toEqual([])
   await pane.unmount()
 })
 
-test('the arrival and unanswered rows are always drawn, blank when they have no line: the card keeps its rows and its title row as the lines come and go', async ($, on) => {
+test('the unanswered row is always drawn: the card keeps its rows and its title row as a pick comes and goes', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
@@ -3863,14 +3989,18 @@ test('the arrival and unanswered rows are always drawn, blank when they have no 
     )
   const before = await rowsOf('q-l1-aaaaaa')
   await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
-  expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
-  expect(await rowsOf('q-l2-bbbbbb')).toEqual(before)
+  expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
+  expect(await rowsOf('q-l1-aaaaaa')).toEqual(before)
   await clock.advance(1500)
+  expect(await rowsOf('q-l1-aaaaaa')).toEqual(before)
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
   expect(await rowsOf('q-l2-bbbbbb')).toEqual(before)
   await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
-  expect(await textsOf(pane)).toContain('Title q-l3-cccccc')
-  expect(await rowsOf('q-l3-cccccc')).toEqual(before)
+  expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
+  expect(await rowsOf('q-l2-bbbbbb')).toEqual(before)
   await pane.unmount()
 })
 
@@ -4003,10 +4133,14 @@ test('Submit all of a window writes each answer once its reply is written, then 
   const { writes, clock } = stubHost(on, files, true, {}, holds)
   await $.session.start(SESSION)
   const pane = await mountPane($)
-  // The pick on the first question moves on to the second, the last: its pick completes the window.
+  // Next moves to the second question, the last: Next there opens the review, where Submit all writes the window.
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
   await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   const write = gate()
   holds.write = write.promise
   const pressed = pane.press({ key: 'submit-all' })
@@ -4059,7 +4193,12 @@ test('hotkeys: each option its key letter, Other the next letter c, then z, x an
   expect(await hotkeyOf('nav-back')).toBe('z')
   expect(await hotkeyOf('nav-next')).toBe('x')
   await pane.press({ key: 'nav-next' })
+  expect(await hotkeyOf('nav-next')).toBe('x')
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   expect(await hotkeyOf('submit-all')).toBe('w')
+  await clock.advance(350)
+  await pane.press({ key: 'review-back' })
   await clock.advance(350)
   await pane.press({ key: 'nav-back' })
   // The Other link only focuses its field, and typing reaches the field alone while it has focus: no hotkey is gated on
@@ -4080,7 +4219,11 @@ test('hotkeys: each option its key letter, Other the next letter c, then z, x an
   expect(await deskHotkey('nav-next')).toBe('f')
   await clock.advance(350)
   await desk.press({ key: 'nav-next' })
+  await clock.advance(350)
+  await desk.press({ key: 'nav-next' })
   expect(await deskHotkey('submit-all')).toBe('w')
+  await clock.advance(350)
+  await desk.press({ key: 'review-back' })
   await clock.advance(350)
   await desk.press({ key: 'nav-back' })
   await desk.unmount()
@@ -4253,18 +4396,18 @@ test('the tree draws the group row in bold, each session with ├ or └, and on
   await pane.unmount()
 })
 
-test('after a pick the ● moves to the next question, and the picked row shows its check, " - " and its own Submit', async ($, on) => {
+test('a pick keeps the ● on its question, and the picked row shows its check, " - " and its own Submit', async ($, on) => {
   stubHost(on, treeFiles())
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
   const texts = await textsOf(pane)
-  expect(texts).toContain('│  ○ Title q-l1-aaaaaa')
+  expect(texts).toContain('│  ● Title q-l1-aaaaaa')
   expect(texts).toContain(' ✓ - ')
-  expect(texts.indexOf(' ✓ - ')).toBeGreaterThan(texts.indexOf('│  ○ Title q-l1-aaaaaa'))
-  expect(texts).toContain('│  ● Title q-l2-bbbbbb')
-  expect(texts).not.toContain('│  ○ Title q-l2-bbbbbb')
-  expect((await pane.find({ type: 'Markdown', key: 'tree-jump-q-l2-bbbbbb' }))?.props.text).toBe('│  ● **[Title q-l2-bbbbbb](file:///askaway/jump/q-l2-bbbbbb)**')
+  expect(texts.indexOf(' ✓ - ')).toBeGreaterThan(texts.indexOf('│  ● Title q-l1-aaaaaa'))
+  expect(texts).toContain('│  ○ Title q-l2-bbbbbb')
+  expect(texts).not.toContain('│  ● Title q-l2-bbbbbb')
+  expect((await pane.find({ type: 'Markdown', key: 'tree-jump-q-l1-aaaaaa' }))?.props.text).toBe('│  ● **[Title q-l1-aaaaaa](file:///askaway/jump/q-l1-aaaaaa)**')
   // Only the picked row has its own Submit.
   // The question row and its Submit are links the plugin answers, and only their own hrefs.
   expect(await pane.find({ type: 'Markdown', key: 'tree-jump-q-l1-aaaaaa' })).toMatchObject({ props: { pressableLinks: ['file:///askaway/jump/q-l1-aaaaaa'] } })
@@ -4280,6 +4423,8 @@ test('a row Submit answers that question alone and removes its row; the other pi
   const pane = await mountPane($)
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
   await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
   expect(writes).toEqual([])
   await pressTreeLink(pane, 'submit', 'q-l1-aaaaaa')
@@ -4289,9 +4434,15 @@ test('a row Submit answers that question alone and removes its row; the other pi
   // The second question keeps its pick and its own Submit.
   expect(await pane.find({ type: 'Markdown', key: 'tree-submit-q-l2-bbbbbb' })).toBeDefined()
   await clock.advance(350)
-  // Submit all still answers the rest of the group.
+  // Submit all still answers the rest of the group: Next on its last question opens the review, which holds it. The row
+  // Submit took q1 out, so the tree lists q3's session first: the group is q3 then q2, and q2 is the last question.
   await pressTreeLink(pane, 'jump', 'q-l3-cccccc')
+  await clock.advance(350)
   await pane.press({ key: 'opt-q-l3-cccccc-A' })
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   await pane.press({ key: 'submit-all' })
   // Each answer is written once; the order of the rest follows the group, so the three are compared as a set.
   expect(writes[0]).toBe(path('a', 'q-l1-aaaaaa'))
@@ -4845,7 +4996,7 @@ test('held: the press of a held element runs the handler of the latest hold, and
 for (const surface of SURFACES) {
   test(`held (${surface}): a redraw keeps every Button's press handle, and a press renews the pressed option only`, async ($, on) => {
     const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
-    stubHost(on, files)
+    const { clock } = stubHost(on, files)
     await $.session.start(SESSION)
     const pane = await mountPane($, surface)
     const before = buttonHandles(await pane.drawn())
@@ -4858,7 +5009,12 @@ for (const surface of SURFACES) {
     await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
     const after = buttonHandles(await pane.drawn())
     expect(after['opt-q-l1-aaaaaa-A']).not.toBe(before['opt-q-l1-aaaaaa-A'])
-    expect(after['nav-back']).toBe(before['nav-back'])
+    // The pick starts the move lock (SPEC, Move lock), which dims every option and nav button, so their handles renew with
+    // it. Once the window ends, the handles are stable across a redraw again.
+    await clock.advance(350)
+    const settled = buttonHandles(await pane.drawn())
+    await pane.redraw()
+    expect(buttonHandles(await pane.drawn())).toEqual(settled)
     await pane.unmount()
   })
 }
@@ -5049,9 +5205,9 @@ test('the card labels read in pt-BR: Outra…, ← Voltar and Próxima →', asy
   await $.session.start(SESSION)
   const pane = await mountPane($)
   expect(await labelOf(pane, 'other-q-l1-aaaaaa')).toBe('C · Outra…')
-  expect(await labelOf(pane, 'nav-next')).toBe('Próxima → (x)')
+  expect(await labelOf(pane, 'nav-next')).toBe('Sem resposta · Próxima → (x)')
   await pane.press({ key: 'nav-next' })
-  expect(await labelOf(pane, 'nav-back')).toBe('← Voltar (z)')
+  expect(await labelOf(pane, 'nav-back')).toBe('Sem resposta · ← Voltar (z)')
   await pane.unmount()
 })
 
@@ -5064,9 +5220,9 @@ test('the card labels read in English under LANG=en_US: Other…, ← Back and N
   await $.session.start(SESSION)
   const pane = await mountPane($)
   expect(await labelOf(pane, 'other-q-l1-aaaaaa')).toBe('C · Other…')
-  expect(await labelOf(pane, 'nav-next')).toBe('Next → (x)')
+  expect(await labelOf(pane, 'nav-next')).toBe('No answer · Next → (x)')
   await pane.press({ key: 'nav-next' })
-  expect(await labelOf(pane, 'nav-back')).toBe('← Back (z)')
+  expect(await labelOf(pane, 'nav-back')).toBe('No answer · ← Back (z)')
   await pane.unmount()
 })
 
@@ -5662,6 +5818,10 @@ test('Gauntlet M52: a far-ahead draft applies every pick it holds, the one made 
   // Another window wrote the file after reading this pick, so its far-ahead draft holds both picks.
   files.set(`${STATE}/draft.json`, JSON.stringify({ ts: 1e13, picks: { 'q-l1-aaaaaa': { key: 'A' }, 'q-l2-bbbbbb': { key: 'B' } } }))
   await clock.advance(5000)
+  // Next walks to the last question, and the next Next opens the review, where Submit all is lit once every pick is held.
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   expect((await pane.find({ type: 'Button', key: 'submit-all' }))?.props.dimColor).toBe(false)
   await pane.unmount()
 })
@@ -5692,8 +5852,11 @@ test('Gauntlet M64: Back and Next presses inside the move lock are ignored; the 
   const { clock } = stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
-  // The pick on the first question moves the card to the second.
+  // The pick keeps the card on the first question; the pick itself starts the move lock.
   await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  expect(await textsOf(pane)).toContain('Which way for q-l1-aaaaaa?')
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Which way for q-l2-bbbbbb?')
   await pane.press({ key: 'nav-back' })
   expect(await textsOf(pane)).toContain('Which way for q-l2-bbbbbb?')
@@ -5748,7 +5911,12 @@ test('Gauntlet B1 H6: a row Submit on a question whose reply is still being writ
   const pane = await mountPane($)
   await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
   await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-B' })
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
   // The first question's reply is held in its CLI call; the row Submit of the same question comes while it is in flight.
   holds.write = write.promise
   const first = pane.press({ key: 'submit-all' })
@@ -5826,10 +5994,12 @@ test('Gauntlet B1 H19: a second session start keeps the card on screen and its s
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
   ])
-  stubHost(on, files)
+  const { clock } = stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Which way for q-l2-bbbbbb?')
   await pane.unmount()
   await $.session.start(SESSION)
@@ -5847,11 +6017,14 @@ test('Gauntlet 5 B3 M16 probe: a pick, then an Other text typed on the next card
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
   ])
-  const { drafts } = stubHost(on, files)
+  const { clock, drafts } = stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
   expect(drafts).toHaveLength(1)
+  // The pick keeps the card on the first question: Next, after the lock, walks to the second one, and the lock of that move runs on.
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   await pane.press({ key: 'other-q-l2-bbbbbb' })
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l2-bbbbbb', text: 'Stale text' })
   await pane.unmount()
@@ -6164,23 +6337,27 @@ test('History labels are links on the desktop only: the terminal draws the famil
   await terminal.unmount()
 })
 
-test('the terminal nav labels carry their letter, "← Voltar (z)", "Próxima → (x)" and "Enviar tudo (2) (w)"; the desktop labels stay as they were', async ($, on) => {
+test('the terminal nav labels carry their letter, "Sem resposta · ← Voltar (z)", "Sem resposta · Próxima → (x)" and "Enviar tudo (2) (w)"; the desktop labels carry no letter', async ($, on) => {
   const files = new Map([
     [path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)],
     [path('q', 'q-l2-bbbbbb'), question('q-l2-bbbbbb', 2000)],
   ])
-  stubHost(on, files)
+  const { clock } = stubHost(on, files)
   await $.session.start(SESSION)
   const terminal = await mountPane($)
-  expect(await labelOf(terminal, 'nav-next')).toBe('Próxima → (x)')
+  expect(await labelOf(terminal, 'nav-next')).toBe('Sem resposta · Próxima → (x)')
   await terminal.press({ key: 'nav-next' })
-  expect(await labelOf(terminal, 'nav-back')).toBe('← Voltar (z)')
-  expect(await labelOf(terminal, 'submit-all')).toBe('Enviar tudo (2) (w)')
+  expect(await labelOf(terminal, 'nav-back')).toBe('Sem resposta · ← Voltar (z)')
   await terminal.unmount()
   const desk = await mountPane($, 'desktop')
-  expect(await labelOf(desk, 'nav-back')).toBe('← Voltar')
-  expect(await labelOf(desk, 'submit-all')).toBe('Enviar tudo (2)')
+  expect(await labelOf(desk, 'nav-back')).toBe('Sem resposta · ← Voltar')
   await desk.unmount()
+  // The last card of a group of two shows Next; Submit all is on the review that Next opens.
+  const reviewing = await mountPane($)
+  await clock.advance(350)
+  await reviewing.press({ key: 'nav-next' })
+  expect(await labelOf(reviewing, 'submit-all')).toBe('Enviar tudo (2) (w)')
+  await reviewing.unmount()
 })
 
 // Owner replies P2a
@@ -6519,9 +6696,13 @@ test('Gauntlet 4 B1 M25: a failed listing of the question folder keeps the board
   const pane = await mountPane($)
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
   await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
   holds.failListOf = `${STATE}/q`
   await clock.advance(5000)
+  // Next on the last question opens the review, where Submit all is lit: both picks are kept.
+  await pane.press({ key: 'nav-next' })
   expect((await pane.find({ type: 'Button', key: 'submit-all' }))?.props.dimColor).toBe(false)
   await pane.unmount()
 })
@@ -6564,9 +6745,16 @@ test('Gauntlet 4 B1 M35: in a round of three, a failed reply keeps its pick and 
   const pane = await mountPane($)
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
   await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
   await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
   await pane.press({ key: 'opt-q-l3-cccccc-B' })
+  await clock.advance(350)
+  // Next on the last question opens the review, which holds Submit all.
+  await pane.press({ key: 'nav-next' })
   await pane.press({ key: 'submit-all' })
   await clock.settle()
   // The answered cards leave once their replies are written; the failed one comes back.
@@ -7518,7 +7706,11 @@ test('gauntlet 7 pane-exec3-1: a text a kept label set aside is dropped once Nex
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'First text' })
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
+  await clock.advance(350)
+  await pane.press({ key: 'nav-next' })
   await clock.advance(350)
   await pane.press({ key: 'review-back' })
   await clock.advance(350)
@@ -7529,6 +7721,8 @@ test('gauntlet 7 pane-exec3-1: a text a kept label set aside is dropped once Nex
   await moveRing($, 'nav-next')
   await pane.press({ key: 'nav-next' })
   await clock.advance(350)
+  // The second question is the last one: its Next opens the review, where Submit all sends both answers.
+  await pane.press({ key: 'nav-next' })
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa'), path('a', 'q-l2-bbbbbb')])
   expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ key: 'other', text: 'First text' })

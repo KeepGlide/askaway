@@ -63,8 +63,6 @@ const DRAFT_LOCK_STALE_MINUTES = 1
 const DRAFT_LOCK_STALE_FIND_ARG = `+${DRAFT_LOCK_STALE_MINUTES - 1}`
 // A pick, Next or Back locks the moves for this long: a second press inside the window (a double click) does nothing.
 const MOVE_LOCK_MS = 350
-// How long the card a pick moved to draws its arrival line.
-const ARRIVAL_MS = 1500
 // The `list --open` run that finds the ended sessions repeats at most this often while the linked open questions do not change.
 const ENDED_RECHECK_MS = 30_000
 // The longest text a failed `list --open` run logs after the command's name, in code points: a longer stderr or stdout is cut
@@ -115,11 +113,10 @@ const quietAtom = atom({ plugin: 'askaway', key: 'quiet' } as const, false)
 const wizardAtom = atom({ plugin: 'askaway', key: 'wizard' } as const, flow.EMPTY_WIZARD)
 // Whether a move (a pick, Next or Back) ran within MOVE_LOCK_MS: the pane draws its buttons disabled meanwhile.
 const moveLockAtom = atom({ plugin: 'askaway', key: 'moveLock' } as const, false)
-// The id of the question a pick just moved the card to, for ARRIVAL_MS (markArrival); null otherwise.
-const arrivalAtom = atom({ plugin: 'askaway', key: 'arrival' } as const, null as string | null)
-// Whether the pane draws the review (every chosen answer, Back and Submit all) in place of the card: set by the pick that
-// completes the group, cleared by Back on the review, a jump or a move (leaveReview).
-const reviewAtom = atom({ plugin: 'askaway', key: 'review' } as const, false)
+// The question set (reviewKeyOf) the review (every chosen answer, Back and Submit all) is drawn for in place of the card, or null:
+// set by Next on the last question of a group of two or more, cleared by Back on the review (leaveReview), a move, a jump, a
+// submit, and a poll that finds the group's questions changed (closeChangedReview).
+const reviewAtom = atom({ plugin: 'askaway', key: 'review' } as const, null as string | null)
 // The questions whose last Submit all (or row Submit) did not deliver: the card says so until a submit delivers the pick or
 // the pick changes (setUndelivered, forgetUndelivered).
 const undeliveredAtom = atom({ plugin: 'askaway', key: 'undelivered' } as const, [] as string[])
@@ -557,12 +554,22 @@ async function pollInbox($: EngineInterface, home: string, ownSession?: string):
   if (ownSession !== undefined) await handDue($, home, ownSession, now)
 }
 
+// Closes the review once the group it was opened for has another question set: a question left, one arrived, or the group
+// vanished. Until then the review stays; a later return to the same set does not bring it back.
+async function closeChangedReview($: EngineInterface, open: readonly Question[], next: Wizard): Promise<void> {
+  const review = await read($, reviewAtom)
+  if (review === null) return
+  const active = flow.groupsOf(open).find(group => group.key === next.groupKey)
+  if (active === undefined || flow.reviewKeyOf(active) !== review) await closeReview($)
+}
+
 // Drops from the wizard what the open questions no longer hold (answered elsewhere). Written by the poll only; the
 // pane draws the same pruned value without writing it.
 async function pruneWizardState($: EngineInterface): Promise<void> {
   const open = openQuestions(await read($, board), await read($, leaving))
   const prev = await read($, wizardAtom)
   const next = prunedWizard(prev, open)
+  await closeChangedReview($, open, next)
   const same = (a: Wizard, b: Wizard): boolean => JSON.stringify(a) === JSON.stringify(b)
   // With nothing open the pane draws no card, so a groupKey or questionId that only turns null changes nothing drawn; the
   // write would still redraw the pane and retire the Button handles on screen. A group that opens later still starts at step 0.
@@ -1115,7 +1122,7 @@ async function submitGroup($: EngineInterface, group: Group): Promise<void> {
     await setUndelivered($, items.map(item => item.id), ids)
     await changeWizard($, prev => clearPicks(prev, ids, group.questions[0]?.id ?? null))
     // The review belongs to the group just sent: a later group must not draw it with one question picked.
-    await update($, reviewAtom, () => false)
+    await closeReview($)
   } finally {
     submitting.delete(group.key)
   }
@@ -1149,24 +1156,13 @@ async function submitOne($: EngineInterface, id: string): Promise<void> {
   }
 }
 
-// Records a pick for one question and moves the wizard on. A card that is fading takes nothing. Nothing is submitted
-// here: the last question's Submit all is the only submit path.
+// Records a pick for one question. The card stays on that question. A card that is fading takes nothing. Nothing is
+// submitted or reviewed here: Next on the last question opens the review, and Submit all is the only submit path.
 async function pickOption($: EngineInterface, id: string, choice: Pick): Promise<void> {
   const { open, group, leaving: fading } = await snapshot($)
   if (group === undefined || fading[id] !== undefined || !group.questions.some(question => question.id === id)) return
-  await changeWizard($, prev => flow.choose(prunedWizard(prev, open), group, id, choice))
+  await changeWizard($, prev => flow.choose(prunedWizard(prev, open), id, choice))
   await forgetUndelivered($, id)
-  if (await reviewIfComplete($, group)) return
-  const after = await read($, wizardAtom)
-  if (after.questionId !== null && after.questionId !== id) await markArrival($, after.questionId)
-}
-
-// The review after a pick, or after an Other text recorded from its field: drawn when that leaves every question of a group of
-// two or more picked (SPEC, Review). Returns whether it drew the review.
-async function reviewIfComplete($: EngineInterface, group: Group): Promise<boolean> {
-  if (group.questions.length < 2 || flow.submittable(group, await read($, wizardAtom)) === undefined) return false
-  await update($, reviewAtom, () => true)
-  return true
 }
 
 // A pick that changes is no longer the one a submit failed on, so its card drops the not-delivered line.
@@ -1174,18 +1170,20 @@ async function forgetUndelivered($: EngineInterface, id: string): Promise<void> 
   await update($, undeliveredAtom, prev => prev.filter(one => one !== id))
 }
 
-// Leaves the review for the card of the question on screen (Back on the review, a jump, a move). The arrival line goes
-// too: it marks the pick that just moved the card, and a move or a jump away from that card is no longer that pick.
-const leaveReview = async ($: EngineInterface): Promise<void> => {
-  await update($, reviewAtom, () => false)
-  await update($, arrivalAtom, () => null)
+// Closes the review, so the card of the question on screen is drawn again. A move, a jump and a submit close it this way.
+const closeReview = async ($: EngineInterface): Promise<void> => {
+  await update($, reviewAtom, () => null)
 }
 
-// Marks the card a pick moved to, so it draws its arrival line for ARRIVAL_MS: the move itself is instant, and two cards of
-// one group often look alike. A later arrival replaces it; the timer clears only its own.
-async function markArrival($: EngineInterface, id: string): Promise<void> {
-  await update($, arrivalAtom, () => id)
-  $.clock.after(ARRIVAL_MS, () => report($, update($, arrivalAtom, prev => (prev === id ? null : prev))))
+// Back on the review: closes it and moves to the card of the group's last question, whatever step the wizard stores (an
+// anchor kept on an older question must not decide the card the review leads to). Only this Back lands there.
+const leaveReview = async ($: EngineInterface): Promise<void> => {
+  const { open, group } = await snapshot($)
+  await closeReview($)
+  if (group === undefined) return
+  const last = group.questions[group.questions.length - 1]
+  if (last === undefined) return
+  await update($, wizardAtom, prev => flow.jumpTo(prunedWizard(prev, open), group, last.id))
 }
 
 // Moves the wizard with the group on screen; a move that needs the group goes through here. The move starts from the
@@ -1193,8 +1191,20 @@ async function markArrival($: EngineInterface, id: string): Promise<void> {
 async function moveWizard($: EngineInterface, move: (current: Wizard, group: Group) => Wizard): Promise<void> {
   const { open, group } = await snapshot($)
   if (group === undefined) return
-  await leaveReview($)
+  await closeReview($)
   await update($, wizardAtom, prev => move(prunedWizard(prev, open), group))
+}
+
+// Next: moves to the next question. On the last question of a group of two or more it opens the review instead, which draws
+// every answer, a question with no pick included (SPEC, Review). The step stays on that question. The review is for this
+// group's question set (reviewKeyOf), so a change to the set closes it.
+async function nextOrReview($: EngineInterface): Promise<void> {
+  const { group, wizard } = await snapshot($)
+  if (group !== undefined && flow.screenOf(group, wizard)?.canReview === true) {
+    await update($, reviewAtom, () => flow.reviewKeyOf(group))
+    return
+  }
+  await moveWizard($, (current, one) => flow.next(current, one))
 }
 
 // The "Other…" link focuses the field of its question, which is already open under the link.
@@ -1210,7 +1220,7 @@ async function jumpToQuestion($: EngineInterface, id: string): Promise<void> {
   if (fading[id] !== undefined) return
   const target = flow.groupsOf(open).find(group => group.questions.some(question => question.id === id))
   if (target === undefined) return
-  await leaveReview($)
+  await closeReview($)
   await update($, wizardAtom, prev => flow.jumpTo(prunedWizard(prev, open), target, id))
   await $.ui.scroll({ in: PANE, to: { key: `card-${id}` }, block: 'start' })
 }
@@ -1241,18 +1251,21 @@ async function submitOther($: EngineInterface, id: string, text: string, record:
   if (fading[id] !== undefined || !open.some(question => question.id === id)) return
   await changeWizard($, prev => record(prunedWizard(prev, open), id, text))
   await forgetUndelivered($, id)
-  // The recorded text may complete the group: the review follows, as after an option pick.
-  const group = flow.groupsOf(open).find(one => one.questions.some(question => question.id === id))
-  if (group !== undefined) await reviewIfComplete($, group)
 }
 
-// Keep in the "Other…" field (Enter, or the Keep button) moves its text to the question's label and empties the field: the
-// focus goes to the Other button, which now draws the label. Blank text keeps nothing and leaves the field as it is. A
-// question that is not open, or fading out, takes nothing.
+// Whether two picks are the same answer: the same key and the same text.
+const samePick = (first: Pick | undefined, second: Pick | undefined): boolean =>
+  first?.key === second?.key && first?.text === second?.text
+
+// Keep in the "Other…" field (Enter, or the Keep button) moves its text to the question's label, picks it, and empties the
+// field: the focus goes to the Other button, which now draws the label chosen. The card stays. Blank text keeps nothing and
+// leaves the field as it is. A question that is not open, or fading out, takes nothing.
 async function keepOther($: EngineInterface, id: string, text: string): Promise<void> {
-  const { open, leaving: fading } = await snapshot($)
+  const { open, leaving: fading, wizard: before } = await snapshot($)
   if (fading[id] !== undefined || !open.some(question => question.id === id) || text.trim() === '') return
   await changeWizard($, prev => flow.keptOther(prunedWizard(prev, open), id, text))
+  // Keeping the text the failed pick already had is not a change: the not-delivered line stays until the pick changes.
+  if (!samePick(before.picks[id], (await snapshot($)).wizard.picks[id])) await forgetUndelivered($, id)
   await $.ui.focus({ requestId: PANE, key: otherButtonKey(id) })
 }
 
@@ -1358,7 +1371,7 @@ const actionsFor = ($: EngineInterface): PaneActions => ({
     report($, keepOther($, id, text))
   },
   back: () => moveOnce($, () => report($, afterPendingOther($, () => moveWizard($, (current, group) => flow.back(current, group))))),
-  next: () => moveOnce($, () => report($, afterPendingOther($, () => moveWizard($, (current, group) => flow.next(current, group))))),
+  next: () => moveOnce($, () => report($, afterPendingOther($, () => nextOrReview($)))),
   submit: () => report($, afterPendingOther($, () => submitCurrent($), flow.submittedTypedOther)),
   leaveReview: () => moveOnce($, () => report($, leaveReview($))),
   saveWho: text => report($, saveWho($, text)),
@@ -1462,7 +1475,6 @@ export const register: Register = on => {
       wizard,
       screen,
       moveLocked: await read($, moveLockAtom),
-      arrival: await read($, arrivalAtom),
       review: await read($, reviewAtom),
       undelivered: await read($, undeliveredAtom),
       otherRows: await read($, otherRowsAtom),

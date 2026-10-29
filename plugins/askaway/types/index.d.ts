@@ -125,10 +125,10 @@ declare module 'claude-code' {
       leaving: Record<string, number>
       // The move lock (350 ms after a pick, Next or Back): the option, Other, Next and Back buttons are drawn disabled and presses do nothing.
       moveLock: boolean
-      // The question a pick just moved the card to (1.5 s): that card draws its arrival line. Null otherwise.
-      arrival: string | null
-      // Whether the review of every chosen answer is drawn in place of the card (set by the pick that completes the group).
-      review: boolean
+      // The question set (reviewKeyOf: the sorted ids of the group) the review of every chosen answer is drawn for, null when
+      // the card is drawn. Set by Next on the last question of a group of two or more; a question with no pick reads "No answer"
+      // there. A change to the group's questions closes it (the poll), so the review never comes back for another set.
+      review: string | null
       // Ids of questions whose last Submit all (or row Submit) did not deliver their pick: the pick stays a draft and the card
       // says so until a later submit delivers it or the pick changes.
       undelivered: string[]

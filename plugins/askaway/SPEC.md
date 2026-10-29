@@ -389,12 +389,6 @@ status list). `hooks/pane.tsx`, `renderPane`.
   drawn on the desktop only: 24px after the counter in the header (key `keepglide-counter`, `KEEPGLIDE_HEADER_SIZE`)
   and 28px after the Submit all button (key `keepglide-submit`, `KEEPGLIDE_SUBMIT_SIZE`). The terminal draws no mark.
 - **Question card**, one question at a time, bordered, rows separated by a gap. Top to bottom:
-  - for 1.5 s after a pick moved the card to this question (`ARRIVAL_MS`, `markArrival`, `hooks/register.tsx`), a
-    bold line in the `success` colour above the title: "✓ Previous pick kept for Submit all · now question <n> of <total>" (pt "✓ Escolha
-    anterior guardada para Enviar tudo · agora a pergunta <n> de <total>", `card.arrival`; the button name is the one the card
-    draws, "Submit all" or "Enviar tudo"; no answer is written until Submit all); the move itself stays instant, and Next, Back and
-    a jump draw no such line. The line sits in a row that is always drawn, blank when it has none, as the unanswered line
-    below the options does, so the card does not move when either comes or goes;
   - the title row (`renderTitleRow`): where the surface draws Markdown, one heading, "### <title> - See session ↗ - <risk
     label> · <age label>" (`riskLabel`, `ageLabel`), the title a size up from the body; "See session ↗" ("Ver sessão ↗",
     `card.session`; the arrow marks the link, since the desktop draws no underline) is a link to the asking session's Desktop window, `#<desktop_session>`, left out with its dashes when
@@ -448,52 +442,66 @@ status list). `hooks/pane.tsx`, `renderPane`.
     focus ring leaves the field (the `ui.focus` hook passes the move on first, `await next(e)`, and then records: `leavesOtherText`, `leavesOtherField`, `recordPendingOther`, `hooks/register.tsx`; a move onto Submit all records nothing, since its press records the text as the reply, and a later move off Submit all to anything but an Other field records it);
     and before an option pick, the Other link, Next, Back, Submit all, a tree row's Submit and a tree jump (`afterPendingOther`).
     A pending text whose question has left the board is dropped, not recorded; closing the pane (`ui.close`) drops them all. A blank text takes that
-    pick away when no label is kept; while a label is kept, a typed text is never recorded by a blur or a nav action and the pick stays as it was (`submittedOther`, `setsTypedOtherAside`, `hooks/wizard.ts`; see Apply below). Enter in the field is Apply, not a record. Until one of those points, the pick, the bold link or chosen button, and the `✓` tree mark stay as they were. The field's
-    submit label is "Apply" (pt "Aplicar"), the word for choosing the typed text. The typed text is not drawn again under the
+    pick away when no label is kept; while a label is kept, a typed text is never recorded by a blur or a nav action and the pick stays as it was (`submittedOther`, `setsTypedOtherAside`, `hooks/wizard.ts`; see Keep below). Enter in the field is Keep, not a record. Until one of those points, the pick, the bold link or chosen button, and the `✓` tree mark stay as they were. The field's
+    submit label is "Apply" (pt "Aplicar"), the button that keeps the typed text and picks it. The typed text is not drawn again under the
     link. A surface with no Input draws no Other option (`renderOther`);
-    Apply (Enter in the field, or its Apply button) moves the typed text to the Other button, which then draws
-    `<letter> · <text>` like the other options draw their labels (`keptOther`, `hooks/wizard.ts`; `keepOther`,
-    `hooks/register.tsx`); the field empties (a new input round, `otherInputKey`) and the focus moves to that button. A
-    click on the button picks the text as Other (`{key:"other", text}`); Apply again replaces the text and drops the Other
-    pick, so a new click is needed; a blank Apply changes nothing. While a kept label exists, text typed and not kept is never recorded as an Other pick by a blur or a nav action, so the button and the reply sent always agree: on a blur it stays pending while its field is on screen (`recordPendingOther` with `keepsSetAside`, `hooks/register.tsx`), and Next, Back, an option pick, the Other link, a tree jump or a row's Submit drop it. Submit all is the exception: its typed text is the reply, and blank text with a kept label changes nothing, so the label stays the reply (`submittedTypedOther`, `hooks/wizard.ts`). Otherwise, text typed and not kept follows the pending path above
+    Keep (Enter in the field, or its Apply button) moves the typed text to the Other button, which then draws
+    `<letter> · <text>` like the other options draw their labels, and picks that text at once: the label and the Other
+    pick are the same text, so the button is drawn chosen (`keptOther`, `hooks/wizard.ts`; `keepOther`,
+    `hooks/register.tsx`). The card stays on its question. The field empties (a new input round, `otherInputKey`) and the
+    focus moves to that button. A second Keep with new text replaces the label and the pick together, with no click
+    needed; a blank Keep changes nothing and the field keeps what it has. A click on the button picks the kept text as
+    Other (`{key:"other", text}`). While a kept label exists, text typed and not kept is never recorded as an Other pick by a blur or a nav action, so the button and the reply sent always agree: on a blur it stays pending while its field is on screen (`recordPendingOther` with `keepsSetAside`, `hooks/register.tsx`), and Next, Back, an option pick, the Other link, a tree jump or a row's Submit drop it. Submit all is the exception: its typed text is the reply, and blank text with a kept label changes nothing, so the label stays the reply (`submittedTypedOther`, `hooks/wizard.ts`). Otherwise, text typed and not kept follows the pending path above
     (kept in memory, dropped on close); a kept text is a draft label, shared through `draft.json` `labels` and so kept
     across a close and seen by the other windows. A draft's Other pick whose text differs from the kept label is drawn and sent as that label.
 
   - while the question has no pick, a line in the `warning` colour: "Not answered yet: pick an option." (pt "Ainda não
-    respondida: escolha uma opção."); with a kept Other label, which Apply keeps without picking it, "Not answered yet: press
+    respondida: escolha uma opção."); with a kept Other label but no pick (a draft that lost its pick), "Not answered yet: press
     <L> to choose your text." (pt "Ainda não respondida: aperte <L> para escolher o seu texto."), <L> the Other letter
     (`renderUnanswered`, `card.unanswered`, `card.unansweredKept`); the same line while the question's pick is picked but a
     submit did not deliver it (its pick stays a draft): "Not delivered yet: press Submit all again." (pt "Ainda não entregue:
     aperte Enviar tudo de novo.", `card.undelivered`, `undeliveredAtom`); blank (its row kept) on an ended or fading card, and once the question is picked and delivered;
   - a separator: a 1px rule on the desktop, a row of "─" on the terminal (`renderDivider`);
-  - the nav row: [← Back] (Portuguese: "← Voltar") on every question, dim on the first; [Next →] (Portuguese:
-    "Próxima →") on every question but the last; on the last one, [Submit all (n)] (Portuguese: "Enviar tudo (n)"),
-    where n is the number of questions of the group, dim until every question of the group has a pick. On the terminal each nav label carries its letter, "← Back (z)" style, since the terminal draws a Button's label alone (`navLabelOf`, `hooks/pane.tsx`); the Desktop draws the hotkey itself.
+  - the nav row: [← Back] (Portuguese: "← Voltar") on every question, dim on the first; in a group of two or more questions,
+    [Next →] (Portuguese: "Próxima →") on every question, the last one included, where it opens the review (see Choosing);
+    in a group of one question, [Submit all (1)] (Portuguese: "Enviar tudo (1)") on its only question, dim until that question
+    has a pick. Back and the forward button show the answer state first: "Answer: D · Next →" or "No answer · Next →", and
+    "Answer: A · ← Back" or "No answer · ← Back" (Portuguese: "Resposta: D · Próxima →", "Sem resposta · ← Voltar"). The answer is
+    always the letter: an option's key, or the Other row's letter for an Other pick, never the label or the typed text; a pick
+    with no letter (an Other pick past "z") reads as no answer (`answerLabelOf`, `renderNav`). The one-question Submit all takes
+    the same prefix ("Answer: D · Submit all (1)"). The review's Back has the prefix too; the review's Submit all keeps its plain
+    label, and an ended card's nav stays plain. On the terminal each nav label carries its letter after the answer state, "Answer: D · Next → (x)" style,
+    since the terminal draws a Button's label alone (`navLabelOf`, `hooks/pane.tsx`); the Desktop draws the hotkey itself.
 - **Hotkeys**: each option button draws its key letter in lower case as its hotkey (`optionHotkey`, `hooks/pane.tsx`), on
   every surface. "Other…" takes the letter after the last option (`otherLetterOf`), drawn in lower case as its hotkey. Back, Next and Submit all
   take the first free letters of their surface's pool (`letterFor`, `NAV_POOLS`, `hooks/pane.tsx`): `z`, `x`, `w` on the
   terminal; `p`, `f` and then `w`, `z`, `x` on the desktop. A letter that an option of the card uses, or the letter of Other…, is skipped. The
   hotkeys are drawn on every card: while the Other field has focus, the engine sends each printable key to the field alone,
   so no hotkey fires from typing.
-- **Choosing**: an option records the pick and moves on: to the first question without a pick after the current one
-  (wrapping to the start), or, once every question of the group has a pick, to the last question, where Submit all is.
-  In a group of two or more questions, the pick that leaves every question picked, or the Other text recorded from its field that does (see Other…), draws the **review** in place of the
-  card (`reviewAtom`, `renderReview`): a bordered block that opens with the group's tree, drawn as the open tree draws
+- **Choosing**: a pick (an option, its hotkey, or an Other text kept with Keep) records the answer to its question and nothing
+  else: the card stays on that question. A pick does not move the card to another question, and it draws no review and no
+  line above the title. Back and Next keep the pick; it changes only on a new pick. An Other text recorded from its field
+  (on a blur or a nav action, see Other…) records the pick in the same way, unless a kept label sets it aside. No answer is written until Submit all, and the picks
+  are shared through `draft.json` (see "Shared picks").
+  In a group of two or more questions, Next on the last question opens the **review** in place of the card, whether or not
+  every question has a pick (`nextOrReview`, `reviewAtom`, `renderReview`): a bordered block that opens with the group's tree, drawn as the open tree draws
   it (the group's name on top, then its sessions), with one link row per question, "○ <n>. <title> → <chosen answer>"
-  (the option label, or an Other text in typographic quotes, `answerNameOf`), whose press jumps to that question's card;
+  (the option label, or an Other text in typographic quotes, `answerNameOf`; "No answer", pt "Sem resposta", for a question
+  with no pick, as "→ No answer"), whose press jumps to that question's card;
   then the title "Review your answers" (pt "Revise as suas respostas") and the hint "Press a question to change its
-  answer." (pt "Clique numa pergunta para mudar a resposta."), then a separator and [← Back] with [Submit all (n)].
-  Back on the review shows the last question's card, which keeps its own Submit all; a jump, Next or Back leaves the
-  review (`leaveReview`), and a pick that completes the group again draws it again. The review is drawn only while every
-  question of the group is picked, so a new question in the group brings the card back.
-  "Other…" with its typed text records the pick when the field loses focus or a nav action runs; the card stays, unless that record completes the group, and then the review is drawn as after an option pick (the same check, `reviewIfComplete`, `hooks/register.tsx`). Enter in its field is Apply, which keeps the text as the button's label and drops an Other pick, so a click on the button picks it (see above). After each pick the group
-  stays selected. No answer is written until Submit all; the picks are shared through `draft.json` (see "Shared picks").
+  answer." (pt "Clique numa pergunta para mudar a resposta."), then a separator, then [← Back] (its answer state first: "Answer: D · ← Back",
+  or "No answer · ← Back" for the last question) and the plain [Submit all (n)] (pt "Enviar tudo (n)"), dim until every question of
+  the group has a pick. Back on the review shows the last question's card again, with its nav row (`leaveReview`). A jump leaves
+  the review too (`jumpToQuestion`), any move does (`moveWizard`), and the group's Submit all clears it (`submitGroup`); a change to the group's questions (one leaves or arrives) closes it on the next poll (`closeChangedReview`), and only Next on the last question opens it again. A pick
+  never draws the review; only Next on the last question does. A one-question group has no review.
+  "Other…" with its typed text records the pick when the field loses focus or a nav action runs; the card stays. Enter in its field is Keep, which keeps the text as the button's label and picks it (see above); a blank Enter changes nothing. After each pick the group
+  stays selected.
   A card that is fading after a press takes no pick.
 - **Move lock**: a pick, Next or Back (the card's Back, or the review's Back) starts a 350 ms move lock (`MOVE_LOCK_MS`, `moveOnce`, `hooks/register.tsx`); a second move while it holds does nothing. Submit all and the row Submit are not locked.
   While the lock holds, the option, Other, Next, Back and the review's Back buttons are drawn disabled (dim) so the interval is visible
   (`moveLockAtom`, `setMoveLock`), and a press in that window does nothing.
-- **Next** moves to the next question whether or not it has a pick; **Back** moves to the previous one. Next does
-  nothing on the last question.
+- **Next** moves to the next question whether or not it has a pick; **Back** moves to the previous one. On the last question
+  of a group of two or more, Next opens the review instead (see Choosing); a group of one question has no Next.
 - **Per-question Submit**: a tree row whose question holds a pick not yet submitted draws, after its text, " ✓ - " and a
   "Submit Answer" link, after the mark `▪` (Markdown `▪ [Submit Answer](file:///askaway/submit/<id>)` where Markdown is drawn, else the plain underlined Button; key `tree-submit-<id>`, pt "Enviar resposta"; `renderTreeSubmit`, `treeLink`). Its press
   answers that question alone, through the answer path (`submitOne`), at once, and the row leaves the tree and the round
@@ -502,7 +510,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
   the group has no pick in the store, but its press always runs: the submit action records a pending Other text first, then
   `submitGroup` checks again that every question has a pick and writes nothing otherwise. So a text typed in the Other
   field and followed straight by a click on Submit all is the answer, with no Enter and no focus move. The answers go out one after another, in the group's order, one CLI run each
-  (`askaway.py answer --by panel`, see the answer record above), which writes `a/` first-writer-wins; each card dims when its own answer goes out, not at the press (`startFade` marks only that question, `submitGroup`, `writeAnswer`, `hooks/register.tsx`), so the card on screen, the last question, where Submit all is, dims only after the CLI runs of the questions before it. A card stays dimmed until the CLI has written its reply: the written record takes it off, and a refused or failed reply undims it at once. When the CLI says the reply was written but `a/<id>.json` does not read back yet, a local copy of the reply (`by: panel`, the press time) stands in on the board until a poll reads the file, so the card does not come back active. That copy carries the who the CLI stamps (`panelWho`, `hooks/register.tsx`): the stored name, else the window's `ASKAWAY_WHO`, else the first non-empty of `LOGNAME`, `USER`, `LNAME`, `USERNAME`, else `unknown` (the pane cannot reach getpass's password-database fallback). Then the
+  (`askaway.py answer --by panel`, see the answer record above), which writes `a/` first-writer-wins; each card dims when its own answer goes out, not at the press (`startFade` marks only that question, `submitGroup`, `writeAnswer`, `hooks/register.tsx`), so the card on screen, where Submit all is (the group's last question for a group of one, the review for two or more), dims only after the CLI runs of the questions before it. A card stays dimmed until the CLI has written its reply: the written record takes it off, and a refused or failed reply undims it at once. When the CLI says the reply was written but `a/<id>.json` does not read back yet, a local copy of the reply (`by: panel`, the press time) stands in on the board until a poll reads the file, so the card does not come back active. That copy carries the who the CLI stamps (`panelWho`, `hooks/register.tsx`): the stored name, else the window's `ASKAWAY_WHO`, else the first non-empty of `LOGNAME`, `USER`, `LNAME`, `USERNAME`, else `unknown` (the pane cannot reach getpass's password-database fallback). Then the
   picks of those questions are cleared and the step goes back to the first question. When other groups stay open, the
   card then shows the first question of the first group still open. A reply that fails does not stop the round: Submit all goes on to the next question and clears only the picks whose reply is on the board or whose session ended (`submitGroup`, `hooks/register.tsx`). A question whose reply failed keeps its pick as a draft, and its card shows the not-delivered line until a later submit delivers it or the pick changes (`setUndelivered`, `forgetUndelivered`); a row's Submit that fails does the same for its question.
 - **Picks** survive a re-poll. Picks, and an open Other field, of questions that are no longer open are dropped.

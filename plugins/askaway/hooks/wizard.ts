@@ -1,7 +1,8 @@
 // The question wizard's state and rules: which group is open, which question is on screen, what was picked. Pure: each
 // function returns a new value and never touches the store or the drawing. A group is the questions of one session
 // family (or of one project, for questions with no family), in tree order (session by session). The step runs
-// 0..total-1 over the questions of the group; the last question carries the Submit all button, so there is no review step.
+// 0..total-1 over the questions of the group. A pick never moves the step; on the last question of a group of two or more,
+// Next opens the review (register.tsx), and a group of one carries Submit all.
 import type { Question } from '../types'
 import { OTHER_KEY, OTHER_TEXT_MAX, groupKeyOf } from './model'
 
@@ -26,13 +27,15 @@ export const EMPTY_WIZARD: Wizard = { groupKey: null, step: 0, questionId: null,
 // their oldest question, questions oldest first); `questions` is those sessions one after the other: the step order.
 export type Group = { key: string; sessions: Question[][]; questions: Question[] }
 
-// What the pane draws for the current step: the question on screen and what its buttons may do.
+// What the pane draws for the current step: the question on screen and what its buttons may do. `canReview` is the last
+// question of a group of two or more: its Next opens the review instead of moving.
 export type Screen = {
   index: number
   total: number
   question: Question
   canBack: boolean
   canNext: boolean
+  canReview: boolean
   canSubmit: boolean
 }
 
@@ -72,6 +75,14 @@ export function activeGroup(groups: readonly Group[], wizard: Wizard): Group | u
   return groups.find(group => group.key === wizard.groupKey) ?? groups[0]
 }
 
+// The question set of a group, as the review names it: the sorted ids. A question that leaves or arrives changes it, so a
+// review opened for the old set is not drawn for the new one.
+export const reviewKeyOf = (group: Group): string =>
+  group.questions
+    .map(question => question.id)
+    .sort()
+    .join(',')
+
 // Every question of the group must have a pick; the list is in group order. Undefined when one is missing or the group is empty.
 export function submittable(group: Group, wizard: Wizard): { id: string; pick: Pick }[] | undefined {
   const answers: { id: string; pick: Pick }[] = []
@@ -87,14 +98,18 @@ export function submittable(group: Group, wizard: Wizard): { id: string; pick: P
 const otherTextOf = (text: string): string => Array.from(text.trim()).slice(0, OTHER_TEXT_MAX).join('')
 
 // Keep in the Other field (Enter, or the Keep button) moves its text to the question's label, which the Other button then
-// draws. The Other pick of that question is dropped, so the label is picked only by a click on the button. The field round
-// moves on, so the field empties. Blank text changes nothing.
+// draws, and picks that text: the label and the Other pick are the same text, so the button is drawn chosen. The field
+// round moves on, so the field empties. The step stays. Blank text changes nothing.
 export function keptOther(wizard: Wizard, id: string, text: string): Wizard {
   const trimmed = otherTextOf(text)
   if (trimmed === '') return wizard
-  const picks = { ...wizard.picks }
-  if (picks[id]?.key === OTHER_KEY) delete picks[id]
-  return { ...wizard, picks, labels: { ...wizard.labels, [id]: trimmed }, fieldRound: wizard.fieldRound + 1 }
+  const pick: Pick = { key: OTHER_KEY, text: trimmed }
+  return {
+    ...wizard,
+    picks: { ...wizard.picks, [id]: pick },
+    labels: { ...wizard.labels, [id]: trimmed },
+    fieldRound: wizard.fieldRound + 1,
+  }
 }
 
 // The Other pick of a question as its typed text leaves the field: trimmed and capped; blank text takes the pick away.
@@ -154,18 +169,9 @@ export function screenOf(group: Group, wizard: Wizard): Screen | undefined {
     question,
     canBack: index > 0,
     canNext: index < lastStep(total),
+    canReview: total > 1 && index === lastStep(total),
     canSubmit: submittable(group, wizard) !== undefined,
   }
-}
-
-// The first question without a pick, searched from `from` on and wrapping to the start; undefined when all have one.
-function firstUnpickedFrom(group: Group, wizard: Wizard, from: number): number | undefined {
-  const total = group.questions.length
-  for (let offset = 0; offset < total; offset++) {
-    const index = (from + offset) % total
-    if (wizard.picks[group.questions[index]?.id ?? ''] === undefined) return index
-  }
-  return undefined
 }
 
 // The wizard on the question at `step` of the group: the step and the id of the question on screen move together.
@@ -175,13 +181,10 @@ const onStep = (wizard: Wizard, group: Group, step: number): Wizard => ({
   questionId: group.questions[step]?.id ?? null,
 })
 
-// Records the pick and moves the wizard on: to the first question without a pick after the current one (wrapping), or,
-// once every question has a pick, to the last question, where Submit all is. Nothing is submitted here.
-export function choose(wizard: Wizard, group: Group, id: string, pick: Pick): Wizard {
-  const picked: Wizard = { ...wizard, picks: { ...wizard.picks, [id]: pick } }
-  if (submittable(group, picked) !== undefined) return onStep(picked, group, lastStep(group.questions.length))
-  const from = clampStep(wizard.step, group.questions.length)
-  return onStep(picked, group, firstUnpickedFrom(group, picked, from + 1) ?? from)
+// Records the pick of a question. The step stays where it is: the card stays on the question that was picked. Nothing is
+// submitted or reviewed here.
+export function choose(wizard: Wizard, id: string, pick: Pick): Wizard {
+  return { ...wizard, picks: { ...wizard.picks, [id]: pick } }
 }
 
 // Moves to the previous question. On the first question it does nothing.
