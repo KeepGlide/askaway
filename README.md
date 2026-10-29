@@ -50,7 +50,7 @@
 
 ## 📌 Status
 
-**Beta** (`0.4.0-beta.46`, early access). Askaway follows [SemVer](https://semver.org/): while the version is `0.y.z`, anything may change at any time. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
+**Beta** (`0.4.0-beta.47`, early access). Askaway follows [SemVer](https://semver.org/): while the version is `0.y.z`, anything may change at any time. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
 > The mod API moves between Claude Code releases, so expect changes until a stable release.
@@ -750,7 +750,7 @@ Found one? [Open an issue](https://github.com/KeepGlide/askaway/issues/new).
 
 | Category | Tests |
 |---|---|
-| Mod (TypeScript), `plugins/askaway/tests/` | 521 |
+| Mod (TypeScript), `plugins/askaway/tests/` | 538 |
 | CLI and hooks (Python), `plugins/askaway/scripts/tests/` | 1617 |
 
 Python count from `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts`, at commit `8793695`, 2026-10-28. The mod count is from a fresh run of `claude plugin test plugins/askaway` at the same commit (the runner has no collection mode).
@@ -796,6 +796,7 @@ The changes of each version are in [CHANGELOG.md](CHANGELOG.md), in the [Keep a 
 | beta.44 | 2026-10-25 | Gauntlet 1 round 1: the guard's scanner reads shell input per directory and from `echo`, `printf` and variables; the review draws the answers in the group's tree; SPEC.md states the guard's threat and known limits. |
 | beta.45 | 2026-10-28 | The owner's card decisions from gauntlet 1: arrival line wording, an undelivered line, the review after a typed Other, pt "aperte"; the Other field grows from three to ten rows. |
 | beta.46 | 2026-10-29 | The guard's scanner reads a heredoc or here-string script run through `su`, `runuser`, `pkexec`, `setpriv`, `xargs`, `chroot`, `flock`, `stdbuf` or `setsid` (issue #15). |
+| beta.47 | 2026-10-29 | A pick no longer moves the card: Next moves, Back and Next name the pick first ("Answer: D · Next →", "No answer"), Enter in Other picks its text, and Next on the last card opens the review. |
 
 ## 🤝 Contributing
 

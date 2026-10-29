@@ -2,12 +2,14 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.46, set by the beta.46 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.47, set by the beta.47 release commit.
 Commit hashes name the change in `git log`.
 
 ## [Unreleased]
 
-The card no longer moves after a pick: the card stays on its question, and the review opens only from Next on the last question of a group of two or more questions. The nav labels put the answer first.
+## [0.4.0-beta.47] - 2026-10-29
+
+Askaway 0.4.0-beta.47: the card no longer moves after a pick: the card stays on its question, and the review opens only from Next on the last question of a group of two or more questions. The nav labels put the answer first.
 
 ### Changed
 - A pick (an option, its hotkey, or an Other text kept with Keep) records the answer and the card stays on its question: no move to the next question and no review after a pick. Back and Next keep the pick; it changes only on a new pick.
@@ -791,7 +793,8 @@ Third gauntlet round (40 personas over betas 14 to 25): 150 findings, 64 adopted
 - The README describes the away flow and what each card carries, matches every claim to the plugin, and adds a screenshot (150ad49, 6020300).
 - SPEC.md records the 0.4.0-beta.5 live check of the pane layout (0f43a9f).
 
-[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.46...HEAD
+[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.47...HEAD
+[0.4.0-beta.47]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.46...v0.4.0-beta.47
 [0.4.0-beta.46]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.45...v0.4.0-beta.46
 [0.4.0-beta.45]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.44...v0.4.0-beta.45
 [0.4.0-beta.44]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.43...v0.4.0-beta.44
