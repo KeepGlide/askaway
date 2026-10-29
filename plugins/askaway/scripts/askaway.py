@@ -256,7 +256,7 @@ SINGLE_QUOTED_SPAN: Final = re.compile(r"\"(?:\\.|[^\"\\])*\"|\\.|'[^']*'")  # d
 # The same call with a heredoc: its body is the JSON on stdin and never runs (see _heredoc_code).
 INBOX_HEREDOC: Final = re.compile(rf"{_INBOX_HEAD}[^;&|`$<>\n]*?<<-?\s*(['\"]?)(\w+)\1\s*$")
 # The Bash guard (a deterrent, SPEC.md): each command is read word by word as the shell reads it, and the words
-# are checked in command or write position. It does not model xargs, find -exec or a script file's own code.
+# are checked in command or write position. It does not model find -exec or a script file's own code.
 TMP_ROOT: Final = os.path.realpath("/tmp")
 HOME_VAR: Final = "ASKAWAY_HOME"
 ASK_LOCK: Final = ".ask.lock"  # the state folder's lock file: held by each ask from its duplicate check to its write
@@ -316,12 +316,33 @@ SHELL_NAMES: Final = frozenset({
 })
 SHELL_C_FLAG: Final = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
 WRAPPER_NAMES: Final = frozenset({
-    "builtin", "busybox", "command", "doas", "env", "exec", "nice", "nohup", "sudo", "time", "timeout",
+    "builtin", "busybox", "chroot", "command", "doas", "env", "exec", "flock", "nice", "nohup", "pkexec", "runuser",
+    "setpriv", "setsid", "stdbuf", "su", "sudo", "time", "timeout", "xargs",
 })
+WRAPPER_OPERAND_NAMES: Final = frozenset({"chroot", "flock"})  # each takes one operand before the command: chroot DIR, flock FILE
+SU_NAMES: Final = frozenset({"su", "runuser"})  # with no -u, start the target user's shell (su with no command, as sudo -i)
+COMMAND_OPTION_NAMES: Final = SU_NAMES | {"flock"}  # whose -c text runs through sh -c
+COMMAND_OPTION: Final = re.compile(r"-[A-Za-z]*?c(.*)|--command(?:=(.*))?", re.DOTALL)  # -c, -lc, -cTEXT, --command=TEXT
 WRAPPER_VALUE_OPTIONS: Final = {  # a wrapper's options that take the next word as their value, so it is not the command
     "doas": frozenset({"-C", "-u"}),
     "env": frozenset({"-C", "-u", "--chdir", "--unset"}),
     "exec": frozenset({"-a"}),
+    "chroot": frozenset({"--groups", "--userspec"}),
+    "flock": frozenset({"-E", "-w", "--conflict-exit-code", "--timeout"}),
+    "pkexec": frozenset({"--user"}),
+    "runuser": frozenset({"-g", "-G", "-s", "-u", "-w", "--group", "--shell", "--supp-group", "--user",
+                          "--whitelist-environment"}),
+    "setpriv": frozenset({
+        "--ambient-caps", "--apparmor-profile", "--bounding-set", "--egid", "--euid", "--groups", "--inh-caps",
+        "--landlock-access", "--landlock-rule", "--pdeathsig", "--regid", "--reuid", "--rgid", "--ruid", "--securebits",
+        "--selinux-label",
+    }),
+    "stdbuf": frozenset({"-e", "-i", "-o", "--error", "--input", "--output"}),
+    "su": frozenset({"-g", "-G", "-s", "-w", "--group", "--shell", "--supp-group", "--whitelist-environment"}),
+    "xargs": frozenset({
+        "-a", "-d", "-E", "-I", "-L", "-n", "-P", "-s", "--arg-file", "--delimiter", "--max-args", "--max-chars",
+        "--max-lines", "--max-procs", "--process-slot-var",
+    }),
     "sudo": frozenset({
         "-C", "-D", "-g", "-h", "-p", "-R", "-r", "-T", "-t", "-U", "-u", "--chdir", "--chroot", "--close-from",
         "--command-timeout", "--group", "--host", "--other-user", "--prompt", "--role", "--type", "--user",
@@ -2478,22 +2499,35 @@ def _takes_next_word(arg: str, values: frozenset[str]) -> bool:
 
 def _drop_wrapper_args(name: str, words: list[str]) -> list[str]:
     """The options and numbers a wrapper (env, nice, timeout, sudo) takes before the command it runs, with the value
-    word of an option that takes one (sudo -u root, timeout -s KILL). The string of env -S is split on whitespace into
-    more words, as env splits it (escapes and quotes inside it are not read)."""
+    word of an option that takes one (sudo -u root, timeout -s KILL) and the operand of chroot DIR and flock FILE. The
+    string of env -S is split on whitespace into more words, as env splits it (escapes and quotes inside it are not
+    read). su and runuser without -u start a shell, and -c TEXT runs TEXT through sh -c (su, runuser and flock)."""
     values = WRAPPER_VALUE_OPTIONS.get(name, frozenset())
+    operand = name in WRAPPER_OPERAND_NAMES
+    runs_shell = name in SU_NAMES and not (name == "runuser" and any(
+        _unquote(word) in ("-u", "--user") or _unquote(word).startswith("--user=") for word in words))
     rest = list(words)
     while rest:
         arg = _unquote(rest[0])
         split = ENV_SPLIT_STRING.fullmatch(arg) if name == "env" else None
+        command = COMMAND_OPTION.fullmatch(arg) if name in COMMAND_OPTION_NAMES else None
+        if command is not None:  # the attached text, or else the next word, is the script
+            text = command[1] or command[2]
+            return ["sh", "-c", text] if text else ["sh", "-c", *rest[1:2]]
         if split is not None and split[1]:
             rest = [*split[1].split(), *rest[1:]]
         elif split is not None:
             rest = [*(_unquote(rest[1]).split() if len(rest) > 1 else []), *rest[2:]]
+        elif operand and not arg.startswith("-"):  # chroot DIR, flock FILE; a number too (flock 9 bash)
+            operand = False
+            del rest[:1]
         elif WRAPPER_ARG.fullmatch(arg):
             del rest[: 2 if _takes_next_word(arg, values) else 1]
+        elif runs_shell:  # su's user and the words after it are the shell's arguments
+            del rest[:1]
         else:
             break
-    return rest
+    return ["sh"] if runs_shell or (name == "chroot" and not rest) else rest  # su starts a shell; so does chroot DIR alone
 
 
 def _strip_prefix(words: list[str]) -> tuple[dict[str, str], list[str]]:

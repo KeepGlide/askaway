@@ -696,7 +696,7 @@ O que o Askaway não faz ou não consegue garantir. As limitações que têm con
 **O que não dá para garantir**
 
 - **O guarda barra o caminho direto, não o drible deliberado.** A ameaça é um agente que responde à própria pergunta por pressa, ou porque um texto que ele leu mandou. Uma escrita feita para escapar dele (um grupo `{ bash; }`, `x+=`, `echo "$x" | bash`, um `rev` no pipe) é um limite conhecido, listado na SPEC.md, e nenhum sandbox do sistema apoia o guarda: ligar um mudaria todo comando Bash de todas as sessões. Uma resposta pelo shell que passe ainda fica marcada `by: agent`.
-- **O guarda é um freio, não uma garantia.** Ele não cobre `xargs`, `find -exec`, `env -S`, `uv run`, `unset ASKAWAY_HOME`, uma cópia do script em outro caminho, um comando de PowerShell ou uma ferramenta MCP que grave arquivos fora de uma pausa, uma palavra de comando ou um alvo de gravação guardado numa variável, um nome de script montado na execução, um caminho `~user`, uma lista entre chaves, `eval "$X"`, nem uma cópia recursiva, `chmod`, `chown` ou `setfacl` num ancestral da pasta de estado. O shell do próprio usuário não é vigiado.
+- **O guarda é um freio, não uma garantia.** Ele não cobre `find -exec`, `env -S`, `uv run`, `unset ASKAWAY_HOME`, uma cópia do script em outro caminho, um comando de PowerShell ou uma ferramenta MCP que grave arquivos fora de uma pausa, uma palavra de comando ou um alvo de gravação guardado numa variável, um nome de script montado na execução, um caminho `~user`, uma lista entre chaves, `eval "$X"`, nem uma cópia recursiva, `chmod`, `chown` ou `setfacl` num ancestral da pasta de estado. O shell do próprio usuário não é vigiado.
 - **O token do painel não é isolamento.** Qualquer processo do mesmo usuário que consiga gravar a pasta de estado pode gerar um.
 - **Detecção de ausência.** `CLAUDE_CODE_SESSION_ATTENDED=0` é um sinal não oficial; um host que o define faz toda sessão contar como ausente.
 - **Quem fica retido.** Uma pausa da thread principal não segura subagentes que já estão rodando, e uma pergunta de risco alto sem sessão (Codex) não segura nenhuma sessão: o agente precisa parar sozinho.
@@ -751,9 +751,9 @@ Encontrou um? [Abra uma issue](https://github.com/KeepGlide/askaway/issues/new).
 | Categoria | Testes |
 |---|---|
 | Mod (TypeScript), `plugins/askaway/tests/` | 521 |
-| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 1558 |
+| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 1617 |
 
-Contagem Python de `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts`, no commit `74c2394`, em 2026-10-25. A contagem do mod vem de uma execução nova de `claude plugin test plugins/askaway` no mesmo commit (o runner não tem modo de coleta).
+Contagem Python de `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts`, no commit `8793695`, em 2026-10-28. A contagem do mod vem de uma execução nova de `claude plugin test plugins/askaway` no mesmo commit (o runner não tem modo de coleta).
 
 ## 🔧 Desenvolvimento
 
