@@ -50,7 +50,7 @@
 
 ## 📌 Status
 
-**Beta** (`0.4.0-beta.45`, acesso antecipado). O Askaway segue o [SemVer](https://semver.org/): enquanto a versão for `0.y.z`, qualquer coisa pode mudar a qualquer momento. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
+**Beta** (`0.4.0-beta.46`, acesso antecipado). O Askaway segue o [SemVer](https://semver.org/): enquanto a versão for `0.y.z`, qualquer coisa pode mudar a qualquer momento. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
 > A API de mods muda entre as versões do Claude Code, então espere mudanças até uma versão estável.
@@ -795,6 +795,7 @@ As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md), no formato 
 | beta.43 | 2026-10-25 | O scanner do guarda lê heredocs e here-strings executados por um shell, um wrapper, `source` ou um script de `eval` (issues #10 a #14); o card mostra a linha de não respondida, a linha de chegada e uma revisão antes de Enviar todas. |
 | beta.44 | 2026-10-25 | Gauntlet 1, rodada 1: o scanner do guarda lê a entrada do shell por diretório e a de `echo`, `printf` e variáveis; a revisão desenha as respostas na árvore do grupo; a SPEC.md diz qual é a ameaça do guarda e os limites conhecidos. |
 | beta.45 | 2026-10-28 | As decisões do card do gauntlet 1: texto da linha de chegada, a linha de não entregue, a revisão depois de um Outro digitado, "aperte" em pt; o campo do Outro cresce de três a dez linhas. |
+| beta.46 | 2026-10-29 | O scanner do guarda lê um script de heredoc ou here-string passado por `su`, `runuser`, `pkexec`, `setpriv`, `xargs`, `chroot`, `flock`, `stdbuf` ou `setsid` (issue #15). |
 
 ## 🤝 Contribuição
 

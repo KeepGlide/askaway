@@ -50,7 +50,7 @@
 
 ## 📌 Status
 
-**Beta** (`0.4.0-beta.45`, early access). Askaway follows [SemVer](https://semver.org/): while the version is `0.y.z`, anything may change at any time. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
+**Beta** (`0.4.0-beta.46`, early access). Askaway follows [SemVer](https://semver.org/): while the version is `0.y.z`, anything may change at any time. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
 > The mod API moves between Claude Code releases, so expect changes until a stable release.
@@ -795,6 +795,7 @@ The changes of each version are in [CHANGELOG.md](CHANGELOG.md), in the [Keep a 
 | beta.43 | 2026-10-25 | The guard's scanner reads heredocs and here-strings run by a shell, a wrapper, `source` or an `eval` script (issues #10 to #14); the card shows an unanswered line, an arrival line and a review before Submit all. |
 | beta.44 | 2026-10-25 | Gauntlet 1 round 1: the guard's scanner reads shell input per directory and from `echo`, `printf` and variables; the review draws the answers in the group's tree; SPEC.md states the guard's threat and known limits. |
 | beta.45 | 2026-10-28 | The owner's card decisions from gauntlet 1: arrival line wording, an undelivered line, the review after a typed Other, pt "aperte"; the Other field grows from three to ten rows. |
+| beta.46 | 2026-10-29 | The guard's scanner reads a heredoc or here-string script run through `su`, `runuser`, `pkexec`, `setpriv`, `xargs`, `chroot`, `flock`, `stdbuf` or `setsid` (issue #15). |
 
 ## 🤝 Contributing
 
