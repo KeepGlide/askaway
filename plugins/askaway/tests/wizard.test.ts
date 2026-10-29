@@ -149,20 +149,23 @@ test('screenOf shows the first question with no back, and next is open even with
   expect(screen.canSubmit).toBe(false)
 })
 
-test('screenOf of the last question has no Next, and Submit all only when every question has a pick', () => {
+test('screenOf of the last question of a group of two has no Next move but can review, and Submit all only when every question has a pick', () => {
   const group = groupOf(question('q-a-000001', 10), question('q-b-000002', 20))
   const partial = screenAt(group, { ...EMPTY_WIZARD, step: 1, picks: { 'q-a-000001': A } })
   expect(partial.index).toBe(1)
   expect(partial.canNext).toBe(false)
+  expect(partial.canReview).toBe(true)
   expect(partial.canBack).toBe(true)
   expect(partial.canSubmit).toBe(false)
   expect(screenAt(group, pickedAll(['q-a-000001', 'q-b-000002'], { ...EMPTY_WIZARD, step: 1 })).canSubmit).toBe(true)
+  expect(screenAt(group, EMPTY_WIZARD).canReview).toBe(false)
 })
 
-test('screenOf of a group of one question is its question, with no Next, and Submit all once it is picked', () => {
+test('screenOf of a group of one question is its question, with no Next and no review, and Submit all once it is picked', () => {
   const group = groupOf(question('q-a-000001', 10))
   const unpicked = screenAt(group, EMPTY_WIZARD)
   expect(unpicked.canNext).toBe(false)
+  expect(unpicked.canReview).toBe(false)
   expect(unpicked.canBack).toBe(false)
   expect(unpicked.canSubmit).toBe(false)
   expect(screenAt(group, pickedAll(['q-a-000001'])).canSubmit).toBe(true)
@@ -181,40 +184,51 @@ test('the step of a group across sessions walks the tree order: session by sessi
   expect(screenAt(group, { ...EMPTY_WIZARD, step: 2 }).question.id).toBe('q-b-000002')
 })
 
-test('choose records the pick and moves to the next question without one', () => {
+test('choose records the pick and keeps the step: the card stays on the question that was picked', () => {
   const group = groupOf(question('q-a-000001', 10), question('q-b-000002', 20))
-  const first = choose(EMPTY_WIZARD, group, 'q-a-000001', A)
+  const first = choose({ ...EMPTY_WIZARD, questionId: 'q-a-000001' }, 'q-a-000001', A)
   expect(first.picks).toEqual({ 'q-a-000001': A })
-  expect(first.step).toBe(1)
+  expect(first.step).toBe(0)
+  expect(first.questionId).toBe('q-a-000001')
+  expect(screenAt(group, first).question.id).toBe('q-a-000001')
 })
 
-test('choose once every question has a pick moves to the last question, where Submit all is', () => {
+test('choose on the last question keeps the step even when another question has no pick, and makes Submit all ready once every one has a pick', () => {
   const group = groupOf(question('q-a-000001', 10), question('q-b-000002', 20))
-  const second = choose({ ...EMPTY_WIZARD, step: 0, picks: { 'q-b-000002': B } }, group, 'q-a-000001', A)
-  expect(second.step).toBe(1)
-  expect(screenAt(group, second).canSubmit).toBe(true)
+  const partial = choose({ ...EMPTY_WIZARD, step: 1 }, 'q-b-000002', B)
+  expect(partial.step).toBe(1)
+  expect(screenAt(group, partial).canSubmit).toBe(false)
+  const complete = choose({ ...EMPTY_WIZARD, step: 1, picks: { 'q-b-000002': B } }, 'q-a-000001', A)
+  expect(complete.step).toBe(1)
+  expect(screenAt(group, complete).canSubmit).toBe(true)
 })
 
-test('choose on the last question with a gap wraps to the first question without a pick', () => {
+test('choose never moves to a question with no pick: a gap after the step stays unvisited', () => {
   const group = groupOf(question('q-a-000001', 10), question('q-b-000002', 20), question('q-c-000003', 30))
-  expect(choose({ ...EMPTY_WIZARD, step: 2 }, group, 'q-c-000003', A).step).toBe(0)
-  expect(choose({ ...EMPTY_WIZARD, step: 1, picks: { 'q-a-000001': A } }, group, 'q-b-000002', A).step).toBe(2)
+  expect(choose({ ...EMPTY_WIZARD, step: 0 }, 'q-a-000001', A).step).toBe(0)
+  expect(choose({ ...EMPTY_WIZARD, step: 2 }, 'q-c-000003', A).step).toBe(2)
+  expect(screenAt(group, choose({ ...EMPTY_WIZARD, step: 1 }, 'q-b-000002', B)).question.id).toBe('q-b-000002')
 })
 
 test('choose on a group of one question records the pick and stays on it, submitting nothing', () => {
   const group = groupOf(question('q-a-000001', 10))
-  const result = choose(EMPTY_WIZARD, group, 'q-a-000001', B)
+  const result = choose(EMPTY_WIZARD, 'q-a-000001', B)
   expect(result.picks).toEqual({ 'q-a-000001': B })
   expect(result.step).toBe(0)
   expect(screenAt(group, result).canSubmit).toBe(true)
 })
 
 test('choose keeps the picks of the other questions', () => {
-  const group = groupOf(question('q-a-000001', 10), question('q-b-000002', 20))
   const before = { ...EMPTY_WIZARD, picks: { 'q-b-000002': B } }
-  const result = choose(before, group, 'q-a-000001', A)
+  const result = choose(before, 'q-a-000001', A)
   expect(result.picks).toEqual({ 'q-a-000001': A, 'q-b-000002': B })
   expect(before.picks).toEqual({ 'q-b-000002': B })
+})
+
+test('choose replaces an earlier pick of the same question and keeps the step', () => {
+  const result = choose({ ...EMPTY_WIZARD, step: 1, picks: { 'q-a-000001': A } }, 'q-a-000001', B)
+  expect(result.picks).toEqual({ 'q-a-000001': B })
+  expect(result.step).toBe(1)
 })
 
 test('back moves one step and never goes below zero', () => {
@@ -347,11 +361,14 @@ test('keptOther with blank text changes nothing: the same wizard comes back, wit
   expect(keptOther(wizard, 'q-a-000001', '   ')).toBe(wizard)
 })
 
-test('keptOther drops the Other pick of that question and leaves an option pick alone', () => {
-  const wizard: Wizard = { ...EMPTY_WIZARD, picks: { 'q-a-000001': { key: 'other', text: 'Old' }, 'q-b-000002': B } }
-  expect(keptOther(wizard, 'q-a-000001', 'New').picks).toEqual({ 'q-b-000002': B })
+test('keptOther picks the kept text as the Other pick, replacing an option pick or an older Other text, and keeps the step', () => {
+  const wizard: Wizard = { ...EMPTY_WIZARD, step: 1, picks: { 'q-a-000001': { key: 'other', text: 'Old' }, 'q-b-000002': B } }
+  const kept = keptOther(wizard, 'q-a-000001', '  New  ')
+  expect(kept.picks).toEqual({ 'q-a-000001': { key: 'other', text: 'New' }, 'q-b-000002': B })
+  expect(kept.labels).toEqual({ 'q-a-000001': 'New' })
+  expect(kept.step).toBe(1)
   const option: Wizard = { ...EMPTY_WIZARD, picks: { 'q-a-000001': A } }
-  expect(keptOther(option, 'q-a-000001', 'New').picks).toEqual({ 'q-a-000001': A })
+  expect(keptOther(option, 'q-a-000001', 'New').picks).toEqual({ 'q-a-000001': { key: 'other', text: 'New' } })
 })
 
 test('keptOther on each Keep replaces the label and bumps the field round', () => {
@@ -379,5 +396,5 @@ test('every move keeps questionId on the question at the step', () => {
   const onB: Wizard = { ...EMPTY_WIZARD, step: 1, questionId: 'q-b-000002' }
   expect(next(onB, group).questionId).toBe('q-c-000003')
   expect(back(onB, group).questionId).toBe('q-a-000001')
-  expect(choose(onB, group, 'q-b-000002', A).questionId).toBe('q-c-000003')
+  expect(choose(onB, 'q-b-000002', A).questionId).toBe('q-b-000002')
 })

@@ -397,6 +397,9 @@ test('race: a pick made while another draft.json write is in flight is not lost:
   const firstPick = pane.press({ key: `opt-${QUESTION}-B` })
   await clock.settle()
   await clock.advance(1000) // past the move lock the first pick set
+  // The pick keeps the card on its question: Next walks to the other one, and that move's lock runs out before the pick.
+  await pane.press({ key: 'nav-next' })
+  await clock.advance(350)
   await pane.press({ key: `opt-${OTHER_QUESTION}-A` })
   // The draft lock is held by the first write, so the second pick waits for it instead of reading the draft meanwhile.
   expect(locks.has(DRAFT_LOCK)).toBe(true)

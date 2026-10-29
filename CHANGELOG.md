@@ -7,6 +7,17 @@ Commit hashes name the change in `git log`.
 
 ## [Unreleased]
 
+The card no longer moves after a pick: the card stays on its question, and the review opens only from Next on the last question of a group of two or more questions. The nav labels put the answer first.
+
+### Changed
+- A pick (an option, its hotkey, or an Other text kept with Keep) records the answer and the card stays on its question: no move to the next question and no review after a pick. Back and Next keep the pick; it changes only on a new pick.
+- The nav labels put the answer first: "Answer: D · Next →" or "No answer · Next →", "Answer: A · ← Back" or "No answer · ← Back" (pt "Resposta: D · Próxima →", "Sem resposta · ← Voltar"). The answer is always the letter: an option's key, or the Other row's letter for an Other pick, never the label or the typed text. A one-question card's Submit all takes the same prefix; the review's Submit all keeps its plain label, and the review's Back is prefixed.
+- Enter (Keep) in the Other field keeps the text as the button label and picks it; blank text does nothing and the card stays.
+- In a group of two or more questions, the last card shows Next instead of Submit all. Next there opens the review even when a question has no pick; such a row reads "→ No answer" (pt "→ Sem resposta"), and the review's Submit all stays dim until every question is picked. Review Back returns to the last card. A one-question group has no review.
+
+### Removed
+- The arrival line that a pick drew above the next card for 1.5 s ("✓ Previous pick kept for Submit all · now question <n> of <total>", `card.arrival`, `arrivalAtom`, `ARRIVAL_MS`) is removed, since a pick no longer moves the card.
+
 ## [0.4.0-beta.46] - 2026-10-29
 
 Askaway 0.4.0-beta.46 makes the Bash guard's scanner read a heredoc or here-string script run through `su`, `runuser`, `pkexec`, `setpriv`, `xargs`, `chroot`, `flock`, `stdbuf` or `setsid` (issue #15).

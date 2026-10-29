@@ -41,7 +41,7 @@ import {
   type Section,
   OTHER_MIN_ROWS,
 } from './model'
-import type { Group, Pick, Screen, Wizard } from './wizard'
+import { reviewKeyOf, type Group, type Pick, type Screen, type Wizard } from './wizard'
 
 type Ui = Elements[RenderSurface]
 
@@ -57,10 +57,9 @@ export type PaneView = {
   wizard: Wizard
   // A move (a pick, Next or Back) ran within the last MOVE_LOCK_MS: its buttons are drawn disabled until it lifts.
   moveLocked: boolean
-  // The id of the question a pick just moved the card to: that card draws its arrival line meanwhile.
-  arrival: string | null
-  // The pick that completed the group asked for the review: it is drawn in place of the card while the group stays complete.
-  review: boolean
+  // Next on the last question of a group of two or more asked for the review of that question set (reviewKeyOf): it is drawn in
+  // place of the card until Back, or until the group's questions change.
+  review: string | null
   // The ids of questions whose last submit did not deliver their pick: their card draws the not-delivered line.
   undelivered: readonly string[]
   // The height of each question's Other field, grown with its typed text (otherRowsOf); absent, OTHER_MIN_ROWS.
@@ -137,7 +136,7 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
       {view.askWho && view.questions.length > 0 && renderAskWho(ui, lang, actions, held)}
       {view.damagedPauses?.map(id => renderDamagedPause(ui, lang, actions, held, id))}
       {screen !== undefined &&
-        (view.review && screen.canSubmit && screen.total > 1
+        (reviewDrawnOf(view, screen)
           ? renderReview(ui, lang, view, actions, screen, held)
           : renderQuestion(ui, lang, view, actions, screen, held))}
       {view.history.length > 0 && renderHistory(tree, view.history)}
@@ -478,6 +477,16 @@ const navLabelOf = (card: CardContext, key: NavKey, label: string): string => {
   return card.surface === 'terminal' && letter !== undefined ? `${label} (${letter})` : label
 }
 
+// The answer state a forward or Back label shows first: "Answer: D · Next →" once the card's question has a pick, else
+// "No answer · Next →". The answer is always the letter: an option's key, or the Other row's letter for an Other pick, never
+// the label or the typed text. A pick with no letter (Other past z) reads as no answer.
+const answerLabelOf = (lang: Lang, card: CardContext, label: string): string => {
+  const pick: Pick | undefined = card.wizard.picks[card.question.id]
+  const letter = pick?.key === OTHER_KEY ? otherLetterOf(card.question.options) : pick?.key
+  const state = letter === undefined ? t(lang, 'nav.noAnswer') : t(lang, 'nav.answer', { key: letter.toUpperCase() })
+  return `${state} · ${label}`
+}
+
 // One question on screen: the title row (renderTitleRow), the Urgency box under it (when set), the first
 // block (What it is and The problem, plain paragraphs), then the details block: the "Askaway Details:" title and Analogy,
 // Why to Context. Then the question, the dim lead line under it, the options with their tradeoff, fit, what happens,
@@ -508,9 +517,6 @@ function renderQuestion(
   const details = sectionsOf(lang, question, 'details')
   return (
     <Box key={`card-${question.id}`} flexDirection="column" gap={1} borderStyle="round" borderDimColor={isLeaving} paddingX={1} paddingBottom={1}>
-      <Text key={`arrival-${question.id}`} color={URGENCY_COLOR.low} bold>
-        {view.arrival === question.id ? t(lang, 'card.arrival', { n: screen.index + 1, total: screen.total }) : STATUS_BLANK}
-      </Text>
       {renderTitleRow(ui, lang, question, isLeaving, view.now, view.surface)}
       {renderUrgency(ui, lang, question, isLeaving)}
       {renderFirstBlock(ui, question, isLeaving)}
@@ -679,11 +685,11 @@ function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContex
 // "Other…": the last row under the options, a plain link drawn with its letter, "C · Other…" (otherLetterOf). Its field
 // sits on the row under it, under the same "└ " branch glyph the option sub-rows draw. The field is always open, ready to
 // type. Typing keeps the text in the pane's memory (typeOther), with no redraw. Keep (Enter, or the field's Keep button)
-// moves the text to the link, which then draws "C · <label>" and empties the field; the focus goes to the link. A press on
-// the link with a label picks it, else it only focuses the field. Text typed and not kept is recorded as the pick when the
-// field loses focus or before a nav action, and the card stays where it is. The link is bold once Other is the pick, and
-// with a kept label that is the pick it is the primary button (see isKeptChosen). A
-// surface with no Input (mobile) draws no field, so no Other option either.
+// moves the text to the link, which then draws "C · <label>", picks it and empties the field; the focus goes to the link.
+// A press on the link with a label picks it, else it only focuses the field. Text typed and not kept is recorded as the
+// pick when the field loses focus or before a nav action. A pick never moves the card. The link is bold once Other is the
+// pick, and with a kept label that is the pick it is the primary button (see isKeptChosen). A surface with no Input
+// (mobile) draws no field, so no Other option either.
 function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext): RenderElement | false {
   if (!('Input' in ui)) return false
   const { Box, Button, Input, Text } = ui
@@ -742,13 +748,13 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
   )
 }
 
-// The text of a status row with no line. A non-breaking space keeps the row's height, so the card does not move when a
-// status line comes or goes (the arrival line above the title, the unanswered line above the separator).
+// The text of a status row with no line. A non-breaking space keeps the row's height, so the card does not move when the
+// unanswered line comes or goes above the separator.
 const STATUS_BLANK = '\u00a0'
 
 // The warning line above the nav while the question has no pick, or its pick was not delivered by the last submit (the pick
-// stays a draft: press Submit all again). Keep in the Other field keeps the text without picking it, so with a kept label
-// the line names the Other letter to press. The row is always drawn: blank when shown is false (an ended or fading card),
+// stays a draft: press Submit all again). A kept label with no pick (a draft that lost its pick) names the Other letter to
+// press. The row is always drawn: blank when shown is false (an ended or fading card),
 // or when the question is picked and that pick was delivered.
 function renderUnanswered(ui: Ui, lang: Lang, card: CardContext, shown: boolean): RenderElement {
   const { Text } = ui
@@ -769,31 +775,36 @@ function renderUnanswered(ui: Ui, lang: Lang, card: CardContext, shown: boolean)
   )
 }
 
-// Back, and forward: Next on every question but the last; on the last one, Submit all, which writes every answer of the
-// group and needs every question picked, with the KeepGlide mark beside it on the desktop. A dim button does nothing when
-// pressed. Back, Next and Submit carry their letters on the terminal and on the desktop (letterFor).
+// Back, and forward: Next on every question of a group of two or more (on its last question, Next opens the review); on a
+// group of one question, Submit all, which writes its one answer. Submit all needs every question picked, with the KeepGlide
+// mark beside it on the desktop. A dim button does nothing when pressed. Back, Next and Submit carry their letters on the
+// terminal and on the desktop (letterFor). Back and forward show the card's answer first (answerLabelOf).
 function renderNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: Screen): RenderElement {
   const { Box, Button } = ui
   const { question, isLeaving, isMoveLocked, held } = card
   const isBackOff = !screen.canBack || isLeaving || isMoveLocked
-  const label = navLabelOf(card, 'back', t(lang, 'nav.back'))
+  const label = navLabelOf(card, 'back', answerLabelOf(lang, card, t(lang, 'nav.back')))
   const hotkey = letterFor(card, 'back')
   const onPress = () => {
     if (isBackOff) return
     actions.back()
   }
+  const forward =
+    screen.total > 1
+      ? renderNext(ui, lang, actions, card, screen, answerLabelOf(lang, card, t(lang, 'nav.next')))
+      : renderSubmitAll(ui, lang, actions, card, screen, answerLabelOf(lang, card, t(lang, 'review.submit', { n: screen.total })))
   return (
     <Box key={`nav-${question.id}`} flexDirection="row" justifyContent="space-between">
       {held.hold('nav-back', [label, isBackOff, hotkey], onPress, press => (
         <Button key="nav-back" label={label} variant="secondary" dimColor={isBackOff} hotkey={hotkey} onPress={press} />
       ))}
-      {screen.canNext ? renderNext(ui, lang, actions, card, screen) : renderSubmitAll(ui, lang, actions, card, screen)}
+      {forward}
     </Box>
   )
 }
 
 // The nav row of an ended card: Back, Dismiss (removes the question) and Next. Next is on while a later question exists in
-// the group; nothing waits for a pick, because no answer can be sent.
+// the group; nothing waits for a pick, because no answer can be sent. Its labels stay plain.
 function renderEndedNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: Screen): RenderElement {
   const { Box, Button } = ui
   const { question, isLeaving, isMoveLocked, held } = card
@@ -801,6 +812,8 @@ function renderEndedNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardCont
   const backLabel = navLabelOf(card, 'back', t(lang, 'nav.back'))
   const dismissLabel = t(lang, 'card.dismiss')
   const hotkey = letterFor(card, 'back')
+  // An ended card never opens the review: its last question's Next stays dim.
+  const endedScreen: Screen = { ...screen, canReview: false }
   return (
     <Box key={`nav-${question.id}`} flexDirection="row" justifyContent="space-between">
       {held.hold('nav-back', [backLabel, isBackOff, hotkey], () => !isBackOff && actions.back(), press => (
@@ -809,27 +822,36 @@ function renderEndedNav(ui: Ui, lang: Lang, actions: PaneActions, card: CardCont
       {held.hold('dismiss-ended', [dismissLabel, question.id], () => actions.dismissEndedForced(question.id), press => (
         <Button key="dismiss-ended" label={dismissLabel} variant="secondary" onPress={press} />
       ))}
-      {renderNext(ui, lang, actions, card, screen)}
+      {renderNext(ui, lang, actions, card, endedScreen, t(lang, 'nav.next'))}
     </Box>
   )
 }
 
-function renderNext(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: Screen): RenderElement {
+// Next, with its label as the caller built it (answer state first, or plain on an ended card). On a question that can review
+// it is on, and its press opens the review (actions.next decides).
+function renderNext(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: Screen, label: string): RenderElement {
   const { Button } = ui
-  const isOff = !screen.canNext || card.isLeaving || card.isMoveLocked
-  const label = navLabelOf(card, 'next', t(lang, 'nav.next'))
+  const isOff = !(screen.canNext || screen.canReview) || card.isLeaving || card.isMoveLocked
+  const drawnLabel = navLabelOf(card, 'next', label)
   const hotkey = letterFor(card, 'next')
   const onPress = () => {
     if (isOff) return
     actions.next()
   }
-  return card.held.hold('nav-next', [label, isOff, hotkey], onPress, press => (
-    <Button key="nav-next" label={label} variant={isOff ? 'secondary' : 'primary'} dimColor={isOff} hotkey={hotkey} onPress={press} />
+  return card.held.hold('nav-next', [drawnLabel, isOff, hotkey], onPress, press => (
+    <Button key="nav-next" label={drawnLabel} variant={isOff ? 'secondary' : 'primary'} dimColor={isOff} hotkey={hotkey} onPress={press} />
   ))
 }
 
-// The review, drawn in place of the card once every question of the group has a pick: one link per question with the
-// answer chosen for it (a press jumps to its card to change it), then Back (to the card of the last question) and Submit all.
+// The review is drawn only for the question set it was opened for (reviewKeyOf), and only for a group of two or more on screen:
+// a question that left or arrived leaves the card in its place.
+const reviewDrawnOf = (view: PaneView, screen: Screen): boolean =>
+  view.review !== null && view.active !== undefined && view.review === reviewKeyOf(view.active) && screen.total > 1
+
+// The review, drawn in place of the card once Next on the last question asked for it, whether or not every question has a
+// pick: one link per question with the answer chosen for it, "No answer" for one without (a press jumps to its card to
+// change it), then Back (to the card of the last question, its answer first) and Submit all, dim until every question has
+// a pick. The review's card context is the last question's, whatever step the wizard stores.
 function renderReview(
   ui: Ui,
   lang: Lang,
@@ -839,24 +861,25 @@ function renderReview(
   held: HeldButtons,
 ): RenderElement {
   const { Box, Button, Text } = ui
+  const lastQuestion = view.active?.questions[screen.total - 1] ?? screen.question
   const card: CardContext = {
-    question: localizedQuestion(screen.question, lang),
+    question: localizedQuestion(lastQuestion, lang),
     wizard: view.wizard,
-    isLeaving: view.leaving[screen.question.id] !== undefined,
-    isUndelivered: view.undelivered.includes(screen.question.id),
+    isLeaving: view.leaving[lastQuestion.id] !== undefined,
+    isUndelivered: view.undelivered.includes(lastQuestion.id),
     isMoveLocked: view.moveLocked,
     held,
     surface: view.surface,
   }
   const isBackOff = card.isMoveLocked
-  const backLabel = navLabelOf(card, 'back', t(lang, 'nav.back'))
+  const backLabel = navLabelOf(card, 'back', answerLabelOf(lang, card, t(lang, 'nav.back')))
   const hotkey = letterFor(card, 'back')
   const group = view.active
   const order = (group?.questions ?? []).map(question => question.id)
   // One answer's row, at its place in the group's tree: the question's number and title, then the answer chosen for it.
   const reviewRow = (question: Question) => (place: RowPlace) => {
     const pick = view.wizard.picks[question.id]
-    const answer = pick === undefined ? '' : answerNameOf(lang, pick, question)
+    const answer = pick === undefined ? t(lang, 'nav.noAnswer') : answerNameOf(lang, pick, question)
     return (
       <Box key={`review-row-${question.id}`} paddingLeft={place.indent} flexDirection="row">
         {treeLink(ui, held, {
@@ -896,16 +919,17 @@ function renderReview(
         {held.hold('review-back', [backLabel, isBackOff, hotkey], () => !isBackOff && actions.leaveReview(), press => (
           <Button key="review-back" label={backLabel} variant="secondary" dimColor={isBackOff} hotkey={hotkey} onPress={press} />
         ))}
-        {renderSubmitAll(ui, lang, actions, card, screen)}
+        {renderSubmitAll(ui, lang, actions, card, screen, t(lang, 'review.submit', { n: screen.total }))}
       </Box>
     </Box>
   )
 }
 
-function renderSubmitAll(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: Screen): RenderElement {
+// Submit all, with the label its caller built: the answer state first on a single-question card, plain in the review.
+function renderSubmitAll(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext, screen: Screen, label: string): RenderElement {
   const { Box, Button } = ui
   const isOff = !screen.canSubmit || card.isLeaving
-  const label = navLabelOf(card, 'submit', t(lang, 'review.submit', { n: screen.total }))
+  const drawnLabel = navLabelOf(card, 'submit', label)
   const hotkey = letterFor(card, 'submit')
   // The press goes through even while the button is drawn off: an Other text typed but not recorded yet (no Enter, no
   // blur) is recorded by the submit action first, and submitGroup checks again that every question has a pick.
@@ -915,8 +939,8 @@ function renderSubmitAll(ui: Ui, lang: Lang, actions: PaneActions, card: CardCon
   }
   return (
     <Box key="submit-row" flexDirection="row" alignItems="center" gap={1}>
-      {card.held.hold('submit-all', [label, isOff, hotkey], onPress, press => (
-        <Button key={SUBMIT_ALL_KEY} label={label} variant={isOff ? 'secondary' : 'primary'} dimColor={isOff} hotkey={hotkey} onPress={press} />
+      {card.held.hold('submit-all', [drawnLabel, isOff, hotkey], onPress, press => (
+        <Button key={SUBMIT_ALL_KEY} label={drawnLabel} variant={isOff ? 'secondary' : 'primary'} dimColor={isOff} hotkey={hotkey} onPress={press} />
       ))}
       {renderKeepGlide(ui, card.surface, 'keepglide-submit', KEEPGLIDE_SUBMIT_SIZE)}
     </Box>
