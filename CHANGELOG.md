@@ -2,10 +2,15 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0, set by the 0.4.0 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.1, set by the 0.4.1 release commit.
 Commit hashes name the change in `git log`.
 
 ## [Unreleased]
+
+## [0.4.1] - 2026-10-30
+
+### Fixed
+- The field under Other… stretches to the pane's right edge. The engine's `Input` takes no width, and the Box holding it was a row, which left the field at its own short size; it is now a column, so the field fills the row (`renderOther`).
 
 ## [0.4.0] - 2026-10-30
 
@@ -820,7 +825,8 @@ Third gauntlet round (40 personas over betas 14 to 25): 150 findings, 64 adopted
 - The README describes the away flow and what each card carries, matches every claim to the plugin, and adds a screenshot (150ad49, 6020300).
 - SPEC.md records the 0.4.0-beta.5 live check of the pane layout (0f43a9f).
 
-[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/KeepGlide/askaway/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.49...v0.4.0
 [0.4.0-beta.49]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.48...v0.4.0-beta.49
 [0.4.0-beta.48]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.47...v0.4.0-beta.48
