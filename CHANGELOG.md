@@ -9,6 +9,7 @@ Commit hashes name the change in `git log`.
 
 ### Fixed
 - The Bash guard's scanner reads the heredoc bodies and here-strings that a `source` or `.` of any fd path runs (`/dev/fd/3`, `/proc/self/fd/3`, `/proc/thread-self/fd/N`, `/proc/<pid>/fd/N`, any number of leading slashes), and the body of an earlier `exec N<<'EOF'` that such a `source` or `.` runs, so an `answer`, `away on` or state-folder line in it is denied by the scanner alone. `. /dev/fd/3 3<<< '...'` with an answer was allowed by the full guard before (issue #16; `FD_PATH`, `_reads_stdin_script`).
+- The Bash guard's scanner reads the heredoc bodies and here-strings that a `read`, `mapfile` or `readarray` on the line stores in a variable, which a later `eval` or `-c` script runs: `read -r x <<'EOF'` … `EOF` then `eval "$x"` with an answer line was allowed by the scanner alone (the frozen copy denied it), and a here-string form was allowed by both (issue #18; `READ_INTO_VARIABLE`, `_record_read_input`).
 
 ## [0.4.0-beta.49] - 2026-10-30
 
