@@ -7,6 +7,9 @@ Commit hashes name the change in `git log`.
 
 ## [Unreleased]
 
+### Fixed
+- The Bash guard's scanner allows a backquote or `<<` inside a single-quoted `ask --json '<JSON>'`, such as `askaway.py answer` in backquotes or `<<` next to away, because single-quoted text is data (`_substitutions`, `_ShellScan.text`, [#8](https://github.com/KeepGlide/askaway/issues/8)). An answer or an away switch beside such a span, in double quotes or in a later command, is still denied. The frozen copy still denies both until it is removed ([#2](https://github.com/KeepGlide/askaway/issues/2)).
+
 ## [0.4.0-beta.49] - 2026-10-30
 
 Askaway 0.4.0-beta.49 moves the History's Clear all button to the top of the pane.
