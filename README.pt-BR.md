@@ -50,7 +50,7 @@
 
 ## 📌 Status
 
-**Beta** (`0.4.0-beta.47`, acesso antecipado). O Askaway segue o [SemVer](https://semver.org/): enquanto a versão for `0.y.z`, qualquer coisa pode mudar a qualquer momento. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
+**Beta** (`0.4.0-beta.48`, acesso antecipado). O Askaway segue o [SemVer](https://semver.org/): enquanto a versão for `0.y.z`, qualquer coisa pode mudar a qualquer momento. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
 > A API de mods muda entre as versões do Claude Code, então espere mudanças até uma versão estável.
@@ -797,6 +797,7 @@ As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md), no formato 
 | beta.45 | 2026-10-28 | As decisões do card do gauntlet 1: texto da linha de chegada, a linha de não entregue, a revisão depois de um Outro digitado, "aperte" em pt; o campo do Outro cresce de três a dez linhas. |
 | beta.46 | 2026-10-29 | O scanner do guarda lê um script de heredoc ou here-string passado por `su`, `runuser`, `pkexec`, `setpriv`, `xargs`, `chroot`, `flock`, `stdbuf` ou `setsid` (issue #15). |
 | beta.47 | 2026-10-29 | Escolher não move mais o card: o Próxima avança, Voltar e Próxima dizem a resposta primeiro ("Resposta: D · Próxima →", "Sem resposta"), Enter na Outra escolhe o texto e o Próxima do último card abre a revisão. |
+| beta.48 | 2026-10-30 | O traço em L da Outra fica na primeira linha do campo quando ele cresce, e o campo vai até a borda do painel. |
 
 ## 🤝 Contribuição
 
