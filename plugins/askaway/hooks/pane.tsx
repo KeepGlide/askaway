@@ -729,10 +729,11 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
           <Text underline={!isKeptChosen} bold={isChosen} dimColor={isLeaving}>{label}</Text>
         </Button>
       ))}
+      {/* The branch glyph stays on the field's first row however tall the field grows; the field runs to the pane's edge. */}
       {!isLeaving && (
-        <Box flexDirection="row" paddingLeft={1}>
+        <Box flexDirection="row" alignItems="flex-start" width="100%" paddingLeft={1}>
           <Text dimColor={isLeaving}>{BRANCH_PREFIX}</Text>
-          <Box flexGrow={1}>
+          <Box flexGrow={1} flexShrink={1} width="100%">
             <Input
               key={otherInputKey(question.id, wizard.fieldRound)}
               placeholder={t(lang, 'input.placeholder')}
