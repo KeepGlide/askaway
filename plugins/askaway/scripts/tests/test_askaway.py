@@ -5924,6 +5924,16 @@ SHELL_STDIN_SCRIPTS = {
     "answer-exec-heredoc-then-source-fd": (
         f"exec 3<<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\nsource /proc/self/fd/3", ANSWER),
     "answer-exec-here-string-then-dot-fd": (f"exec 3<<< 'python3 {SCRIPT} answer q-1-abcdef A'\n. /dev/fd/3", ANSWER),
+    # read, mapfile and readarray keep a heredoc body or here-string for an eval or -c script to run (issue #18)
+    "answer-read-heredoc-eval": (
+        f"read -r -d '' x <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\neval \"$x\"", ANSWER),
+    "answer-read-heredoc-bash-c": (
+        f"read -r -d '' x <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\nbash -c \"$x\"", ANSWER),
+    "answer-mapfile-heredoc-eval": (
+        f"mapfile -t lines <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\neval \"${{lines[*]}}\"", ANSWER),
+    "answer-readarray-heredoc-eval": (
+        f"readarray -t lines <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\neval \"${{lines[*]}}\"", ANSWER),
+    "answer-read-here-string-eval": (f"read -r x <<< 'python3 {SCRIPT} answer q-1-abcdef A'; eval \"$x\"", ANSWER),
 }
 
 
@@ -6010,6 +6020,10 @@ SHELL_STDIN_CONTROLS = {
     "cat-fd-3-prose-heredoc": "cat /dev/fd/3 3<<'EOF'\nplain notes for the reader\nEOF",
     "source-x-sh-alone": "source ./x.sh",
     "dot-fd-3-alone": ". /dev/fd/3",
+    # read and mapfile store their input with no eval or -c script to run it, so the stored text stays data (issue #18)
+    "read-here-string-no-eval": 'read -r name <<< "$input"',
+    "read-prose-heredoc-echo": "read -r -d '' msg <<'EOF'\nplain notes for the reader\nEOF\necho \"$msg\"",
+    "mapfile-file-eval-echo": "mapfile -t files < list.txt; eval \"echo hi\"",
 }
 
 

@@ -2581,6 +2581,7 @@ def _substitutions(raw: str) -> list[str]:
 
 
 SCRIPT_EXPANSION: Final = re.compile(r"[$`]")  # an eval or -c script with a $ or ` may run what a substitution printed
+READ_INTO_VARIABLE: Final = frozenset({"read", "mapfile", "readarray"})  # each stores stdin text in variables (#18)
 
 
 def _script_texts(argv: Sequence[str]) -> list[str]:
@@ -2960,6 +2961,7 @@ class _ShellScan:
             self.hinted = STATE_HINT.search(command) is not None
         simple_commands = _simple_commands(tokens, bodies)
         self._record_fed([word for simple in simple_commands for word in simple.words])
+        self._record_read_input(command, bodies, simple_commands)
         if not self._prose(simple_commands) and any(simple.heredoc for simple in simple_commands) and (
                 reason := _code_reason(_heredoc_code(command), sandboxed=False)) is not None:
             return reason  # a heredoc body is code too, except an inbox call's JSON body and git or gh message text
@@ -3010,6 +3012,14 @@ class _ShellScan:
             tokens = _shell_tokens(text, bodies) or []
             self.fed.texts[text] = (bodies, [raw for simple in _simple_commands(tokens) for raw in simple.here])
             pending += [inner for kind, word in tokens if kind == "word" for inner in _substitutions(word)]
+
+    def _record_read_input(self, command: str, bodies: list[str], simple_commands: Sequence[_Simple]) -> None:
+        """Record the line's heredoc bodies and here-strings when a command on it is read, mapfile or readarray: each
+        stores its input in a variable that an eval or -c script runs later (issue #18), so _fed_reason scans them as it
+        scans a substitution's. The record is keyed by the line, as _record_fed keys a substitution by its text."""
+        if any(_command_name(_strip_prefix(simple.words)[1]) in READ_INTO_VARIABLE for simple in simple_commands):
+            here = [raw for simple in simple_commands for raw in simple.here]
+            self.fed.texts.setdefault(command, (bodies, here))
 
     def _fed_reason(self) -> str | None:
         """Scan the recorded substitution texts as a shell or an eval runs what they printed, once per working directory:
