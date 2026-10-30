@@ -2,12 +2,12 @@
 
 ## Supported versions
 
-Askaway is pre-stable (`0.y.z`). Fixes land on the latest `0.4.0` beta.
+Askaway is pre-stable (`0.y.z`). Fixes land on the latest `0.4.x` release.
 
 | Version | Supported |
 | ------- | --------- |
-| `0.4.0-beta.49` (latest `0.4.0` beta) | ✅ |
-| Older `0.4.0` betas and earlier `0.x` releases | ❌ |
+| `0.4.0` (latest) | ✅ |
+| `0.4.0` betas and earlier `0.x` releases | ❌ |
 
 ## Reporting a vulnerability
 

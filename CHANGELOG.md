@@ -2,10 +2,14 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.49, set by the beta.49 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0, set by the 0.4.0 release commit.
 Commit hashes name the change in `git log`.
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-10-30
+
+Askaway 0.4.0 is the first stable release of the 0.4 line, after 49 betas. It closes the W2 and W3 guard issues: the Bash guard's scanner reads heredocs and here-strings fed to a sourced fd path, a process substitution and a `read` that an `eval` runs, and allows backquotes and `<<` inside a single-quoted `ask` JSON; the deny after `cd "$VAR"` stays by decision.
 
 ### Changed
 - A write after `cd "$VAR"` in a command that names askaway stays denied by decision, even when `VAR` holds a literal path set on the same line: a branch, a function, a pipeline side or a child shell can change the variable out of the order the scanner reads. SPEC rule (3) records why; tests pin the verdicts ([#9](https://github.com/KeepGlide/askaway/issues/9)).
@@ -816,7 +820,8 @@ Third gauntlet round (40 personas over betas 14 to 25): 150 findings, 64 adopted
 - The README describes the away flow and what each card carries, matches every claim to the plugin, and adds a screenshot (150ad49, 6020300).
 - SPEC.md records the 0.4.0-beta.5 live check of the pane layout (0f43a9f).
 
-[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.49...HEAD
+[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.49...v0.4.0
 [0.4.0-beta.49]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.48...v0.4.0-beta.49
 [0.4.0-beta.48]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.47...v0.4.0-beta.48
 [0.4.0-beta.47]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.46...v0.4.0-beta.47

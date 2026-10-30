@@ -50,7 +50,7 @@
 
 ## 📌 Status
 
-**Beta** (`0.4.0-beta.49`, acesso antecipado). O Askaway segue o [SemVer](https://semver.org/): enquanto a versão for `0.y.z`, qualquer coisa pode mudar a qualquer momento. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
+**Estável** (`0.4.0`). O Askaway segue o [SemVer](https://semver.org/): enquanto a versão for `0.y.z`, qualquer coisa pode mudar a qualquer momento. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
 > A API de mods muda entre as versões do Claude Code, então espere mudanças até uma versão estável.
@@ -751,7 +751,7 @@ Encontrou um? [Abra uma issue](https://github.com/KeepGlide/askaway/issues/new).
 | Categoria | Testes |
 |---|---|
 | Mod (TypeScript), `plugins/askaway/tests/` | 538 |
-| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 1617 |
+| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 1697 |
 
 Contagem Python de `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts`, no commit `8793695`, em 2026-10-28. A contagem do mod vem de uma execução nova de `claude plugin test plugins/askaway` no mesmo commit (o runner não tem modo de coleta).
 
@@ -799,6 +799,7 @@ As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md), no formato 
 | beta.47 | 2026-10-29 | Escolher não move mais o card: o Próxima avança, Voltar e Próxima dizem a resposta primeiro ("Resposta: D · Próxima →", "Sem resposta"), Enter na Outra escolhe o texto e o Próxima do último card abre a revisão. |
 | beta.48 | 2026-10-30 | O traço em L da Outra fica na primeira linha do campo quando ele cresce, e o campo vai até a borda do painel. |
 | beta.49 | 2026-10-30 | O botão Limpar tudo do Histórico passa para o topo do painel, logo abaixo do cabeçalho. |
+| 0.4.0 | 2026-10-30 | A primeira versão estável: o leitor lê heredocs passados a um caminho de fd com `source`, a uma substituição de processo e a um `read` antes de `eval` (#16 a #18), aceita crases e `<<` no JSON entre aspas simples do `ask` (#8); a negação depois de `cd "$VAR"` fica por decisão (#9). |
 
 ## 🤝 Contribuição
 

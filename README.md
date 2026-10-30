@@ -50,7 +50,7 @@
 
 ## 📌 Status
 
-**Beta** (`0.4.0-beta.49`, early access). Askaway follows [SemVer](https://semver.org/): while the version is `0.y.z`, anything may change at any time. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
+**Stable** (`0.4.0`). Askaway follows [SemVer](https://semver.org/): while the version is `0.y.z`, anything may change at any time. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
 > The mod API moves between Claude Code releases, so expect changes until a stable release.
@@ -751,7 +751,7 @@ Found one? [Open an issue](https://github.com/KeepGlide/askaway/issues/new).
 | Category | Tests |
 |---|---|
 | Mod (TypeScript), `plugins/askaway/tests/` | 538 |
-| CLI and hooks (Python), `plugins/askaway/scripts/tests/` | 1617 |
+| CLI and hooks (Python), `plugins/askaway/scripts/tests/` | 1697 |
 
 Python count from `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts`, at commit `8793695`, 2026-10-28. The mod count is from a fresh run of `claude plugin test plugins/askaway` at the same commit (the runner has no collection mode).
 
@@ -799,6 +799,7 @@ The changes of each version are in [CHANGELOG.md](CHANGELOG.md), in the [Keep a 
 | beta.47 | 2026-10-29 | A pick no longer moves the card: Next moves, Back and Next name the pick first ("Answer: D · Next →", "No answer"), Enter in Other picks its text, and Next on the last card opens the review. |
 | beta.48 | 2026-10-30 | The Other field's branch glyph stays on its first row as the field grows, and the field runs to the pane's edge. |
 | beta.49 | 2026-10-30 | The History's Clear all button moves to the top of the pane, under the header. |
+| 0.4.0 | 2026-10-30 | The first stable release: the scanner reads heredocs fed to a sourced fd path, a process substitution and a `read` before `eval` (#16 to #18), allows backquotes and `<<` in a single-quoted `ask` JSON (#8); the deny after `cd "$VAR"` stays by decision (#9). |
 
 ## 🤝 Contributing
 
