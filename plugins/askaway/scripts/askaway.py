@@ -357,6 +357,7 @@ DIRECTORY_OPTION: Final = re.compile(r"-(?:-|[LPe@]+)")  # cd's own options and 
 DIRECTORY_STACK_INDEX: Final = re.compile(r"[+-]\d+")  # pushd's rotation of the stack: the directory it reaches is unknown
 DIRECTORY_WORD: Final = re.compile(r"\b(?:cd|pushd|popd)\b")
 SOURCE_NAMES: Final = frozenset({"source", "."})  # run in this shell, and the scan cannot read the file they run
+PROCESS_SUBSTITUTIONS: Final = ("<(", ">(")  # a word whose text runs as a command, as a $(...) does (issue #17)
 FD_PATH: Final = re.compile(r"/+(?:dev/stdin|dev/fd/[0-9]+|proc/(?:self|thread-self|[0-9]+)/fd/[0-9]+)")  # an fd as a file
 # (normpath keeps two leading slashes, and //dev/stdin is /dev/stdin)
 CDPATH_VAR: Final = "CDPATH"  # cd searches these folders for a relative operand
@@ -2247,8 +2248,9 @@ def _arithmetic_end(text: str, start: int) -> int | None:
 
 
 def _unit_end(text: str, pos: int) -> int | None:
-    """The index after the $(...), ${...} or ((...)) unit at pos, or None when none starts there or it never closes."""
-    if text.startswith("$(", pos):
+    """The index after the $(...), <(...), >(...), ${...} or ((...)) unit at pos, or None when none starts there or it
+    never closes."""
+    if text.startswith(("$(", *PROCESS_SUBSTITUTIONS), pos):
         return _paren_end(text, pos + 1)
     if text.startswith("${", pos):
         return _brace_end(text, pos)
@@ -2333,7 +2335,7 @@ def _shell_tokens(text: str, bodies: list[str] | None = None) -> list[tuple[str,
         if pos == len(text):
             return found
         arithmetic = _arithmetic_end(text, pos)  # (( ... )) at a command's start is one word, not two subshell brackets
-        match = None if arithmetic is not None else SHELL_TOKEN.match(text, pos)
+        match = None if _unit_end(text, pos) is not None else SHELL_TOKEN.match(text, pos)  # a <(...) is no redirection
         if match is not None:
             found.append(("comment", match[0][1:]) if match["comment"] else ("op", match[0]))
             pos = match.end()
@@ -2558,13 +2560,13 @@ def _assignments(words: Sequence[str]) -> dict[str, str]:
 
 
 def _substitutions(raw: str) -> list[str]:
-    """The text of each $(...), `...` and ((...)) in a word: the text is read as a command too (an arithmetic body
-    only runs the substitutions inside it, but a ((a)(b)) of two subshells is one the shell does run)."""
+    """The text of each $(...), <(...), >(...), `...` and ((...)) in a word: the text is read as a command too (an
+    arithmetic body only runs the substitutions inside it, but a ((a)(b)) of two subshells is one the shell does run)."""
     found: list[str] = []
     pos = 0
     while pos < len(raw):
         end = None
-        if raw.startswith("$(", pos) and (end := _paren_end(raw, pos + 1)) is not None:
+        if raw.startswith(("$(", *PROCESS_SUBSTITUTIONS), pos) and (end := _paren_end(raw, pos + 1)) is not None:
             found.append(raw[pos + 2:end - 1])
         elif (end := _arithmetic_end(raw, pos)) is not None:
             found.append(raw[pos + 2:end - 2])
@@ -2612,10 +2614,12 @@ def _reads_stdin_script(simple: _Simple) -> bool:
     that does (sh -c 'bash'), so a heredoc or here-string on the line may be run. A sudo -i or -s with no command
     starts the target user's shell, which reads stdin too. A command word that may expand ($SHELL, ba*sh, $(which
     bash)) may be a shell, so it counts as one. A source or . of an fd path (/dev/stdin, /dev/fd/N, /proc/self/fd/N, or
-    a word that may expand) runs the text a heredoc or here-string feeds that fd in this shell, so it counts too."""
+    a word that may expand) runs the text a heredoc or here-string feeds that fd in this shell, so it counts too; so does
+    a source or . of a <(...) process substitution, which runs the text it prints (issue #17)."""
     argv = _strip_prefix(simple.words)[1]
     if argv and _command_name(argv) in SOURCE_NAMES:
-        return any(_may_expand(word) or FD_PATH.fullmatch(os.path.normpath(_unquote(word))) for word in argv[1:])
+        return any(_may_expand(word) or word.startswith("<(") or FD_PATH.fullmatch(os.path.normpath(_unquote(word)))
+                   for word in argv[1:])
     if argv and _command_name(argv) in SHELL_NAMES and (scripts := _script_texts(argv)):
         return any(_script_reads_stdin(script) for script in scripts)  # sh -c reads stdin only if its script does
     if argv:

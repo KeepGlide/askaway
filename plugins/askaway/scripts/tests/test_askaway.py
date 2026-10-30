@@ -5897,6 +5897,11 @@ SHELL_STDIN_SCRIPTS = {
     "answer-exec-heredoc-then-source-fd": (
         f"exec 3<<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\nsource /proc/self/fd/3", ANSWER),
     "answer-exec-here-string-then-dot-fd": (f"exec 3<<< 'python3 {SCRIPT} answer q-1-abcdef A'\n. /dev/fd/3", ANSWER),
+    # a process substitution that prints a heredoc into source, . or a shell: the shell runs what it printed (issue #17)
+    "answer-source-process-substitution": (
+        f"source <(cat <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n)", ANSWER),
+    "answer-dot-process-substitution": (f". <(cat <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n)", ANSWER),
+    "answer-bash-process-substitution": (f"bash <(cat <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n)", ANSWER),
 }
 
 
@@ -5983,6 +5988,10 @@ SHELL_STDIN_CONTROLS = {
     "cat-fd-3-prose-heredoc": "cat /dev/fd/3 3<<'EOF'\nplain notes for the reader\nEOF",
     "source-x-sh-alone": "source ./x.sh",
     "dot-fd-3-alone": ". /dev/fd/3",
+    # a process substitution feeds its text to the command it is an argument of: diff and cat run no shell (issue #17)
+    "diff-process-substitutions": "diff <(sort a) <(sort b)",
+    "source-process-substitution-no-heredoc": "source <(./gen-env.sh)",
+    "cat-process-substitution-prose-heredoc": "cat <(cat <<'EOF'\nplain notes for the reader\nEOF\n)",
 }
 
 
