@@ -2,10 +2,17 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.48, set by the beta.48 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.0-beta.49, set by the beta.49 release commit.
 Commit hashes name the change in `git log`.
 
 ## [Unreleased]
+
+## [0.4.0-beta.49] - 2026-10-30
+
+Askaway 0.4.0-beta.49 moves the History's Clear all button to the top of the pane.
+
+### Changed
+- Clear all ("Limpar tudo (N)") is drawn right under the pane header, with its divider under it, instead of as the last row; nothing above it changes height, so its first click is kept on the desktop (`renderPane`, `hooks/pane.tsx`).
 
 ## [0.4.0-beta.48] - 2026-10-30
 
@@ -800,7 +807,8 @@ Third gauntlet round (40 personas over betas 14 to 25): 150 findings, 64 adopted
 - The README describes the away flow and what each card carries, matches every claim to the plugin, and adds a screenshot (150ad49, 6020300).
 - SPEC.md records the 0.4.0-beta.5 live check of the pane layout (0f43a9f).
 
-[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.48...HEAD
+[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.49...HEAD
+[0.4.0-beta.49]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.48...v0.4.0-beta.49
 [0.4.0-beta.48]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.47...v0.4.0-beta.48
 [0.4.0-beta.47]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.46...v0.4.0-beta.47
 [0.4.0-beta.46]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.45...v0.4.0-beta.46

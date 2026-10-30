@@ -50,7 +50,7 @@
 
 ## 📌 Status
 
-**Beta** (`0.4.0-beta.48`, early access). Askaway follows [SemVer](https://semver.org/): while the version is `0.y.z`, anything may change at any time. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
+**Beta** (`0.4.0-beta.49`, early access). Askaway follows [SemVer](https://semver.org/): while the version is `0.y.z`, anything may change at any time. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
 > The mod API moves between Claude Code releases, so expect changes until a stable release.
@@ -798,6 +798,7 @@ The changes of each version are in [CHANGELOG.md](CHANGELOG.md), in the [Keep a 
 | beta.46 | 2026-10-29 | The guard's scanner reads a heredoc or here-string script run through `su`, `runuser`, `pkexec`, `setpriv`, `xargs`, `chroot`, `flock`, `stdbuf` or `setsid` (issue #15). |
 | beta.47 | 2026-10-29 | A pick no longer moves the card: Next moves, Back and Next name the pick first ("Answer: D · Next →", "No answer"), Enter in Other picks its text, and Next on the last card opens the review. |
 | beta.48 | 2026-10-30 | The Other field's branch glyph stays on its first row as the field grows, and the field runs to the pane's edge. |
+| beta.49 | 2026-10-30 | The History's Clear all button moves to the top of the pane, under the header. |
 
 ## 🤝 Contributing
 
