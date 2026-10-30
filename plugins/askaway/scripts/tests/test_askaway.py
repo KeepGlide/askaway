@@ -5934,6 +5934,11 @@ SHELL_STDIN_SCRIPTS = {
     "answer-readarray-heredoc-eval": (
         f"readarray -t lines <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\neval \"${{lines[*]}}\"", ANSWER),
     "answer-read-here-string-eval": (f"read -r x <<< 'python3 {SCRIPT} answer q-1-abcdef A'; eval \"$x\"", ANSWER),
+    # a process substitution that prints a heredoc into source, . or a shell: the shell runs what it printed (issue #17)
+    "answer-source-process-substitution": (
+        f"source <(cat <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n)", ANSWER),
+    "answer-dot-process-substitution": (f". <(cat <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n)", ANSWER),
+    "answer-bash-process-substitution": (f"bash <(cat <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n)", ANSWER),
 }
 
 
@@ -6024,6 +6029,10 @@ SHELL_STDIN_CONTROLS = {
     "read-here-string-no-eval": 'read -r name <<< "$input"',
     "read-prose-heredoc-echo": "read -r -d '' msg <<'EOF'\nplain notes for the reader\nEOF\necho \"$msg\"",
     "mapfile-file-eval-echo": "mapfile -t files < list.txt; eval \"echo hi\"",
+    # a process substitution feeds its text to the command it is an argument of: diff and cat run no shell (issue #17)
+    "diff-process-substitutions": "diff <(sort a) <(sort b)",
+    "source-process-substitution-no-heredoc": "source <(./gen-env.sh)",
+    "cat-process-substitution-prose-heredoc": "cat <(cat <<'EOF'\nplain notes for the reader\nEOF\n)",
 }
 
 
