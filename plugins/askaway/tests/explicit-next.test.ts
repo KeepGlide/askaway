@@ -280,8 +280,8 @@ for (const [lang, copy] of Object.entries(COPY)) {
     // Keep with text: the text becomes the Other button's label, the pick is drafted, and the card stays on its question.
     await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: '  Use a fork  ' })
     expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
-    // With options A and B the Other row is C.
-    expect(await labelOf(pane, 'other-q-l1-aaaaaa')).toBe('✓ C · Use a fork')
+    // With options A and B the Other row is C; the desktop draws C as the hotkey chip, not in the label.
+    expect(await labelOf(pane, 'other-q-l1-aaaaaa')).toBe('✓ Use a fork')
     expect(lastPicks(drafts)).toEqual({ 'q-l1-aaaaaa': { key: 'other', text: 'Use a fork' } })
     expect(await labelOf(pane, 'nav-next')).toBe(`${copy.answer}: C · ${copy.next}`)
     expect(writes).toEqual([])
@@ -428,7 +428,7 @@ test('Keep with the same Other text as a failed Submit all keeps the not-deliver
   expect(await notDelivered()).toEqual(['Not delivered yet: press Submit all again.'])
   // The field is the next round after a Keep. The same text keeps the same pick, so the line stays.
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa-1', text: 'Use a fork' })
-  expect(await labelOf(pane, 'other-q-l1-aaaaaa')).toBe('✓ C · Use a fork')
+  expect(await labelOf(pane, 'other-q-l1-aaaaaa')).toBe('✓ Use a fork')
   expect(await notDelivered()).toEqual(['Not delivered yet: press Submit all again.'])
   // A different text is a changed pick: the line goes.
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa-2', text: 'Another fork' })

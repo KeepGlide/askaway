@@ -11,6 +11,7 @@ import { detectLang, resolveLang, t, type Lang } from './i18n'
 import { renderPane, type PaneActions, type PaneView } from './pane'
 import {
   EMPTY_BOARD,
+  OTHER_APPLY_PREFIX,
   OTHER_INPUT_PREFIX,
   OTHER_KEY,
   SUBMIT_ALL_KEY,
@@ -1226,8 +1227,11 @@ async function jumpToQuestion($: EngineInterface, id: string): Promise<void> {
 }
 
 // The Other text typed but not recorded yet, by question id. Typing keeps it here, not in the store, so a key does not
-// redraw the pane; it is recorded when the field loses focus and before a nav action (recordPendingOther), and Keep drops it.
+// redraw the pane; it is recorded when the field loses focus and before a nav action (recordPendingOther), and Enter or Apply drops it.
 const pendingOther = new Map<string, string>()
+// The text each Other field shows, by question id: unlike pendingOther, a record does not drop it, since the field keeps its
+// text until Keep empties it. Apply reads it, so a press after the ring left the field and came back keeps what is shown.
+const fieldText = new Map<string, string>()
 // The height last drawn for each Other field (otherRowsAtom), so a key that keeps the height does not redraw.
 const fieldRows = new Map<string, number>()
 
@@ -1237,11 +1241,15 @@ type OtherRecord = typeof flow.submittedOther
 // The key the pane's focus ring stood on last, as the ui.focus hook saw it: undefined for one of the engine's own stops.
 let focusedKey: string | undefined
 
-// True when a focus move takes the typed Other text off the ring. From Submit all it counts for an element that is not an
-// Other field: Submit all's own press records the text, but a move off it must not drop the text the pane then clears.
+// The keys whose press reads the typed Other text itself: Submit all, and an Other field's Apply. A move onto one of them
+// records nothing, since its press takes the text.
+const isPressReader = (key: string | undefined): boolean => key === SUBMIT_ALL_KEY || key?.startsWith(OTHER_APPLY_PREFIX) === true
+
+// True when a focus move takes the typed Other text off the ring. From Submit all or Apply it counts for an element that is
+// not an Other field: their press records the text, but a move off them must not drop the text the pane then clears.
 function leavesOtherText(previous: string | undefined, next: string | undefined): boolean {
-  if (previous === SUBMIT_ALL_KEY) return next !== SUBMIT_ALL_KEY && next?.startsWith(OTHER_INPUT_PREFIX) !== true
-  return leavesOtherField(previous, next) && next !== SUBMIT_ALL_KEY
+  if (isPressReader(previous)) return !isPressReader(next) && next?.startsWith(OTHER_INPUT_PREFIX) !== true
+  return leavesOtherField(previous, next) && !isPressReader(next)
 }
 
 // The text of an "Other…" field recorded as the pick, not kept: blank text takes the pick away. A question
@@ -1257,7 +1265,7 @@ async function submitOther($: EngineInterface, id: string, text: string, record:
 const samePick = (first: Pick | undefined, second: Pick | undefined): boolean =>
   first?.key === second?.key && first?.text === second?.text
 
-// Keep in the "Other…" field (Enter, or the Keep button) moves its text to the question's label, picks it, and empties the
+// Keep in the "Other…" field (Enter, or its Apply button) moves its text to the question's label, picks it, and empties the
 // field: the focus goes to the Other button, which now draws the label chosen. The card stays. Blank text keeps nothing and
 // leaves the field as it is. A question that is not open, or fading out, takes nothing.
 async function keepOther($: EngineInterface, id: string, text: string): Promise<void> {
@@ -1267,6 +1275,16 @@ async function keepOther($: EngineInterface, id: string, text: string): Promise<
   // Keeping the text the failed pick already had is not a change: the not-delivered line stays until the pick changes.
   if (!samePick(before.picks[id], (await snapshot($)).wizard.picks[id])) await forgetUndelivered($, id)
   await $.ui.focus({ requestId: PANE, key: otherButtonKey(id) })
+}
+
+// Keeps the Other text typed in a question's field, for Enter and for the Apply button: the pending text and the row height
+// of the field are dropped with it, then keepOther keeps the text.
+function keepTypedOther($: EngineInterface, id: string, text: string): void {
+  pendingOther.delete(id)
+  fieldText.delete(id)
+  fieldRows.delete(id)
+  report($, update($, otherRowsAtom, ({ [id]: _, ...rest }) => rest))
+  report($, keepOther($, id, text))
 }
 
 // Records every pending Other text through submitOther, one after another. An entry whose question is no longer open is
@@ -1357,6 +1375,7 @@ const actionsFor = ($: EngineInterface): PaneActions => ({
   jump: id => report($, afterPendingOther($, () => jumpToQuestion($, id))),
   typeOther: (id, text) => {
     pendingOther.set(id, text)
+    fieldText.set(id, text)
     // A key redraws the pane only when it changes the field's height.
     const rows = otherRowsOf(text)
     if ((fieldRows.get(id) ?? OTHER_MIN_ROWS) !== rows) {
@@ -1364,12 +1383,8 @@ const actionsFor = ($: EngineInterface): PaneActions => ({
       report($, update($, otherRowsAtom, prev => ({ ...prev, [id]: rows })))
     }
   },
-  keepOther: (id, text) => {
-    pendingOther.delete(id)
-    fieldRows.delete(id)
-    report($, update($, otherRowsAtom, ({ [id]: _, ...rest }) => rest))
-    report($, keepOther($, id, text))
-  },
+  keepOther: (id, text) => keepTypedOther($, id, text),
+  applyOther: id => keepTypedOther($, id, fieldText.get(id) ?? ''),
   back: () => moveOnce($, () => report($, afterPendingOther($, () => moveWizard($, (current, group) => flow.back(current, group))))),
   next: () => moveOnce($, () => report($, afterPendingOther($, () => nextOrReview($)))),
   submit: () => report($, afterPendingOther($, () => submitCurrent($), flow.submittedTypedOther)),
@@ -1484,7 +1499,7 @@ export const register: Register = on => {
   })
 
   // The ring leaving the Other field: the move is passed on first, then the field's pending text is recorded, so a person
-  // who never pressed Keep keeps it; a text a kept label sets aside stays pending for Submit all (recordPendingOther). A move onto Submit all records nothing: its press records the text as the answer
+  // who never pressed Enter or Apply keeps it; a text a kept label sets aside stays pending for Submit all (recordPendingOther). A move onto Submit all records nothing: its press records the text as the answer
   // (submittedTypedOther), a kept label included. The hook never blocks, rewrites or re-targets the move.
   on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
     const isLeavingOther = leavesOtherText(focusedKey, e.element)
@@ -1494,9 +1509,10 @@ export const register: Register = on => {
     return result
   })
 
-  // Closing the pane drops the pending Other drafts and the remembered ring: their field leaves with the pane.
+  // Closing the pane drops the pending Other drafts, the fields' texts and the remembered ring: their field leaves with the pane.
   on('ui.close', { id: PANE }, (_$, e, next) => {
     pendingOther.clear()
+    fieldText.clear()
     focusedKey = undefined
     return next(e)
   })

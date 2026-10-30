@@ -25,6 +25,7 @@ import {
   leadOf,
   localizedQuestion,
   optionLabelOf,
+  otherApplyKey,
   otherButtonKey,
   otherInputKey,
   otherLetterOf,
@@ -92,6 +93,7 @@ export type PaneActions = {
   jump: (id: string) => void
   typeOther: (id: string, text: string) => void
   keepOther: (id: string, text: string) => void
+  applyOther: (id: string) => void
   back: () => void
   next: () => void
   submit: () => void
@@ -477,6 +479,11 @@ const navLabelOf = (card: CardContext, key: NavKey, label: string): string => {
   return card.surface === 'terminal' && letter !== undefined ? `${label} (${letter})` : label
 }
 
+// The letter an option or the Other link draws before its label ("A · "). The desktop draws a Button's hotkey as its own
+// letter chip, so there the letter is left out when the Button has a hotkey; the terminal draws no hotkey, so the letter stays.
+const letterPrefixOf = (card: CardContext, letter: string, hotkey: string | undefined): string =>
+  card.surface === 'desktop' && hotkey !== undefined ? '' : `${letter} · `
+
 // The answer state a forward or Back label shows first: "Answer: D · Next →" once the card's question has a pick, else
 // "No answer · Next →". The answer is always the letter: an option's key, or the Other row's letter for an Other pick, never
 // the label or the typed text. A pick with no letter (Other past z) reads as no answer.
@@ -626,7 +633,8 @@ function renderFirstBlock(ui: Ui, question: Question, isLeaving: boolean): Rende
   )
 }
 
-// A full-width option, headed by its key letter ("A · label"), its tradeoff and fit under it, then what happens, its pros
+// A full-width option, headed by its key letter ("A · label" on the terminal; the desktop draws the letter as the hotkey chip,
+// letterPrefixOf), its tradeoff and fit under it, then what happens, its pros
 // and its cons. The picked one is the primary button and its label starts "✓ " (the pick is not colour alone); the
 // recommended one, the one whose key is the recommended key, when not picked, is bold and says "(Recommended)" in its text,
 // once: a marker the agent wrote at the start or the end of the label is not drawn (optionLabelOf, own-1), and a label that is
@@ -643,10 +651,10 @@ function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContex
   const pickMark = isPicked ? '✓ ' : ''
   const label = optionLabelOf(lang, option)
   const mark = recommendedMarkOf(lang)
-  const text = `${singleLine(option.key)} · ${pickMark}${label}${isRecommended && label !== mark ? ` ${mark}` : ''}`
+  const hotkey = optionHotkey(option.key)
+  const text = `${letterPrefixOf(card, singleLine(option.key), hotkey)}${pickMark}${label}${isRecommended && label !== mark ? ` ${mark}` : ''}`
   const isBold = isRecommended && !isPicked
   const key = `opt-${question.id}-${option.key}`
-  const hotkey = optionHotkey(option.key)
   const tradeoffLine = tradeoffLineOf(lang, option)
   const details = optionDetailsOf(lang, option)
   const onPress = () => {
@@ -682,9 +690,10 @@ function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContex
   )
 }
 
-// "Other…": the last row under the options, a plain link drawn with its letter, "C · Other…" (otherLetterOf). Its field
-// sits on the row under it, under the same "└ " branch glyph the option sub-rows draw. The field is always open, ready to
-// type. Typing keeps the text in the pane's memory (typeOther), with no redraw. Keep (Enter, or the field's Keep button)
+// "Other…": the last row under the options, a plain link drawn with its letter, "C · Other…" (otherLetterOf; the desktop draws
+// the letter as the hotkey chip). Its field sits on the row under it, under the same "└ " branch glyph the option sub-rows
+// draw, and its Apply button sits under the field. The field is always open, ready to type. Typing keeps the text in the
+// pane's memory (typeOther), with no redraw. Keep (Enter, or the field's Apply button)
 // moves the text to the link, which then draws "C · <label>", picks it and empties the field; the focus goes to the link.
 // A press on the link with a label picks it, else it only focuses the field. Text typed and not kept is recorded as the
 // pick when the field loses focus or before a nav action. A pick never moves the card. The link is bold once Other is the
@@ -702,7 +711,7 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
   const key = otherButtonKey(question.id)
   const letter = otherLetterOf(question.options)
   const linkText = kept === undefined ? t(lang, 'option.other') : singleLine(kept)
-  const bareLabel = letter === undefined ? linkText : `${letter.toUpperCase()} · ${linkText}`
+  const bareLabel = letter === undefined ? linkText : `${letterPrefixOf(card, letter.toUpperCase(), letter)}${linkText}`
   // A chosen kept label is drawn as a picked option is: the primary button, its label starting "✓ ", bold. Unpicked, or with
   // no label, it stays the plain link.
   const isKeptChosen = isChosen && kept !== undefined
@@ -712,6 +721,12 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
     if (isDisabled) return
     if (kept === undefined) actions.focusOther(question.id)
     else actions.pick(question.id, { key: OTHER_KEY, text: kept })
+  }
+  const applyKey = otherApplyKey(question.id)
+  const applyLabel = t(lang, 'input.send')
+  const onApply = () => {
+    if (isDisabled) return
+    actions.applyOther(question.id)
   }
   return (
     <Box key={`other-row-${question.id}`} flexDirection="column">
@@ -732,17 +747,26 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
       {/* The branch glyph stays on the field's first row however tall the field grows; the field runs to the pane's edge.
           Input takes no width: its Box is a column so the field stretches across it, where a row leaves it at its own size. */}
       {!isLeaving && (
-        <Box flexDirection="row" alignItems="flex-start" width="100%" paddingLeft={1}>
-          <Text dimColor={isLeaving}>{BRANCH_PREFIX}</Text>
-          <Box flexDirection="column" alignItems="stretch" flexGrow={1} flexShrink={1} width="100%">
-            <Input
-              key={otherInputKey(question.id, wizard.fieldRound)}
-              placeholder={t(lang, 'input.placeholder')}
-              submitLabel={t(lang, 'input.send')}
-              rows={card.otherRows ?? OTHER_MIN_ROWS}
-              onInput={text => actions.typeOther(question.id, text)}
-              onSubmit={text => actions.keepOther(question.id, text)}
-            />
+        <Box flexDirection="column">
+          <Box flexDirection="row" alignItems="flex-start" width="100%" paddingLeft={1}>
+            <Text dimColor={isLeaving}>{BRANCH_PREFIX}</Text>
+            {/* overflow hidden: while the field has focus the engine draws its own submit button past the pane's edge. */}
+            <Box flexDirection="column" alignItems="stretch" flexGrow={1} flexShrink={1} width="100%" overflow="hidden">
+              <Input
+                key={otherInputKey(question.id, wizard.fieldRound)}
+                placeholder={t(lang, 'input.placeholder')}
+                submitLabel={t(lang, 'input.enter')}
+                rows={card.otherRows ?? OTHER_MIN_ROWS}
+                onInput={text => actions.typeOther(question.id, text)}
+                onSubmit={text => actions.keepOther(question.id, text)}
+              />
+            </Box>
+          </Box>
+          {/* Apply sits under the field, at the field's indent: one cell, then the branch glyph's width. */}
+          <Box flexDirection="row" paddingLeft={1 + BRANCH_PREFIX.length}>
+            {held.hold(applyKey, [applyLabel, isDisabled], onApply, press => (
+              <Button key={applyKey} label={applyLabel} variant="secondary" dimColor={isDisabled} onPress={press} />
+            ))}
           </Box>
         </Box>
       )}
@@ -754,10 +778,10 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
 // unanswered line comes or goes above the separator.
 const STATUS_BLANK = '\u00a0'
 
-// The warning line above the nav while the question has no pick, or its pick was not delivered by the last submit (the pick
-// stays a draft: press Submit all again). A kept label with no pick (a draft that lost its pick) names the Other letter to
-// press. The row is always drawn: blank when shown is false (an ended or fading card),
-// or when the question is picked and that pick was delivered.
+// The warning line above the nav while the question's pick was not delivered by the last submit (the pick stays a draft:
+// press Submit all again), or while it has no pick but a kept Other label (a draft that lost its pick), which names the
+// Other letter to press. A question with no pick and no kept label draws a blank row. The row is always drawn: blank when
+// shown is false (an ended or fading card), or when the question is picked and that pick was delivered.
 function renderUnanswered(ui: Ui, lang: Lang, card: CardContext, shown: boolean): RenderElement {
   const { Text } = ui
   const { question, wizard } = card
@@ -768,7 +792,7 @@ function renderUnanswered(ui: Ui, lang: Lang, card: CardContext, shown: boolean)
     ? t(lang, 'card.undelivered')
     : wizard.labels[question.id] !== undefined && letter !== undefined
       ? t(lang, 'card.unansweredKept', { key: letter.toUpperCase() })
-      : t(lang, 'card.unanswered')
+      : STATUS_BLANK
   const isOpen = shown && (!isPicked || isUndelivered)
   return (
     <Text key={`unanswered-${question.id}`} color={URGENCY_COLOR.medium}>

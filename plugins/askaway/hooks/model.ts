@@ -846,6 +846,12 @@ export const otherInputKey = (questionId: string, round: number): string =>
 // The key of a question's "Other…" button, which draws the kept label once there is one.
 export const otherButtonKey = (questionId: string): string => `other-${questionId}`
 
+// The key prefix of an Other field's Apply button, the button under the field.
+export const OTHER_APPLY_PREFIX = 'other-apply-'
+
+// The key of a question's Apply button: it keeps the text typed in its Other field, as Enter does.
+export const otherApplyKey = (questionId: string): string => `${OTHER_APPLY_PREFIX}${questionId}`
+
 // The key of the Submit all button: a focus move onto it leaves the pending Other text for the press to record.
 export const SUBMIT_ALL_KEY = 'submit-all'
 
@@ -876,10 +882,11 @@ export function piecesOf(text: string): TextPiece[] {
 }
 
 // The Other field opens OTHER_MIN_ROWS tall and grows with the text typed in it, up to OTHER_MAX_ROWS; past that it scrolls.
-// The field's width is not known here, so a line longer than OTHER_LINE_CHARS counts as the rows it would wrap to.
+// The field's width is not known here, so a line longer than OTHER_LINE_CHARS (about what the field fits at the pane's edge)
+// counts as the rows it would wrap to.
 export const OTHER_MIN_ROWS = 3
 export const OTHER_MAX_ROWS = 10
-const OTHER_LINE_CHARS = 60
+const OTHER_LINE_CHARS = 80
 export const otherRowsOf = (text: string): number => {
   const rows = text.split('\n').reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / OTHER_LINE_CHARS)), 0)
   return Math.min(OTHER_MAX_ROWS, Math.max(OTHER_MIN_ROWS, rows))

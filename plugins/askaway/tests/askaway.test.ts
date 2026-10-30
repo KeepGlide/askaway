@@ -30,7 +30,7 @@ import {
   historyOf,
   titleCase,
   urgencyGradeOf,
- desktopSessionOf, groupKeyOf, groupLabelOf, isRootSession, parseDesktopGroups, withDesktopGroup } from '../hooks/model'
+ desktopSessionOf, groupKeyOf, groupLabelOf, isRootSession, parseDesktopGroups, withDesktopGroup, otherRowsOf } from '../hooks/model'
 import { heldButtons } from '../hooks/held'
 import { placeUnder, renderPane, renderTreeQuestion } from '../hooks/pane'
 import { t } from '../hooks/i18n'
@@ -1491,7 +1491,7 @@ test('the field under Other… starts with the └ branch glyph the option sub-r
   }
 })
 
-test('the field under Other… is laid out to stretch: the row is full width and the Box holding the Input is a growing, stretching column, on both surfaces', async ($, on) => {
+test('the field under Other… is laid out to stretch: the row is full width and the Box holding the Input is a growing, stretching column clipped at the pane edge, on both surfaces', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   stubHost(on, files)
   await $.session.start(SESSION)
@@ -1507,6 +1507,7 @@ test('the field under Other… is laid out to stretch: the row is full width and
     expect(props?.alignItems).toBe('stretch')
     expect(props?.flexGrow).toBe(1)
     expect(props?.width).toBe('100%')
+    expect(props?.overflow).toBe('hidden')
     await pane.unmount()
   }
 })
@@ -1792,8 +1793,8 @@ test('a legacy question with tradeoff and no how, gains, losses or session title
   expect(texts).toContain('💡 Por que A: It is smaller.')
   expect(texts).toContain('└ Cheap · aderência 80')
   expect(texts.filter(text => /^(🛠️|🎁|⚖️)/u.test(text))).toEqual([])
-  // No empty section and no blank row: the unanswered line carries its words while the question has no pick.
-  expect(texts.filter(text => text.trim() === '')).toEqual([])
+  // No empty section: the one blank row is the unanswered line's status row, blank while the question has no pick.
+  expect(texts.filter(text => text.trim() === '')).toEqual([' '])
   await pane.unmount()
 })
 
@@ -2752,7 +2753,7 @@ test('Other… keeps the text Enter sends as its label, a link click picks it in
   expect(field?.props).not.toHaveProperty('autoFocus')
   expect(field?.props).not.toHaveProperty('value')
   expect(field?.props).not.toHaveProperty('label')
-  expect(field?.props.submitLabel).toBe('Aplicar')
+  expect(field?.props.submitLabel).toBe('Enter')
   // The Other link only focuses that field and records nothing.
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   expect(await pane.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa' })).toBeDefined()
@@ -2812,6 +2813,102 @@ test('the Other field opens three rows tall and grows with the typed text up to 
   await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'x'.repeat(2000), kind: 'change' })
   expect(await rows()).toBe(10)
   await pane.unmount()
+})
+
+test('otherRowsOf: a line of up to 80 characters is one row, and the field is never shorter than three rows', () => {
+  expect(otherRowsOf('')).toBe(3)
+  expect(otherRowsOf('x'.repeat(197))).toBe(3)
+  expect(otherRowsOf('x'.repeat(240))).toBe(3)
+  expect(otherRowsOf('x'.repeat(241))).toBe(4)
+})
+
+// The key of the field as drawn: an Input's key moves on each Keep (a new field round), so the test reads it, never assumes it.
+const fieldKeyOf = async (pane: Awaited<ReturnType<typeof mountPane>>): Promise<string> =>
+  String(nodesOf(await pane.drawn()).map(keyOfNode).find(key => String(key).startsWith('other-input-')))
+
+test('the Apply button sits under the Other field, after its row, labelled Aplicar in pt, on both surfaces', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  for (const surface of SURFACES) {
+    const pane = await mountPane($, surface)
+    const keys = nodesOf(await pane.drawn()).map(keyOfNode)
+    expect(keys.indexOf('other-apply-q-l1-aaaaaa')).toBeGreaterThan(keys.indexOf('other-input-q-l1-aaaaaa'))
+    expect(await labelOf(pane, 'other-apply-q-l1-aaaaaa')).toBe('Aplicar')
+    expect(await pane.find({ type: 'Button', key: 'other-apply-q-l1-aaaaaa' })).toMatchObject({ props: { variant: 'secondary' } })
+    await pane.unmount()
+  }
+})
+
+test('Apply keeps the typed Other text as Enter does, and a press on the empty field changes nothing, on both surfaces', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const { writes } = stubHost(on, files)
+  await $.session.start(SESSION)
+  for (const surface of SURFACES) {
+    const pane = await mountPane($, surface)
+    const fieldBefore = await fieldKeyOf(pane)
+    const drawnBefore = JSON.stringify(await pane.drawn())
+    // A press on the empty field keeps nothing: the field keeps its round, and the card draws the same.
+    await pane.press({ key: 'other-apply-q-l1-aaaaaa' })
+    expect(JSON.stringify(await pane.drawn())).toBe(drawnBefore)
+    expect(await fieldKeyOf(pane)).toBe(fieldBefore)
+    // The typed text is kept by the press, as Enter keeps it: the field empties (a new round) and the link is picked.
+    await $.ui.input({ plugin: 'askaway', key: fieldBefore, text: '  Use a fork  ', kind: 'change' })
+    await pane.press({ key: 'other-apply-q-l1-aaaaaa' })
+    expect(await fieldKeyOf(pane)).not.toBe(fieldBefore)
+    expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
+    expect(JSON.stringify(await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).toContain('Use a fork')
+    await pane.unmount()
+  }
+  expect(writes).toEqual([])
+})
+
+test('Apply keeps the text the field still shows after the ring left the field and came back', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  const field = await fieldKeyOf(pane)
+  await moveRing($, field)
+  await $.ui.input({ plugin: 'askaway', key: field, text: 'Use a fork', kind: 'change' })
+  // Leaving the field records the text as the pick; the field still shows it.
+  await moveRing($, 'other-q-l1-aaaaaa')
+  await moveRing($, field)
+  await moveRing($, 'other-apply-q-l1-aaaaaa')
+  await pane.press({ key: 'other-apply-q-l1-aaaaaa' })
+  expect(await fieldKeyOf(pane)).not.toBe(field)
+  expect(JSON.stringify(await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).toContain('Use a fork')
+  await pane.unmount()
+})
+
+test('a focus move onto Apply records nothing, so its press keeps the typed text', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  await moveRing($, 'other-input-q-l1-aaaaaa')
+  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
+  await moveRing($, 'other-apply-q-l1-aaaaaa')
+  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(false)
+  await pane.press({ key: 'other-apply-q-l1-aaaaaa' })
+  expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
+  await pane.unmount()
+})
+
+test('the desktop draws an option or Other letter as its hotkey chip only; the terminal keeps the letter in the label', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const desktop = await mountPane($, 'desktop')
+  const desktopLabel = await labelOf(desktop, 'opt-q-l1-aaaaaa-A')
+  expect(String(desktopLabel)).not.toMatch(/^A · /)
+  expect((await desktop.find({ type: 'Button', key: 'opt-q-l1-aaaaaa-A' }))?.props.hotkey).toBe('a')
+  expect(await labelOf(desktop, 'other-q-l1-aaaaaa')).toBe('Outra…')
+  await desktop.unmount()
+  const terminal = await mountPane($)
+  expect(await labelOf(terminal, 'opt-q-l1-aaaaaa-A')).toBe(`A · ${desktopLabel}`)
+  expect(await labelOf(terminal, 'other-q-l1-aaaaaa')).toBe('C · Outra…')
+  await terminal.unmount()
 })
 
 test('Next records the Other text typed and not confirmed, before the card moves on, so Submit all writes it', async ($, on) => {
@@ -3399,13 +3496,14 @@ test('the kept label is still drawn after the panel closes and reopens', async (
   await reopened.unmount()
 })
 
-test('the card warns it is not answered until a pick, and a kept label with no pick names the Other letter', async ($, on) => {
+test('a kept Other label with no pick names the Other letter; a question with no pick and no label draws no warning', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   const { clock } = stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
   const warnings = async () => (await textsOf(pane)).filter(text => text.startsWith('Ainda não respondida'))
-  expect(await warnings()).toEqual(['Ainda não respondida: escolha uma opção.'])
+  // The plain unanswered case draws the blank status row, not a line of words.
+  expect(await warnings()).toEqual([])
   // A draft that keeps a label without its pick (written by another session) names the Other letter to press.
   files.set(`${STATE}/draft.json`, JSON.stringify({ ts: 100, picks: {}, labels: { 'q-l1-aaaaaa': 'Use a fork' } }))
   await clock.advance(5000)
@@ -4256,7 +4354,7 @@ test('Other… takes the letter after the last option, and the desktop keys skip
   await $.session.start(SESSION)
   const desk = await mountPane($, 'desktop')
   const deskHotkey = async (key: string): Promise<unknown> => (await desk.find({ type: 'Button', key }))?.props.hotkey
-  expect(await labelOf(desk, 'other-q-l1-aaaaaa')).toBe('P · Outra…')
+  expect(await labelOf(desk, 'other-q-l1-aaaaaa')).toBe('Outra…')
   expect(await deskHotkey('other-q-l1-aaaaaa')).toBe('p')
   expect(await deskHotkey('nav-back')).toBe('w')
   expect(await deskHotkey('submit-all')).toBe('x')

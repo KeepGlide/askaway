@@ -421,7 +421,7 @@ below a block that grows lost its presses (the first click was dropped), the sam
   - the lead line, dim, right under the question: "On <key> since <HH:MM>. Pick another option to switch; no answer keeps <key>.",
     or "Paused since <HH:MM>, waiting for your answer." for a `high` risk question (`leadOf`, `hooks/model.ts`; pt: "Na opção <key> desde
     <HH:MM>. Escolha outra opção para trocar; sem resposta, fica a <key>.", "Pausado desde <HH:MM>, esperando a sua resposta."); the time takes the date before it (`17/10 14:05`, as in "On B since 17/10 14:05") when the question was asked on an earlier calendar day (`timeOf`, `hooks/model.ts`); not drawn on an ended card, whose notice says where the agent stayed;
-  - the options, one full-width Button each, "<key> · Label" (for example "A · Label"), with "(Recommended)" (pt
+  - the options, one full-width Button each, "<key> · Label" (for example "A · Label"; on the Desktop the key is only the hotkey chip, see Hotkeys), with "(Recommended)" (pt
     "(Recomendada)") after the label of the recommended one, once: a recommended mark carried at the end or the start of an option label (a question filed before `ask` stripped them) is not drawn (`optionLabelOf`, `RECOMMENDED_MARKERS` and `LEADING_RECOMMENDED_MARKERS`, `hooks/model.ts`: the marks `ask` strips, English or Portuguese, in `()`, `[]` or `{}`, after a hyphen that follows a space, an en dash, an em dash or a colon, a no-break space counting as a space, one mark or several; at the start, the leading rule of `ask`), so the pane's own mark, on the recommended option only, is the only one; the History and the footer name the chosen option by the same clean label. The recommended option is bold while not picked; the picked
     option is the primary button, with "✓ " before its label (`renderOption`). Option keys and labels are drawn on one line (`singleLine`). Under each option, its own lines, indented one cell (`paddingLeft={1}`), plain on both surfaces and dim only while
     the card fades (the Desktop dim was tried in beta.32 and taken back in beta.33 at the owner's word): the tradeoff line "└ <tradeoff> · fit N" (the first letter of the tradeoff capitalized; pt "· aderência N";
@@ -430,19 +430,19 @@ below a block that grows lost its presses (the first click was dropped), the sam
     `marginTop={1}`, so two blank lines part them from the lead line (`renderQuestion`, `renderOption`,
     `hooks/pane.tsx`);
   - "<L> · Other…", where <L> is the letter after the last option's key ("C · Other…" with options A and B; Portuguese:
-    "C · Outra…"), a plain Button, its text underlined after a dim link mark `▪ ` (`LINK_MARK`), bold while its pick is Other. With a kept label that is the pick, it is the primary button with "✓ " before its label, as a picked option is (`renderOther`, `isKeptChosen`). Its field is on the row under it,
+    "C · Outra…"; on the Desktop only the hotkey chip shows the letter, see Hotkeys), a plain Button, its text underlined after a dim link mark `▪ ` (`LINK_MARK`), bold while its pick is Other. With a kept label that is the pick, it is the primary button with "✓ " before its label, as a picked option is (`renderOther`, `isKeptChosen`). Its field is on the row under it,
     prefixed with the same "└ " branch glyph the option sub-rows draw (`BRANCH_PREFIX`), indented one cell and hidden
-    while the card fades (it is not drawn then), with no label: its placeholder is the only text. It fills the row to the card's edge (`flexGrow`) and opens three rows tall (`rows`), growing with the text typed in it, a line longer than 60 characters counting as the rows it wraps to, up to ten rows; past that it scrolls (`otherRowsOf`, `otherRowsAtom`: a key redraws the pane only when it changes the height). The field is always open (no press needed, no
+    while the card fades (it is not drawn then), with no label: its placeholder is the only text. It fills the row to the card's edge (`flexGrow`, and its Box is clipped there by `overflow="hidden"`, as the engine draws its own submit button past the edge while the field has focus) and opens three rows tall (`rows`), growing with the text typed in it, a line longer than 80 characters (about what the field fits at the pane's edge) counting as the rows it wraps to, up to ten rows; past that it scrolls (`otherRowsOf`, `otherRowsAtom`: a key redraws the pane only when it changes the height). The field is always open (no press needed, no
     autofocus, so the keys stay with the card until the person clicks in). Pressing the link only focuses that field
     (`$.ui.focus`, key `other-input-<id>`). The field has no `value` prop: it keeps the text the person types, across
     redraws. Each change of the text (the Input's `onInput`, `typeOther`) only keeps it in the pane's memory: no store
     write and no redraw. The text is recorded as the Other pick (`submitOther`, `flow.submittedOther`: trimmed, capped)
     at these points: when the
-    focus ring leaves the field (the `ui.focus` hook passes the move on first, `await next(e)`, and then records: `leavesOtherText`, `leavesOtherField`, `recordPendingOther`, `hooks/register.tsx`; a move onto Submit all records nothing, since its press records the text as the reply, and a later move off Submit all to anything but an Other field records it);
+    focus ring leaves the field (the `ui.focus` hook passes the move on first, `await next(e)`, and then records: `leavesOtherText`, `leavesOtherField`, `recordPendingOther`, `hooks/register.tsx`; a move onto Submit all or onto the Apply button records nothing, since their press takes the text (`isPressReader`), and a later move off either to anything but an Other field records it);
     and before an option pick, the Other link, Next, Back, Submit all, a tree row's Submit and a tree jump (`afterPendingOther`).
     A pending text whose question has left the board is dropped, not recorded; closing the pane (`ui.close`) drops them all. A blank text takes that
     pick away when no label is kept; while a label is kept, a typed text is never recorded by a blur or a nav action and the pick stays as it was (`submittedOther`, `setsTypedOtherAside`, `hooks/wizard.ts`; see Keep below). Enter in the field is Keep, not a record. Until one of those points, the pick, the bold link or chosen button, and the `✓` tree mark stay as they were. The field's
-    submit label is "Apply" (pt "Aplicar"), the button that keeps the typed text and picks it. The typed text is not drawn again under the
+    submit label is the key hint "Enter" (`input.enter`), and the Apply button under the field (`other-apply-<id>`, `applyOther`; pt "Aplicar") keeps the typed text and picks it, as Enter does; a press on it with an empty field changes nothing. The typed text is not drawn again under the
     link. A surface with no Input draws no Other option (`renderOther`);
     Keep (Enter in the field, or its Apply button) moves the typed text to the Other button, which then draws
     `<letter> · <text>` like the other options draw their labels, and picks that text at once: the label and the Other
@@ -454,10 +454,9 @@ below a block that grows lost its presses (the first click was dropped), the sam
     (kept in memory, dropped on close); a kept text is a draft label, shared through `draft.json` `labels` and so kept
     across a close and seen by the other windows. A draft's Other pick whose text differs from the kept label is drawn and sent as that label.
 
-  - while the question has no pick, a line in the `warning` colour: "Not answered yet: pick an option." (pt "Ainda não
-    respondida: escolha uma opção."); with a kept Other label but no pick (a draft that lost its pick), "Not answered yet: press
+  - while the question has no pick and no kept Other label, the row is blank (a non-breaking space that keeps the card's height); with a kept Other label but no pick (a draft that lost its pick), a line in the `warning` colour: "Not answered yet: press
     <L> to choose your text." (pt "Ainda não respondida: aperte <L> para escolher o seu texto."), <L> the Other letter
-    (`renderUnanswered`, `card.unanswered`, `card.unansweredKept`); the same line while the question's pick is picked but a
+    (`renderUnanswered`, `card.unansweredKept`); the same line while the question's pick is picked but a
     submit did not deliver it (its pick stays a draft): "Not delivered yet: press Submit all again." (pt "Ainda não entregue:
     aperte Enviar tudo de novo.", `card.undelivered`, `undeliveredAtom`); blank (its row kept) on an ended or fading card, and once the question is picked and delivered;
   - a separator: a 1px rule on the desktop, a row of "─" on the terminal (`renderDivider`);
@@ -476,7 +475,7 @@ below a block that grows lost its presses (the first click was dropped), the sam
   take the first free letters of their surface's pool (`letterFor`, `NAV_POOLS`, `hooks/pane.tsx`): `z`, `x`, `w` on the
   terminal; `p`, `f` and then `w`, `z`, `x` on the desktop. A letter that an option of the card uses, or the letter of Other…, is skipped. The
   hotkeys are drawn on every card: while the Other field has focus, the engine sends each printable key to the field alone,
-  so no hotkey fires from typing.
+  so no hotkey fires from typing. The Desktop draws an option's or Other's letter as its hotkey chip only, so the label has no "<L> · " prefix there (`letterPrefixOf`); the terminal draws no hotkey, so its label keeps the letter.
 - **Choosing**: a pick (an option, its hotkey, or an Other text kept with Keep) records the answer to its question and nothing
   else: the card stays on that question. A pick does not move the card to another question, and it draws no review and no
   line above the title. Back and Next keep the pick; it changes only on a new pick. An Other text recorded from its field
