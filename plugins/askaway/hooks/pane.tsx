@@ -729,11 +729,12 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
           <Text underline={!isKeptChosen} bold={isChosen} dimColor={isLeaving}>{label}</Text>
         </Button>
       ))}
-      {/* The branch glyph stays on the field's first row however tall the field grows; the field runs to the pane's edge. */}
+      {/* The branch glyph stays on the field's first row however tall the field grows; the field runs to the pane's edge.
+          Input takes no width: its Box is a column so the field stretches across it, where a row leaves it at its own size. */}
       {!isLeaving && (
         <Box flexDirection="row" alignItems="flex-start" width="100%" paddingLeft={1}>
           <Text dimColor={isLeaving}>{BRANCH_PREFIX}</Text>
-          <Box flexGrow={1} flexShrink={1} width="100%">
+          <Box flexDirection="column" alignItems="stretch" flexGrow={1} flexShrink={1} width="100%">
             <Input
               key={otherInputKey(question.id, wizard.fieldRound)}
               placeholder={t(lang, 'input.placeholder')}

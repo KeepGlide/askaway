@@ -1491,6 +1491,26 @@ test('the field under Other… starts with the └ branch glyph the option sub-r
   }
 })
 
+test('the field under Other… is laid out to stretch: the row is full width and the Box holding the Input is a growing, stretching column, on both surfaces', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  for (const surface of SURFACES) {
+    const pane = await mountPane($, surface)
+    const nodes = nodesOf(await pane.drawn())
+    const fieldRow = nodes.find(node => node.type === 'Box' && startsWithBranch(node) && nodesOf(node).some(inner => inner.type === 'Input'))
+    const holder = nodesOf(fieldRow ?? {}).find(node => node.type === 'Box' && Array.isArray(node.children) &&
+      node.children.some(child => typeof child === 'object' && child !== null && (child as Record<string, unknown>).type === 'Input'))
+    expect((fieldRow?.props as Record<string, unknown> | undefined)?.width).toBe('100%')
+    const props = holder?.props as Record<string, unknown> | undefined
+    expect(props?.flexDirection).toBe('column')
+    expect(props?.alignItems).toBe('stretch')
+    expect(props?.flexGrow).toBe(1)
+    expect(props?.width).toBe('100%')
+    await pane.unmount()
+  }
+})
+
 test('the question card has one blank line under its nav row: paddingBottom 1, on both surfaces', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   stubHost(on, files)
