@@ -5633,6 +5633,24 @@ def test_the_frozen_copy_still_denies_these_data_edits(command, reason, capsys, 
     assert bash_denial(capsys, monkeypatch, command) == reason
 
 
+# Issue #9: the scanner does not follow a variable into cd, even one assigned a literal path on the same line, since a
+# branch, a function, a pipeline side or a child shell can change it out of text order. The deny stays (SPEC rule (3)).
+@pytest.mark.usefixtures("scanner_only")
+@pytest.mark.parametrize("command", [
+    "SRC=/tmp/x; cd \"$SRC\" && cp $P/askaway.py b/",
+    "SRC=~/.claude/state; cd \"$SRC\" && cp $P/askaway.py b/",
+    "cd ~/.claude/state/askaway && cp a b",
+], ids=["literal-variable", "state-variable", "literal-state-path"])
+def test_the_scanner_keeps_a_write_after_a_variable_cd_denied(command):
+    assert askaway._ShellScan(os.getcwd(), {}, askaway._state_roots()).text(command) == askaway.STATE_DENIED
+
+
+@pytest.mark.usefixtures("scanner_only")
+def test_the_scanner_allows_a_relative_write_after_cd_to_home():
+    command = "cd \"$HOME/.claude\" && echo askaway; cp a.txt b.txt"
+    assert askaway._ShellScan(os.getcwd(), {}, askaway._state_roots()).text(command) is None
+
+
 @pytest.mark.usefixtures("scanner_only")  # no over-deny: the frozen copy denies these too, and would hide a scanner miss
 @pytest.mark.parametrize("command", [
     f"sed 's/a/b/' -i {STATE_FOLDER}/q/q-1-abcdef.json",

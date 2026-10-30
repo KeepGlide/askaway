@@ -7,6 +7,9 @@ Commit hashes name the change in `git log`.
 
 ## [Unreleased]
 
+### Changed
+- A write after `cd "$VAR"` in a command that names askaway stays denied by decision, even when `VAR` holds a literal path set on the same line: a branch, a function, a pipeline side or a child shell can change the variable out of the order the scanner reads. SPEC rule (3) records why; tests pin the verdicts ([#9](https://github.com/KeepGlide/askaway/issues/9)).
+
 ### Fixed
 - The Bash guard's scanner reads a `<(...)` or `>(...)` process substitution as a substitution: its text is read as a command line, its heredoc bodies are read when a shell or a `source` or `.` runs what it printed. `source <(cat <<'EOF' ... EOF)`, `. <(...)` and `bash <(...)` with an `answer` or `away on` line are denied by the scanner alone, while `diff <(sort a) <(sort b)` and `source <(./gen-env.sh)` stay allowed (issue #17; `PROCESS_SUBSTITUTIONS`, `_unit_end`, `_reads_stdin_script`).
 - The Bash guard's scanner reads the heredoc bodies and here-strings that a `source` or `.` of any fd path runs (`/dev/fd/3`, `/proc/self/fd/3`, `/proc/thread-self/fd/N`, `/proc/<pid>/fd/N`, any number of leading slashes), and the body of an earlier `exec N<<'EOF'` that such a `source` or `.` runs, so an `answer`, `away on` or state-folder line in it is denied by the scanner alone. `. /dev/fd/3 3<<< '...'` with an answer was allowed by the full guard before (issue #16; `FD_PATH`, `_reads_stdin_script`).
