@@ -2,10 +2,20 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.1, set by the 0.4.1 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.2, set by the 0.4.2 release commit.
 Commit hashes name the change in `git log`.
 
 ## [Unreleased]
+
+## [0.4.2] - 2026-10-30
+
+### Changed
+- The field under Other… has an Apply button under it (`other-apply-<id>`, `applyOther`), which keeps the text the field shows as Enter does; the field's own submit label is now the key hint "Enter", and the Box holding the field clips the engine's beside-field button at the pane's edge (`overflow="hidden"`).
+- On the desktop, option and Other labels no longer start with "A · ": the engine draws the letter as the Button's hotkey chip, so it showed twice. The terminal, which draws no hotkey, keeps the letter (`letterPrefixOf`).
+- The Other field counts 80 characters per line, not 60, when it sizes itself to the typed text, so a text fills the full-width field with no spare row (`OTHER_LINE_CHARS`).
+
+### Removed
+- The warning line "Not answered yet: pick an option." (pt "Ainda não respondida: escolha uma opção.") under an unanswered card; the row stays blank. The lines for a kept label with no pick and for a pick not delivered stay.
 
 ## [0.4.1] - 2026-10-30
 
@@ -825,7 +835,8 @@ Third gauntlet round (40 personas over betas 14 to 25): 150 findings, 64 adopted
 - The README describes the away flow and what each card carries, matches every claim to the plugin, and adds a screenshot (150ad49, 6020300).
 - SPEC.md records the 0.4.0-beta.5 live check of the pane layout (0f43a9f).
 
-[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/KeepGlide/askaway/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/KeepGlide/askaway/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.49...v0.4.0
 [0.4.0-beta.49]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.48...v0.4.0-beta.49
