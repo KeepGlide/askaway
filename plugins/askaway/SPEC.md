@@ -347,10 +347,9 @@ Brazilian Portuguese, with identical key sets). The model-facing lines are alway
 
 Pane id `askaway`, title "Askaway" (`hooks/pane.tsx`, `hooks/register.tsx`). Colors are in `hooks/look.ts`.
 
-Draw order, top to bottom: header, tree of the open questions, question card, History, footer, Clear all button. The History block and the Clear link come
-last because they change height as answers are delivered. On the desktop a Button drawn below a block that grows lost
-its presses (the first click was dropped); this is the same finding as another mod's (comment above its
-status list). `hooks/pane.tsx`, `renderPane`.
+Draw order, top to bottom: header, Clear all button and its divider, tree of the open questions, question card, History,
+footer. Clear all sits right under the header, where no block above it changes height: on the desktop a Button drawn
+below a block that grows lost its presses (the first click was dropped), the same finding as another mod's status list. `hooks/pane.tsx`, `renderPane`.
 
 - **Header**: the Askaway logo, then "Questions waiting" ("Perguntas aguardando"; `pane.heading`, `hooks/i18n.ts`), with the counter on the right. The logo is the violet
   SVG on the desktop (`hooks/logo.ts`, `#8B5CF6`) and the bold "?" glyph on the terminal
@@ -538,7 +537,7 @@ status list). `hooks/pane.tsx`, `renderPane`.
   time is the `ts` of the delivery marker (`d/<id>.json`); an expired marker carries a ts, which the History line does not show.
   A question's title is never a jump link: an answered question is no longer open, so no card can be jumped to. A row whose question has left the board is titled "Question closed" ("Pergunta encerrada").
   A delivered line stays until Clear all, as a pending, ended or expired line does; no timer removes it (`historyOf`, `hooks/model.ts`).
-- **Clear all** (the last row of the pane, after a divider, right-aligned; `renderHistoryClear`): a secondary Button, as the card's Back is, labelled "Clear all (N)"
+- **Clear all** (the row under the header, before a divider, right-aligned; `renderHistoryClear`): a secondary Button, as the card's Back is, labelled "Clear all (N)"
   ("Limpar tudo (N)"), where N counts every row drawn now, pending ones included; hidden when N is 0. Its press
   (`clearHistory`, `hooks/register.tsx`) writes those answers' ids to `cleared.json`, shared by every session of the folder: the
   press writes the ids it drew and its own earlier ones, pruned to the answers its board knows, plus every id the file already lists, kept unpruned (a board up to one poll behind may not know an answer another session cleared; the file's ids stay while their reply file is on disk, and an id leaves the list only at a Clear all that finds no reply file for it and no reply on the board), with the write's `ts` (recorded for diagnosis; no reader uses it). Two Clear all presses within the same instant in two sessions keep the later write, as `$.fs` has no atomic rename. Each

@@ -118,8 +118,8 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
   const tree: TreeContext = { ui, lang, view, actions, held }
   const clearCount = clearableIdsOf(view.history).length
   held.begin()
-  // The History block sits under the card, where it changes height as answers are delivered: a Button drawn below a block
-  // that grows lost its presses on the desktop (the first click was dropped). The Clear all button therefore comes last.
+  // A Button drawn below a block that changes height lost its presses on the desktop (the first click was dropped), so the
+  // History's Clear all sits right under the header, above the tree and the card, where nothing above it moves.
   const pane = (
     <Box flexDirection="column" gap={1}>
       <Box flexDirection="row" justifyContent="space-between">
@@ -132,6 +132,8 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
           {renderKeepGlide(ui, view.surface, 'keepglide-counter', KEEPGLIDE_HEADER_SIZE)}
         </Box>
       </Box>
+      {clearCount > 0 && renderHistoryClear(tree, clearCount)}
+      {clearCount > 0 && renderDivider(ui, view.surface, 'divider-history')}
       {view.groups.length > 0 && renderTree(tree)}
       {view.askWho && view.questions.length > 0 && renderAskWho(ui, lang, actions, held)}
       {view.damagedPauses?.map(id => renderDamagedPause(ui, lang, actions, held, id))}
@@ -141,8 +143,6 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
           : renderQuestion(ui, lang, view, actions, screen, held))}
       {view.history.length > 0 && renderHistory(tree, view.history)}
       {view.footer !== undefined && view.questions.length === 0 && renderFooter(ui, view.footer)}
-      {clearCount > 0 && renderDivider(ui, view.surface, 'divider-history')}
-      {clearCount > 0 && renderHistoryClear(tree, clearCount)}
     </Box>
   )
   held.end()
