@@ -5883,6 +5883,20 @@ SHELL_STDIN_SCRIPTS = {
        for key, command in WRAPPER_SHELL_COMMANDS.items()},
     "answer-su-lc-bash": (f"su -lc bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
     "answer-flock-fd-bash": (f"flock 9 bash <<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER),
+    # a source or . of any fd path runs the text a heredoc or here-string feeds that fd in this shell (issue #16)
+    **{f"answer-{name}-{key}-fd-heredoc": (f"{word} {path} 3<<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF", ANSWER)
+       for name, word in (("source", "source"), ("dot", "."))
+       for key, path in (("dev-fd-3", "/dev/fd/3"), ("proc-self", "/proc/self/fd/3"),
+                         ("proc-thread-self", "/proc/thread-self/fd/3"), ("proc-pid", "/proc/1234/fd/3"),
+                         ("leading-slashes", "////dev/fd/3"), ("quoted", "'/dev/fd/3'"))},
+    **{f"answer-{name}-{key}-fd-here-string": (f"{word} {path} 3<<< 'python3 {SCRIPT} answer q-1-abcdef A'", ANSWER)
+       for name, word in (("source", "source"), ("dot", "."))
+       for key, path in (("dev-fd-3", "/dev/fd/3"), ("proc-self", "/proc/self/fd/3"))},
+    "answer-exec-heredoc-then-dot-fd": (
+        f"exec 3<<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\n. /dev/fd/3", ANSWER),
+    "answer-exec-heredoc-then-source-fd": (
+        f"exec 3<<'EOF'\npython3 {SCRIPT} answer q-1-abcdef A\nEOF\nsource /proc/self/fd/3", ANSWER),
+    "answer-exec-here-string-then-dot-fd": (f"exec 3<<< 'python3 {SCRIPT} answer q-1-abcdef A'\n. /dev/fd/3", ANSWER),
 }
 
 
@@ -5895,6 +5909,11 @@ def test_a_shell_reading_its_script_from_a_heredoc_is_denied(command, reason, ca
 @pytest.mark.parametrize(("command", "reason"), SHELL_STDIN_SCRIPTS.values(), ids=SHELL_STDIN_SCRIPTS.keys())
 def test_the_scanner_alone_denies_a_shell_reading_its_script_from_a_heredoc(command, reason, capsys, monkeypatch):
     assert bash_denial(capsys, monkeypatch, command) == reason
+
+
+def test_a_source_of_an_fd_fed_a_here_string_is_denied_by_the_full_guard(capsys, monkeypatch):
+    command = f". /dev/fd/3 3<<< 'python3 {SCRIPT} answer q-1-abcdef A'"  # issue #16: the frozen copy allowed this one
+    assert bash_denial(capsys, monkeypatch, command) == ANSWER
 
 
 @pytest.mark.usefixtures("scanner_only")  # the reads of substitution texts stay bounded: a cd before each eval, many times
@@ -5958,6 +5977,12 @@ SHELL_STDIN_CONTROLS = {
     "stdbuf-grep": "stdbuf -o0 grep x file",
     "su-c-ls-root": "su -c 'ls /tmp' root",
     "chroot-dir-ls": "chroot /srv/x ls",
+    # a source of a file, a cat that reads an fd, and a source of an fd with nothing fed to it stay allowed (issue #16)
+    "dot-env-beside-prose-heredoc": "cat <<'EOF'\nplain notes for the reader\nEOF\n. ./env.sh",
+    "dot-env-same-line-prose-heredoc": "cat <<'EOF'; . ./env.sh\nplain notes for the reader\nEOF",
+    "cat-fd-3-prose-heredoc": "cat /dev/fd/3 3<<'EOF'\nplain notes for the reader\nEOF",
+    "source-x-sh-alone": "source ./x.sh",
+    "dot-fd-3-alone": ". /dev/fd/3",
 }
 
 
