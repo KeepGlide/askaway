@@ -5358,6 +5358,33 @@ def test_the_scanner_alone_still_lets_a_harmless_command_with_a_nested_unit_or_a
     assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
 
 
+# ---- issue #8: a backquote or << inside a single-quoted ask JSON is text, so the scanner allows it ----
+
+ASK_BACKQUOTE = f"python3 {SCRIPT} ask --json '{{\"question\":\"Run `askaway.py answer` now?\"}}'"
+ASK_HEREDOC_SIGN = f"python3 {SCRIPT} ask --json '{{\"question\":\"Is a << heredoc fine while away?\"}}'"
+
+
+@pytest.mark.usefixtures("scanner_only")  # the frozen copy denies these until issue #2 removes it: the scanner's own verdict shows only without it
+@pytest.mark.parametrize("command", [ASK_BACKQUOTE, ASK_HEREDOC_SIGN])
+def test_the_scanner_allows_an_ask_json_whose_single_quotes_hold_a_backquote_or_a_heredoc_sign(command, capsys, monkeypatch):
+    assert run_hook(capsys, monkeypatch, "pause-guard", bash_event(command)) == ""
+
+
+@pytest.mark.usefixtures("scanner_only")  # no over-deny: the answer or the away switch is the denied part, and it must stay denied
+@pytest.mark.parametrize(("command", "reason"), [
+    (f"python3 {SCRIPT} answer q-abc A", "ANSWER_DENIED"),
+    (f"python3 {SCRIPT} away on", "AWAY_DENIED"),
+    (f"{ASK_BACKQUOTE} && python3 {SCRIPT} answer q-abc A", "ANSWER_DENIED"),
+    (f"{ASK_HEREDOC_SIGN}; python3 {SCRIPT} away on", "AWAY_DENIED"),
+    (f"echo \"it's `python3 {SCRIPT} answer q-abc A`\"", "ANSWER_DENIED"),
+    (f"echo 'it' `python3 {SCRIPT} answer q-abc A`", "ANSWER_DENIED"),
+    (f"echo $'a\\'b' `python3 {SCRIPT} answer q-abc A` 'x'", "ANSWER_DENIED"),
+    ("python3 - <<'EOF'\nimport askaway\naskaway.cmd_answer('q-1-abcdef', 'A', 'panel', None)\nEOF", "ANSWER_DENIED"),
+])
+def test_the_scanner_still_denies_an_answer_or_away_switch_beside_a_quoted_backquote_or_heredoc_sign(command, reason, capsys, monkeypatch):
+    assert bash_denial(capsys, monkeypatch, command) == getattr(askaway, reason)
+
+
 def test_the_frozen_copy_names_askaway_py_for_its_inbox_call_exemption():  # its denials: FROZEN_COPY_OVER_DENIES
     assert askaway._baseline_guard().SCRIPT_PATH == SCRIPT.resolve()
 

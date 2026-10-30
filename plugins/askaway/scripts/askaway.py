@@ -252,7 +252,7 @@ _INBOX_HEAD: Final = (
 )
 INBOX_HEAD: Final = re.compile(_INBOX_HEAD)
 INBOX_UNSAFE: Final = re.compile(r"[$`;&|<>]")  # outside single quotes these expand, run or redirect
-SINGLE_QUOTED_SPAN: Final = re.compile(r"\"(?:\\.|[^\"\\])*\"|\\.|'[^']*'")  # double-quoted, escaped or single-quoted
+SINGLE_QUOTED_SPAN: Final = re.compile(r"\"(?:\\.|[^\"\\])*\"|\\.|\$'(?:\\.|[^'\\])*'|'[^']*'")  # double-quoted, escaped, $'...' or single-quoted
 # The same call with a heredoc: its body is the JSON on stdin and never runs (see _heredoc_code).
 INBOX_HEREDOC: Final = re.compile(rf"{_INBOX_HEAD}[^;&|`$<>\n]*?<<-?\s*(['\"]?)(\w+)\1\s*$")
 # The Bash guard (a deterrent, SPEC.md): each command is read word by word as the shell reads it, and the words
@@ -2127,9 +2127,10 @@ def is_read_only_mcp(tool_name: object) -> bool:
     return tool.startswith(READ_ONLY_PREFIXES) and not (set(words) & WRITE_WORDS)
 
 
-def _without_single_quoted(text: str) -> str:
-    """The text without its single-quoted spans: what the shell still expands, runs or redirects."""
-    return SINGLE_QUOTED_SPAN.sub(lambda match: "" if match[0].startswith("'") else match[0], text)
+def _blanked_single_quoted(text: str) -> str:
+    """The text with each single-quoted and $'...' span blanked to underscores of its length, so an index in the copy
+    is the same index in text, and what is left outside the blanks is what the shell still expands, runs or redirects."""
+    return SINGLE_QUOTED_SPAN.sub(lambda match: "_" * len(match[0]) if match[0].startswith(("'", "$'")) else match[0], text)
 
 
 def inbox_call(command: str) -> bool:
@@ -2146,7 +2147,7 @@ def inbox_call(command: str) -> bool:
     tokens = _shell_tokens(tail)
     if tokens is None or any(kind == "op" for kind, _ in tokens):
         return False
-    return INBOX_UNSAFE.search(_without_single_quoted(tail)) is None
+    return INBOX_UNSAFE.search(_blanked_single_quoted(tail)) is None
 
 
 def _exempt_call(tool: object, command: str) -> bool:
@@ -2559,16 +2560,19 @@ def _assignments(words: Sequence[str]) -> dict[str, str]:
 
 def _substitutions(raw: str) -> list[str]:
     """The text of each $(...), `...` and ((...)) in a word: the text is read as a command too (an arithmetic body
-    only runs the substitutions inside it, but a ((a)(b)) of two subshells is one the shell does run)."""
+    only runs the substitutions inside it, but a ((a)(b)) of two subshells is one the shell does run). A single-quoted
+    span outside a unit is data, so the units are found in a copy with those spans blanked, one index for one, and
+    each text is cut from the word itself, quotes included."""
     found: list[str] = []
+    blanked = _blanked_single_quoted(raw)
     pos = 0
-    while pos < len(raw):
+    while pos < len(blanked):
         end = None
-        if raw.startswith("$(", pos) and (end := _paren_end(raw, pos + 1)) is not None:
+        if blanked.startswith("$(", pos) and (end := _paren_end(blanked, pos + 1)) is not None:
             found.append(raw[pos + 2:end - 1])
-        elif (end := _arithmetic_end(raw, pos)) is not None:
+        elif (end := _arithmetic_end(blanked, pos)) is not None:
             found.append(raw[pos + 2:end - 2])
-        elif raw[pos] == "`" and (end := raw.find("`", pos + 1) + 1) > 0:
+        elif blanked[pos] == "`" and (end := blanked.find("`", pos + 1) + 1) > 0:
             found.append(raw[pos + 1:end - 1])
         else:
             end = pos + 1
@@ -2956,7 +2960,7 @@ class _ShellScan:
             self.hinted = STATE_HINT.search(command) is not None
         simple_commands = _simple_commands(tokens, bodies)
         self._record_fed([word for simple in simple_commands for word in simple.words])
-        if not self._prose(simple_commands) and "<<" in command and (
+        if not self._prose(simple_commands) and any(simple.heredoc for simple in simple_commands) and (
                 reason := _code_reason(_heredoc_code(command), sandboxed=False)) is not None:
             return reason  # a heredoc body is code too, except an inbox call's JSON body and git or gh message text
         return self._run_simple_commands(simple_commands)

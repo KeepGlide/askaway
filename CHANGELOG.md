@@ -9,6 +9,7 @@ Commit hashes name the change in `git log`.
 
 ### Fixed
 - The Bash guard's scanner reads the heredoc bodies and here-strings that a `source` or `.` of any fd path runs (`/dev/fd/3`, `/proc/self/fd/3`, `/proc/thread-self/fd/N`, `/proc/<pid>/fd/N`, any number of leading slashes), and the body of an earlier `exec N<<'EOF'` that such a `source` or `.` runs, so an `answer`, `away on` or state-folder line in it is denied by the scanner alone. `. /dev/fd/3 3<<< '...'` with an answer was allowed by the full guard before (issue #16; `FD_PATH`, `_reads_stdin_script`).
+- The Bash guard's scanner allows a backquote or `<<` inside a single-quoted `ask --json '<JSON>'`, such as `askaway.py answer` in backquotes or `<<` next to away, because single-quoted text is data (`_substitutions`, `_ShellScan.text`, [#8](https://github.com/KeepGlide/askaway/issues/8)). An answer or an away switch beside such a span, in double quotes or in a later command, is still denied. The frozen copy still denies both until it is removed ([#2](https://github.com/KeepGlide/askaway/issues/2)).
 
 ## [0.4.0-beta.49] - 2026-10-30
 
