@@ -357,7 +357,7 @@ DIRECTORY_OPTION: Final = re.compile(r"-(?:-|[LPe@]+)")  # cd's own options and 
 DIRECTORY_STACK_INDEX: Final = re.compile(r"[+-]\d+")  # pushd's rotation of the stack: the directory it reaches is unknown
 DIRECTORY_WORD: Final = re.compile(r"\b(?:cd|pushd|popd)\b")
 SOURCE_NAMES: Final = frozenset({"source", "."})  # run in this shell, and the scan cannot read the file they run
-STDIN_PATH: Final = re.compile(r"/+(?:dev/stdin|dev/fd/0|proc/(?:self|thread-self|[0-9]+)/fd/0)")  # stdin as a file
+FD_PATH: Final = re.compile(r"/+(?:dev/stdin|dev/fd/[0-9]+|proc/(?:self|thread-self|[0-9]+)/fd/[0-9]+)")  # an fd as a file
 # (normpath keeps two leading slashes, and //dev/stdin is /dev/stdin)
 CDPATH_VAR: Final = "CDPATH"  # cd searches these folders for a relative operand
 SHELL_VAR_NAMES: Final = frozenset({"declare", "typeset", "readonly"})  # set shell variables; only CDPATH matters to cd
@@ -2611,11 +2611,11 @@ def _reads_stdin_script(simple: _Simple) -> bool:
     """Is this command a shell? With no -c script it reads its script from stdin, and a -c script may start a shell
     that does (sh -c 'bash'), so a heredoc or here-string on the line may be run. A sudo -i or -s with no command
     starts the target user's shell, which reads stdin too. A command word that may expand ($SHELL, ba*sh, $(which
-    bash)) may be a shell, so it counts as one. A source or . of /dev/stdin (or /dev/fd/0, /proc/self/fd/0, or a word
-    that may expand) runs stdin in this shell."""
+    bash)) may be a shell, so it counts as one. A source or . of an fd path (/dev/stdin, /dev/fd/N, /proc/self/fd/N, or
+    a word that may expand) runs the text a heredoc or here-string feeds that fd in this shell, so it counts too."""
     argv = _strip_prefix(simple.words)[1]
     if argv and _command_name(argv) in SOURCE_NAMES:
-        return any(_may_expand(word) or STDIN_PATH.fullmatch(os.path.normpath(_unquote(word))) for word in argv[1:])
+        return any(_may_expand(word) or FD_PATH.fullmatch(os.path.normpath(_unquote(word))) for word in argv[1:])
     if argv and _command_name(argv) in SHELL_NAMES and (scripts := _script_texts(argv)):
         return any(_script_reads_stdin(script) for script in scripts)  # sh -c reads stdin only if its script does
     if argv:

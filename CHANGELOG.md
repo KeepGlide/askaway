@@ -7,6 +7,9 @@ Commit hashes name the change in `git log`.
 
 ## [Unreleased]
 
+### Fixed
+- The Bash guard's scanner reads the heredoc bodies and here-strings that a `source` or `.` of any fd path runs (`/dev/fd/3`, `/proc/self/fd/3`, `/proc/thread-self/fd/N`, `/proc/<pid>/fd/N`, any number of leading slashes), and the body of an earlier `exec N<<'EOF'` that such a `source` or `.` runs, so an `answer`, `away on` or state-folder line in it is denied by the scanner alone. `. /dev/fd/3 3<<< '...'` with an answer was allowed by the full guard before (issue #16; `FD_PATH`, `_reads_stdin_script`).
+
 ## [0.4.0-beta.49] - 2026-10-30
 
 Askaway 0.4.0-beta.49 moves the History's Clear all button to the top of the pane.
