@@ -25,7 +25,6 @@ import {
   leadOf,
   localizedQuestion,
   optionLabelOf,
-  otherApplyKey,
   otherButtonKey,
   otherInputKey,
   otherLetterOf,
@@ -93,7 +92,6 @@ export type PaneActions = {
   jump: (id: string) => void
   typeOther: (id: string, text: string) => void
   keepOther: (id: string, text: string) => void
-  applyOther: (id: string) => void
   back: () => void
   next: () => void
   submit: () => void
@@ -120,8 +118,8 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
   const tree: TreeContext = { ui, lang, view, actions, held }
   const clearCount = clearableIdsOf(view.history).length
   held.begin()
-  // A Button drawn below a block that changes height lost its presses on the desktop (the first click was dropped), so the
-  // History's Clear all sits right under the header, above the tree and the card, where nothing above it moves.
+  // The History's Clear all sits on the History's heading row, under the open questions: it clears the History alone, so it
+  // is not drawn above the questions (renderHistory).
   const pane = (
     <Box flexDirection="column" gap={1}>
       <Box flexDirection="row" justifyContent="space-between">
@@ -134,8 +132,6 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
           {renderKeepGlide(ui, view.surface, 'keepglide-counter', KEEPGLIDE_HEADER_SIZE)}
         </Box>
       </Box>
-      {clearCount > 0 && renderHistoryClear(tree, clearCount)}
-      {clearCount > 0 && renderDivider(ui, view.surface, 'divider-history')}
       {view.groups.length > 0 && renderTree(tree)}
       {view.askWho && view.questions.length > 0 && renderAskWho(ui, lang, actions, held)}
       {view.damagedPauses?.map(id => renderDamagedPause(ui, lang, actions, held, id))}
@@ -143,7 +139,7 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
         (reviewDrawnOf(view, screen)
           ? renderReview(ui, lang, view, actions, screen, held)
           : renderQuestion(ui, lang, view, actions, screen, held))}
-      {view.history.length > 0 && renderHistory(tree, view.history)}
+      {view.history.length > 0 && renderHistory(tree, view.history, clearCount)}
       {view.footer !== undefined && view.questions.length === 0 && renderFooter(ui, view.footer)}
     </Box>
   )
@@ -299,16 +295,19 @@ function renderBranchSession(ui: Ui, session: TreeSession, isFinal: boolean): Re
 }
 
 // The History tree under the card: the answers of the last while, drawn as the open tree is: the heading row with the
-// logo, a blank line, then the same branches.
-function renderHistory(tree: TreeContext, history: readonly HistoryGroup[]): RenderElement {
+// logo and, at its right, Clear all while a row can go, a blank line, then the same branches.
+function renderHistory(tree: TreeContext, history: readonly HistoryGroup[], clearCount: number): RenderElement {
   const { Box, Text } = tree.ui
   // Only the Desktop opens a session from a link: the terminal draws the History's labels plain.
   const linked = tree.view.surface === 'desktop'
   return (
     <Box key="history" flexDirection="column" gap={1}>
-      <Box flexDirection="row" gap={1}>
-        {renderHistoryIcon(tree.ui, tree.view.surface)}
-        <Text bold>{t(tree.lang, 'history.heading')}</Text>
+      <Box flexDirection="row" justifyContent="space-between" alignItems="center">
+        <Box flexDirection="row" gap={1}>
+          {renderHistoryIcon(tree.ui, tree.view.surface)}
+          <Text bold>{t(tree.lang, 'history.heading')}</Text>
+        </Box>
+        {clearCount > 0 && renderHistoryClear(tree, clearCount)}
       </Box>
       <Box flexDirection="column" gap={1}>
         {history.map(group =>
@@ -341,8 +340,8 @@ function renderHistoryEntry(ui: Ui, entry: HistoryEntry, place: RowPlace): Rende
   )
 }
 
-// The Clear button: the last row of the pane, right-aligned, under a divider, drawn as the card's Back button is (a
-// secondary Button). Its press clears every row that can go.
+// The Clear all button: right-aligned on the History's heading row, drawn as the card's Back button is (a secondary
+// Button). Its press clears every row that can go.
 function renderHistoryClear(tree: TreeContext, count: number): RenderElement {
   const { ui, held, lang, actions } = tree
   const { Box, Button } = ui
@@ -692,8 +691,8 @@ function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContex
 
 // "Other…": the last row under the options, a plain link drawn with its letter, "C · Other…" (otherLetterOf; the desktop draws
 // the letter as the hotkey chip). Its field sits on the row under it, under the same "└ " branch glyph the option sub-rows
-// draw, and its Apply button sits under the field. The field is always open, ready to type. Typing keeps the text in the
-// pane's memory (typeOther), with no redraw. Keep (Enter, or the field's Apply button)
+// draw. The field is always open, ready to type. Typing keeps the text in the
+// pane's memory (typeOther), with no redraw. Keep (Enter)
 // moves the text to the link, which then draws "C · <label>", picks it and empties the field; the focus goes to the link.
 // A press on the link with a label picks it, else it only focuses the field. Text typed and not kept is recorded as the
 // pick when the field loses focus or before a nav action. A pick never moves the card. The link is bold once Other is the
@@ -722,12 +721,6 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
     if (kept === undefined) actions.focusOther(question.id)
     else actions.pick(question.id, { key: OTHER_KEY, text: kept })
   }
-  const applyKey = otherApplyKey(question.id)
-  const applyLabel = t(lang, 'input.send')
-  const onApply = () => {
-    if (isDisabled) return
-    actions.applyOther(question.id)
-  }
   return (
     <Box key={`other-row-${question.id}`} flexDirection="column">
       {held.hold(key, [label, isChosen, isLeaving, isMoveLocked, hotkey], onPress, press => (
@@ -745,28 +738,20 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
         </Button>
       ))}
       {/* The branch glyph stays on the field's first row however tall the field grows; the field runs to the pane's edge.
-          Input takes no width: its Box is a column so the field stretches across it, where a row leaves it at its own size. */}
+          Input takes no width: its Box is a column so the field stretches across it, where a row leaves it at its own size.
+          No submitLabel: with one the desktop draws a submit button beside the field and plain Enter types a newline; without
+          it there is no button and Enter keeps the text, as the placeholder says. */}
       {!isLeaving && (
-        <Box flexDirection="column">
-          <Box flexDirection="row" alignItems="flex-start" width="100%" paddingLeft={1}>
-            <Text dimColor={isLeaving}>{BRANCH_PREFIX}</Text>
-            {/* overflow hidden: while the field has focus the engine draws its own submit button past the pane's edge. */}
-            <Box flexDirection="column" alignItems="stretch" flexGrow={1} flexShrink={1} width="100%" overflow="hidden">
-              <Input
-                key={otherInputKey(question.id, wizard.fieldRound)}
-                placeholder={t(lang, 'input.placeholder')}
-                submitLabel={t(lang, 'input.enter')}
-                rows={card.otherRows ?? OTHER_MIN_ROWS}
-                onInput={text => actions.typeOther(question.id, text)}
-                onSubmit={text => actions.keepOther(question.id, text)}
-              />
-            </Box>
-          </Box>
-          {/* Apply sits under the field, at the field's indent: one cell, then the branch glyph's width. */}
-          <Box flexDirection="row" paddingLeft={1 + BRANCH_PREFIX.length}>
-            {held.hold(applyKey, [applyLabel, isDisabled], onApply, press => (
-              <Button key={applyKey} label={applyLabel} variant="secondary" dimColor={isDisabled} onPress={press} />
-            ))}
+        <Box flexDirection="row" alignItems="flex-start" width="100%" paddingLeft={1}>
+          <Text dimColor={isLeaving}>{BRANCH_PREFIX}</Text>
+          <Box flexDirection="column" alignItems="stretch" flexGrow={1} flexShrink={1} width="100%">
+            <Input
+              key={otherInputKey(question.id, wizard.fieldRound)}
+              placeholder={t(lang, 'input.placeholder')}
+              rows={card.otherRows ?? OTHER_MIN_ROWS}
+              onInput={text => actions.typeOther(question.id, text)}
+              onSubmit={text => actions.keepOther(question.id, text)}
+            />
           </Box>
         </Box>
       )}

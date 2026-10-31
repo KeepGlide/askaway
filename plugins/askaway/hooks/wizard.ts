@@ -97,7 +97,7 @@ export function submittable(group: Group, wizard: Wizard): { id: string; pick: P
 // The text of an Other field as it is kept: trimmed, and capped at OTHER_TEXT_MAX code points.
 const otherTextOf = (text: string): string => Array.from(text.trim()).slice(0, OTHER_TEXT_MAX).join('')
 
-// Keep in the Other field (Enter, or its Apply button) moves its text to the question's label, which the Other button then
+// Keep in the Other field (Enter) moves its text to the question's label, which the Other button then
 // draws, and picks that text: the label and the Other pick are the same text, so the button is drawn chosen. The field
 // round moves on, so the field empties. The step stays. Blank text changes nothing.
 export function keptOther(wizard: Wizard, id: string, text: string): Wizard {
@@ -123,7 +123,7 @@ function recordedOther(wizard: Wizard, id: string, text: string): Wizard {
   return { ...wizard, picks }
 }
 
-// Whether submittedOther sets a typed Other text aside instead of recording it: a kept label stays the pick until Apply.
+// Whether submittedOther sets a typed Other text aside instead of recording it: a kept label stays the pick until Enter.
 export const setsTypedOtherAside = (wizard: Wizard, id: string): boolean => wizard.labels[id] !== undefined
 
 // The text typed in an Other field and not kept yet, recorded when the field loses focus or a nav action runs: its trimmed

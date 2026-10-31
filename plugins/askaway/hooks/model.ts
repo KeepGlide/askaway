@@ -846,12 +846,6 @@ export const otherInputKey = (questionId: string, round: number): string =>
 // The key of a question's "Other…" button, which draws the kept label once there is one.
 export const otherButtonKey = (questionId: string): string => `other-${questionId}`
 
-// The key prefix of an Other field's Apply button, the button under the field.
-export const OTHER_APPLY_PREFIX = 'other-apply-'
-
-// The key of a question's Apply button: it keeps the text typed in its Other field, as Enter does.
-export const otherApplyKey = (questionId: string): string => `${OTHER_APPLY_PREFIX}${questionId}`
-
 // The key of the Submit all button: a focus move onto it leaves the pending Other text for the press to record.
 export const SUBMIT_ALL_KEY = 'submit-all'
 

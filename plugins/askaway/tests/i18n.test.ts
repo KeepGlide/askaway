@@ -29,9 +29,9 @@ test('the placeholder check flags a name only the pt-BR message has, and a name 
   expect(placeholderMismatches({ hi: 'Hi {name}' }, { hi: 'Oi {name}' })).toEqual([])
 })
 
-test('the field button reads Apply in English and Aplicar in pt-BR, the word for choosing the typed text (M29b)', () => {
-  expect(t('en', 'input.send')).toBe('Apply')
-  expect(t('pt', 'input.send')).toBe('Aplicar')
+test('the field placeholder says Enter applies the answer, in English and in pt-BR (M29b)', () => {
+  expect(t('en', 'input.placeholder')).toBe('Press Enter to apply the answer.')
+  expect(t('pt', 'input.placeholder')).toBe('Pressione Enter para aplicar a resposta.')
 })
 
 test('the fit hint explains the 0 to 100 scale in both languages, in one line of at most 60 columns (M45)', () => {

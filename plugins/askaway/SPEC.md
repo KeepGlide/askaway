@@ -347,9 +347,11 @@ Brazilian Portuguese, with identical key sets). The model-facing lines are alway
 
 Pane id `askaway`, title "Askaway" (`hooks/pane.tsx`, `hooks/register.tsx`). Colors are in `hooks/look.ts`.
 
-Draw order, top to bottom: header, Clear all button and its divider, tree of the open questions, question card, History,
-footer. Clear all sits right under the header, where no block above it changes height: on the desktop a Button drawn
-below a block that grows lost its presses (the first click was dropped), the same finding as another mod's status list. `hooks/pane.tsx`, `renderPane`.
+Draw order, top to bottom: header, tree of the open questions, question card, History (Clear all on its heading row),
+footer. Clear all clears the History alone, so it sits on the History's heading row, under the open questions, not above
+them (owner's call after 0.4.2). Risk kept in view: on the desktop a Button drawn below a block that grows once lost its
+first click, the same finding as another mod's status list; if that comes back, the fix belongs in the press handling,
+not in moving the button above the questions. `hooks/pane.tsx`, `renderPane`.
 
 - **Header**: the Askaway logo, then "Questions waiting" ("Perguntas aguardando"; `pane.heading`, `hooks/i18n.ts`), with the counter on the right. The logo is the violet
   SVG on the desktop (`hooks/logo.ts`, `#8B5CF6`) and the bold "?" glyph on the terminal
@@ -432,19 +434,19 @@ below a block that grows lost its presses (the first click was dropped), the sam
   - "<L> · Other…", where <L> is the letter after the last option's key ("C · Other…" with options A and B; Portuguese:
     "C · Outra…"; on the Desktop only the hotkey chip shows the letter, see Hotkeys), a plain Button, its text underlined after a dim link mark `▪ ` (`LINK_MARK`), bold while its pick is Other. With a kept label that is the pick, it is the primary button with "✓ " before its label, as a picked option is (`renderOther`, `isKeptChosen`). Its field is on the row under it,
     prefixed with the same "└ " branch glyph the option sub-rows draw (`BRANCH_PREFIX`), indented one cell and hidden
-    while the card fades (it is not drawn then), with no label: its placeholder is the only text. It fills the row to the card's edge (`flexGrow`, and its Box is clipped there by `overflow="hidden"`, as the engine draws its own submit button past the edge while the field has focus) and opens three rows tall (`rows`), growing with the text typed in it, a line longer than 80 characters (about what the field fits at the pane's edge) counting as the rows it wraps to, up to ten rows; past that it scrolls (`otherRowsOf`, `otherRowsAtom`: a key redraws the pane only when it changes the height). The field is always open (no press needed, no
+    while the card fades (it is not drawn then), with no label: its placeholder is the only text. It fills the row to the card's edge (`flexGrow`) and opens three rows tall (`rows`), growing with the text typed in it, a line longer than 80 characters (about what the field fits at the pane's edge) counting as the rows it wraps to, up to ten rows; past that it scrolls (`otherRowsOf`, `otherRowsAtom`: a key redraws the pane only when it changes the height). The field is always open (no press needed, no
     autofocus, so the keys stay with the card until the person clicks in). Pressing the link only focuses that field
     (`$.ui.focus`, key `other-input-<id>`). The field has no `value` prop: it keeps the text the person types, across
     redraws. Each change of the text (the Input's `onInput`, `typeOther`) only keeps it in the pane's memory: no store
     write and no redraw. The text is recorded as the Other pick (`submitOther`, `flow.submittedOther`: trimmed, capped)
     at these points: when the
-    focus ring leaves the field (the `ui.focus` hook passes the move on first, `await next(e)`, and then records: `leavesOtherText`, `leavesOtherField`, `recordPendingOther`, `hooks/register.tsx`; a move onto Submit all or onto the Apply button records nothing, since their press takes the text (`isPressReader`), and a later move off either to anything but an Other field records it);
+    focus ring leaves the field (the `ui.focus` hook passes the move on first, `await next(e)`, and then records: `leavesOtherText`, `leavesOtherField`, `recordPendingOther`, `hooks/register.tsx`; a move onto Submit all records nothing, since its press records the text as the reply, and a later move off Submit all to anything but an Other field records it);
     and before an option pick, the Other link, Next, Back, Submit all, a tree row's Submit and a tree jump (`afterPendingOther`).
     A pending text whose question has left the board is dropped, not recorded; closing the pane (`ui.close`) drops them all. A blank text takes that
     pick away when no label is kept; while a label is kept, a typed text is never recorded by a blur or a nav action and the pick stays as it was (`submittedOther`, `setsTypedOtherAside`, `hooks/wizard.ts`; see Keep below). Enter in the field is Keep, not a record. Until one of those points, the pick, the bold link or chosen button, and the `✓` tree mark stay as they were. The field's
-    submit label is the key hint "Enter" (`input.enter`), and the Apply button under the field (`other-apply-<id>`, `applyOther`; pt "Aplicar") keeps the typed text and picks it, as Enter does; a press on it with an empty field changes nothing. The typed text is not drawn again under the
+    field has no submit label and no button: Enter keeps the typed text and picks it, and the placeholder says so, "Press Enter to apply the answer." (pt "Pressione Enter para aplicar a resposta."). With a submitLabel the desktop draws a submit button beside the field and plain Enter types a newline, so the field passes none (owner's call after 0.4.2). The typed text is not drawn again under the
     link. A surface with no Input draws no Other option (`renderOther`);
-    Keep (Enter in the field, or its Apply button) moves the typed text to the Other button, which then draws
+    Keep (Enter in the field) moves the typed text to the Other button, which then draws
     `<letter> · <text>` like the other options draw their labels, and picks that text at once: the label and the Other
     pick are the same text, so the button is drawn chosen (`keptOther`, `hooks/wizard.ts`; `keepOther`,
     `hooks/register.tsx`). The card stays on its question. The field empties (a new input round, `otherInputKey`) and the
@@ -536,7 +538,7 @@ below a block that grows lost its presses (the first click was dropped), the sam
   time is the `ts` of the delivery marker (`d/<id>.json`); an expired marker carries a ts, which the History line does not show.
   A question's title is never a jump link: an answered question is no longer open, so no card can be jumped to. A row whose question has left the board is titled "Question closed" ("Pergunta encerrada").
   A delivered line stays until Clear all, as a pending, ended or expired line does; no timer removes it (`historyOf`, `hooks/model.ts`).
-- **Clear all** (the row under the header, before a divider, right-aligned; `renderHistoryClear`): a secondary Button, as the card's Back is, labelled "Clear all (N)"
+- **Clear all** (on the History's heading row, right-aligned; `renderHistoryClear`): a secondary Button, as the card's Back is, labelled "Clear all (N)"
   ("Limpar tudo (N)"), where N counts every row drawn now, pending ones included; hidden when N is 0. Its press
   (`clearHistory`, `hooks/register.tsx`) writes those answers' ids to `cleared.json`, shared by every session of the folder: the
   press writes the ids it drew and its own earlier ones, pruned to the answers its board knows, plus every id the file already lists, kept unpruned (a board up to one poll behind may not know an answer another session cleared; the file's ids stay while their reply file is on disk, and an id leaves the list only at a Clear all that finds no reply file for it and no reply on the board), with the write's `ts` (recorded for diagnosis; no reader uses it). Two Clear all presses within the same instant in two sessions keep the later write, as `$.fs` has no atomic rename. Each
