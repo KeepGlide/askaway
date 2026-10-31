@@ -7,6 +7,10 @@ Commit hashes name the change in `git log`.
 
 ## [Unreleased]
 
+### Docs
+
+- The README pair links the product page on keepglide.com from the top navigation line.
+
 ## [0.4.2] - 2026-10-30
 
 ### Changed

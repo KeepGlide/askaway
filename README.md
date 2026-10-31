@@ -10,7 +10,7 @@
 
 [![Version](https://img.shields.io/github/v/tag/KeepGlide/askaway?sort=semver&color=2BB8AE&label=version)](https://github.com/KeepGlide/askaway/tags) [![License: MIT](https://img.shields.io/badge/license-MIT-1E2A47)](LICENSE) [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-1E2A47)](#-prerequisites) [![Python 3.12+](https://img.shields.io/badge/python-%E2%89%A53.12-1E2A47)](#-prerequisites)
 
-[Installation](#-installation) · [Usage](#-usage) · [Changelog](CHANGELOG.md) · [Report a bug](https://github.com/KeepGlide/askaway/issues/new) · [Security](SECURITY.md)
+[🌐 Website](https://keepglide.com/askaway) · [Installation](#-installation) · [Usage](#-usage) · [Changelog](CHANGELOG.md) · [Report a bug](https://github.com/KeepGlide/askaway/issues/new) · [Security](SECURITY.md)
 
 </div>
 
