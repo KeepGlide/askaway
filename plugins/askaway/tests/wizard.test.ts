@@ -34,6 +34,7 @@ function question(id: string, ts: number, session: string | null = 's1', extra: 
     ],
     recommended: 'A',
     risk: 'low',
+    lang: 'en',
     ...extra,
   }
 }

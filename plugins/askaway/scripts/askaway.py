@@ -681,6 +681,8 @@ TOP_TEXT_LIMITS: Final = {"question": QUESTION_MAX, **{name: TEXT_CAPS.get(name,
 TRANSLATION_LANGUAGES: Final = frozenset({"en", "pt-BR"})  # the pane's two languages (SPEC: translations)
 TRANSLATION_TOP_LIMITS: Final = {**TOP_TEXT_LIMITS, "title": TITLE_MAX}
 TRANSLATION_OPTION_LIMITS: Final = dict(OPTION_TEXT)
+TRANSLATED_REQUIRED: Final = ("question", *REQUIRED_TEXT)  # a translation holds all of these, or it is refiled (SPEC: translations)
+TRANSLATED_OPTION_REQUIRED: Final = tuple(name for name, _limit in OPTION_TEXT)  # and each option holds all of these
 
 
 def _clip(text: str, limit: int) -> str:
@@ -815,6 +817,16 @@ def _risk(raw: Mapping[str, Any], gaps: Gaps) -> str | None:
     return risk if isinstance(risk, str) else None
 
 
+def _lang(raw: Mapping[str, Any], gaps: Gaps) -> str | None:
+    """The entry's main language, en or pt-BR; blank counts as missing, any other value is refused."""
+    lang = raw.get("lang")
+    if lang is None or (isinstance(lang, str) and not lang.strip()):
+        gaps.top["lang"] = MISSING
+    elif not isinstance(lang, str) or lang not in TRANSLATION_LANGUAGES:
+        gaps.top["lang"] = f"must be one of {', '.join(sorted(TRANSLATION_LANGUAGES))}"
+    return lang if isinstance(lang, str) else None
+
+
 def _urgency_level(raw: Mapping[str, Any], gaps: Gaps) -> dict[str, str]:
     """The optional urgency grade, stored lower-case; absent when not given or blank, a refile when not a grade."""
     level = raw.get("urgency_level")
@@ -891,7 +903,7 @@ def _translated_text(path: str, name: str, raw: object, limit: int, gaps: Gaps) 
     text, reason = _read_text(name, raw, limit)
     if text is not None and name == "what" and _sentence_count(text) < MIN_SENTENCES:
         reason = f"needs at least {MIN_SENTENCES} sentences"
-    if reason is not None:
+    if reason is not None and reason != MISSING:  # a blank one is named by its language's missing list
         gaps.notes.append(f"{path}: {reason}")
     return text if reason is None else None
 
@@ -930,7 +942,29 @@ def _unset_title(name: str, value: object) -> bool:
     return name == "title" and (value is None or (isinstance(value, str) and not value.strip()))
 
 
+def _missing_names(fields: Mapping[str, object], names: Sequence[str]) -> list[str]:
+    """The names whose text is absent or blank; a refused text has its own note instead."""
+    return [name for name in names if not _clean_text(name, fields.get(name))]
+
+
+def _missing_option_names(raw: Mapping[str, Any], option_keys: list[str]) -> list[str]:
+    """The option gaps of a translation: "options" when it has none, else options.<key>.<field> for each main key.
+    A malformed options object has its own note, so it adds no names here."""
+    if "options" not in raw:
+        return ["options"]
+    raw_options = raw["options"]
+    if not isinstance(raw_options, dict) or not raw_options:
+        return []
+    names: list[str] = []
+    for key in option_keys:
+        fields = raw_options.get(key)
+        names += [f"options.{key}.{name}"
+                  for name in _missing_names(fields if isinstance(fields, dict) else {}, TRANSLATED_OPTION_REQUIRED)]
+    return names
+
+
 def _translated_language(path: str, raw: object, option_keys: list[str], gaps: Gaps) -> dict[str, Any]:
+    """One language of a translation: each refusal is a note, and one note names every field it lacks."""
     if not isinstance(raw, dict) or not raw:
         gaps.notes.append(f"{path}: must be a non-empty object")
         return {}
@@ -940,10 +974,13 @@ def _translated_language(path: str, raw: object, option_keys: list[str], gaps: G
         language["title"] = _clip(language["question"], TITLE_MAX)
     if "options" in raw:
         language["options"] = _translated_options(f"{path}.options", raw["options"], option_keys, gaps)
+    missing = [*_missing_names(raw, TRANSLATED_REQUIRED), *_missing_option_names(raw, option_keys)]
+    if missing:
+        gaps.notes.append(f"{path}: missing {', '.join(missing)}")
     return language
 
 
-def _translations(raw: object, option_keys: list[str], gaps: Gaps) -> dict[str, Any]:
+def _translations(raw: object, option_keys: list[str], lang: str | None, gaps: Gaps) -> dict[str, Any]:
     """The optional translations object (SPEC: translations), each language checked; {} when the entry has none."""
     if raw is None:
         return {}
@@ -954,12 +991,14 @@ def _translations(raw: object, option_keys: list[str], gaps: Gaps) -> dict[str, 
     for language, fields in raw.items():
         if language not in TRANSLATION_LANGUAGES:
             gaps.notes.append(f"translations.{language}: not a language; use en or pt-BR")
+        elif language == lang:
+            gaps.notes.append(f"translations.{language}: the entry is already in {lang}; translate into the other language")
         else:
             cleaned[language] = _translated_language(f"translations.{language}", fields, option_keys, gaps)
     return cleaned
 
 
-ENTRY_FIELDS: Final = frozenset({"question", "title", "risk", "urgency_level", "run_kind", "pause", "options",
+ENTRY_FIELDS: Final = frozenset({"question", "title", "lang", "risk", "urgency_level", "run_kind", "pause", "options",
                                  "recommended", "translations", *REQUIRED_TEXT})
 
 
@@ -977,6 +1016,7 @@ def _unknown_keys(raw: Mapping[str, Any], gaps: Gaps) -> dict[str, Any]:
 
 def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
     gaps = Gaps()
+    lang = _lang(raw, gaps)
     risk = _risk(raw, gaps)
     urgency = _urgency_level(raw, gaps)
     run_kind = _run_kind(raw, origin, gaps)
@@ -984,7 +1024,7 @@ def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
     texts = _top_texts(raw, gaps)
     title = _title(raw, texts["question"], gaps)
     options = _options(raw.get("options"), gaps)
-    translations = _translations(raw.get("translations"), [option["key"] for option in options], gaps)
+    translations = _translations(raw.get("translations"), [option["key"] for option in options], lang, gaps)
     recommended = raw.get("recommended")
     if recommended is None:
         gaps.top["recommended"] = MISSING
@@ -1005,7 +1045,7 @@ def build_entry(raw: Mapping[str, Any], origin: Origin) -> dict[str, Any]:
         "session_title": session_title(origin.session, origin.project, desktop),
         "desktop_session": _local_id(_nonempty(desktop.get("sessionId"))) if desktop else None,
         **_family_fields(desktop),
-        "title": title, "options": options, "recommended": recommended,
+        "title": title, "lang": lang, "options": options, "recommended": recommended,
         **texts,
         "risk": risk, "pause": risk == "high", **urgency,
         "source": origin.source,
@@ -2091,7 +2131,7 @@ def askuser_skeleton(question: Mapping[str, Any]) -> dict[str, Any]:
     return {"title": question.get("header"), "question": question.get("question"),
             "context": question.get("context") or _option_context(keyed),
             "options": keyed, "recommended": _recommended_key(keyed, labels),
-            "what": "", "problem": "", "why": "", "how": "", "gains": "", "losses": "",
+            "lang": "", "what": "", "problem": "", "why": "", "how": "", "gains": "", "losses": "",
             "analogy": "", "urgency": "", "undo": "", "risk": "low"}
 
 

@@ -19,6 +19,10 @@ export type QuestionOption = {
   cons?: string
 }
 
+// The language of a question's agent-written text: `en`, or `pt-BR`. The CLI writes it as `lang`; an entry from before it has
+// none, and this mod reads the language from the text (hooks/model.ts parseQuestion).
+export type QuestionLang = 'en' | 'pt-BR'
+
 // q/<id>.json, as this mod reads it after validation (see hooks/model.ts parseQuestion). An optional text field
 // is undefined when the file leaves it null or blank.
 export type Question = {
@@ -26,6 +30,7 @@ export type Question = {
   ts: number
   title: string
   question: string
+  lang: QuestionLang
   what?: string
   problem?: string
   context?: string
@@ -53,7 +58,8 @@ export type Question = {
   options: QuestionOption[]
   recommended: string
   risk: string
-  // The optional translations of the agent-written text (beta.34), by the pane's language tag; absent when the file has none.
+  // The optional translations of the agent-written text (beta.34), by the pane's language tag; absent when the file has none. A
+  // translation is drawn only when it is complete for its language (hooks/model.ts isCompleteTranslation); a partial one is ignored.
   translations?: QuestionTranslations
 }
 
@@ -69,7 +75,7 @@ export type TranslatedOption = Partial<Pick<QuestionOption, 'label' | 'does' | '
 export type QuestionTranslation = TranslatedFields & { options?: Record<string, TranslatedOption> }
 
 // The pane's two languages by tag (pt is pt-BR, en is en); a key of any other tag is ignored.
-export type QuestionTranslations = Partial<Record<'en' | 'pt-BR', QuestionTranslation>>
+export type QuestionTranslations = Partial<Record<QuestionLang, QuestionTranslation>>
 
 // a/<id>.json: the first writer wins. This mod writes one only through `askaway.py answer` (its create-once link), never
 // directly, and never overwrites one. Legacy key "other" carries its free text in `text`.

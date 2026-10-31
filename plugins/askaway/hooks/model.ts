@@ -7,7 +7,9 @@ import type {
   Delivery,
   DeliveryReason,
   Question,
+  QuestionLang,
   QuestionOption,
+  QuestionTranslation,
   QuestionTranslations,
   TranslatedFields,
   TranslatedOption,
@@ -86,6 +88,9 @@ export function urgencyGradeOf(question: Question): UrgencyGrade {
 const optionalText = (raw: unknown): string | undefined =>
   typeof raw === 'string' && raw.trim() !== '' ? raw : undefined
 
+// Whether a text is set: present and not blank.
+const isFilled = (text: string | undefined): boolean => text !== undefined && text.trim() !== ''
+
 const fitOf = (raw: unknown): number | null =>
   typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 && raw <= 100 ? Math.round(raw) : null
 
@@ -143,7 +148,10 @@ const TRANSLATED_TEXT: readonly (keyof TranslatedFields)[] = [
   'title', 'question', 'what', 'problem', 'context', 'analogy', 'why', 'how', 'gains', 'losses', 'urgency', 'undo',
 ]
 const TRANSLATED_OPTION_TEXT: readonly (keyof TranslatedOption)[] = ['label', 'does', 'pros', 'cons', 'tradeoff']
-const TRANSLATION_TAG: Record<Lang, keyof QuestionTranslations> = { en: 'en', pt: 'pt-BR' }
+// The pane's language tag of each language (the translations' key, the question's `lang`), and the language of each tag.
+const TRANSLATION_TAG: Record<Lang, QuestionLang> = { en: 'en', pt: 'pt-BR' }
+const LANG_OF_TAG: Record<QuestionLang, Lang> = { en: 'en', 'pt-BR': 'pt' }
+const QUESTION_LANGS: readonly QuestionLang[] = ['en', 'pt-BR']
 
 // The non-blank text fields among `fields` of a raw object; a missing, blank or non-string one is left out.
 function textFieldsOf<K extends string>(raw: Record<string, unknown>, fields: readonly K[]): Partial<Record<K, string>> {
@@ -190,6 +198,7 @@ export function parseQuestion(raw: unknown, id: string): Question | undefined {
     ts: Number(raw.ts),
     title: String(raw.title),
     question: String(raw.question),
+    lang: questionLangOf(raw.lang, `${String(raw.question)} ${typeof raw.what === 'string' ? raw.what : ''}`),
     what: optionalText(raw.what),
     problem: optionalText(raw.problem),
     context: optionalText(raw.context),
@@ -430,6 +439,25 @@ const MINOR_WORDS: Readonly<Record<Lang, ReadonlySet<string>>> = {
   pt: new Set('a as o os e de da das do dos em na nas no nos para por com ou um uma'.split(' ')),
 }
 
+// The words that mark a text's language, per language: common function words the other language does not use as words
+// ("do", "no" and "a" are English as much as Portuguese, so neither set holds them).
+const LANG_WORDS: Readonly<Record<Lang, ReadonlySet<string>>> = {
+  en: new Set('the and of to in is are be for with this that it on or what which should we you'.split(' ')),
+  pt: new Set('o os e de da das dos em na nas nos para por com ou um uma que não é se ao está são qual como'.split(' ')),
+}
+
+// The language of a question's text, read from its marker words: the language with more of them wins; no marker word either
+// way, or a tie, reads as English. It is the fallback for an entry that names no `lang` (one written before the field existed).
+function detectedLangOf(text: string): QuestionLang {
+  const words = text.toLowerCase().split(/[^\p{L}]+/u)
+  const ptHits = words.filter(word => LANG_WORDS.pt.has(word)).length
+  const enHits = words.filter(word => LANG_WORDS.en.has(word)).length
+  return ptHits > enHits ? 'pt-BR' : 'en'
+}
+
+// The `lang` the file names when it is one of the two; else the language detected from the question's text.
+const questionLangOf = (raw: unknown, text: string): QuestionLang => QUESTION_LANGS.find(tag => tag === raw) ?? detectedLangOf(text)
+
 // Title case for a name: each word's first letter up, except a minor word after the first and a word that already
 // has a capital (JEV, iOS), which stay as typed. Nothing is ever lowercased.
 export function titleCase(text: string, lang: Lang): string {
@@ -540,12 +568,36 @@ function answerStatusOf(answer: Answer, delivery: Delivery | undefined, now: num
 
 const padTwoDigits = (value: number): string => String(value).padStart(2, '0')
 
-// The question as the pane draws it in `lang` (beta.34): the current language's translated fields replace the main ones, per
-// field and per option, and a field the translation leaves out keeps its main text. A question with no translation for `lang`
-// is returned as it is. Every draw of question text uses it; the model-facing deliveryLine never does.
+// A translation covers its question when it has every text the question sets: each text field, and for each option its label,
+// does, pros, cons and tradeoff where the option sets them. A partial translation covers none of it, so it is never drawn.
+function isCompleteTranslation(question: Question, translation: QuestionTranslation | undefined): translation is QuestionTranslation {
+  if (translation === undefined) return false
+  const part: QuestionTranslation = translation
+  const translatedOptions = part.options ?? {}
+  const isFieldsCovered = TRANSLATED_TEXT.every(field => field === 'title' || !isFilled(question[field]) || isFilled(part[field]))
+  return (
+    isFieldsCovered &&
+    question.options.every(option => {
+      const translated: TranslatedOption = translatedOptions[option.key] ?? {}
+      return TRANSLATED_OPTION_TEXT.every(field => !isFilled(option[field]) || isFilled(translated[field]))
+    })
+  )
+}
+
+// The language the card of a question is drawn in, end to end: the pane's when the question is in that language or has a complete
+// translation into it, else the question's own language. Every label of the card and every question text on it follows this one.
+export function cardLangOf(question: Question, lang: Lang): Lang {
+  const tag = TRANSLATION_TAG[lang]
+  return question.lang === tag || isCompleteTranslation(question, question.translations?.[tag]) ? lang : LANG_OF_TAG[question.lang]
+}
+
+// The question as its card draws it in `lang`, the card language (cardLangOf): the question itself when it is in `lang`, the
+// translation overlaid per field and per option when it is complete for `lang`, else the question unchanged (a partial
+// translation is ignored). Every draw of question text uses it; the model-facing deliveryLine never does.
 export function localizedQuestion(question: Question, lang: Lang): Question {
-  const translation = question.translations?.[TRANSLATION_TAG[lang]]
-  if (translation === undefined) return question
+  const tag = TRANSLATION_TAG[lang]
+  const translation = question.translations?.[tag]
+  if (question.lang === tag || !isCompleteTranslation(question, translation)) return question
   const { options: translatedOptions = {}, ...fields } = translation
   return {
     ...question,
@@ -613,16 +665,18 @@ export function optionLabelOf(lang: Lang, option: QuestionOption): string {
   return label === '' && line !== '' ? recommendedMarkOf(lang) : label
 }
 
-// The answer as its History row and footer name it: the label of the option it chose, in the pane's language; an Other reply
+// The answer as its History row and footer name it: the label of the option it chose, in the question's card language
+// (cardLangOf; the pane's `lang` when the question is gone); an Other reply
 // its whole typed text, in typographic quotes so it is told apart from an option label, or the Other label when it has none.
 // A key the question no longer lists (its question is gone) is drawn as its letter.
 export function answerNameOf(lang: Lang, answer: { key: string; text?: string }, question: Question | undefined): string {
+  const drawnLang = question === undefined ? lang : cardLangOf(question, lang)
   if (answer.key === OTHER_KEY) {
     const text = otherTextOf(answer)
-    return text === undefined ? t(lang, 'option.other') : `“${text}”`
+    return text === undefined ? t(drawnLang, 'option.other') : `“${text}”`
   }
   const option = question === undefined ? undefined : localizedQuestion(question, lang).options.find(one => one.key === answer.key)
-  return option === undefined ? answer.key.toUpperCase() : optionLabelOf(lang, option)
+  return option === undefined ? answer.key.toUpperCase() : optionLabelOf(drawnLang, option)
 }
 
 // Who answered, when it was not the person: the agent itself, or the name a CLI answer carries (ANSWER_WORDING).

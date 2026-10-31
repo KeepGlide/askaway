@@ -19,6 +19,7 @@ OTHER_SESSION = "sess-race-other"
 WRITERS = 20
 ENTRY = {
     "title": "Race cache",
+    "lang": "en",
     "question": "Which cache should the service use?",
     "options": [
         {"key": "A", "label": "Redis", "tradeoff": "one more service to run", "fit": 88,

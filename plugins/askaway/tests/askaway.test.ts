@@ -5,6 +5,7 @@ import {
   ANSWER_TTL_MS,
   EMPTY_BOARD,
   ageLabel,
+  answerNameOf,
   counterText,
   deliveryLine,
   escapeMarkdown,
@@ -16,6 +17,7 @@ import {
   leavesOtherField,
   listText,
   localizedQuestion,
+  cardLangOf,
   optionLabelOf,
   parseAnswer,
   parseDelivery,
@@ -155,6 +157,19 @@ type Holds = {
   listStdout?: string
 }
 
+// A question fixture that names no `lang` is written in the language the test's pane reads in (pt-BR when LANG says pt, else
+// English), so a card draws in the pane's language as it did before the card language existed. A fixture that names its
+// own `lang`, or a file that is not JSON, is returned as it is.
+function withFixtureLang(text: string, paneLocale: string): string {
+  try {
+    const raw: unknown = JSON.parse(text)
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw) || 'lang' in raw) return text
+    return JSON.stringify({ ...raw, lang: paneLocale.startsWith('pt') ? 'pt-BR' : 'en' })
+  } catch {
+    return text
+  }
+}
+
 // The engine's file calls, answered from an in-memory folder. A read of a missing file rejects, as the host does.
 // The listing of the answer folder is taken as the disk stands at the call, then the host waits for its hold,
 // so a poll can read the folder before a press lands and apply its board after it. The language comes from the
@@ -188,7 +203,8 @@ function stubHost(
   // The Desktop config cache belongs to one host: a test starts with none, so no test reads another test's config.
   resetDesktopConfigCache()
   const clock = mock.clock(on)
-  mock.env(on, { HOME, LANG: 'pt_BR.UTF-8', ...env })
+  const environment = { HOME, LANG: 'pt_BR.UTF-8', ...env }
+  mock.env(on, environment)
   mock.store(on, stored)
   on('command.register', (_$, event) => {
     registrations.push({ name: event.name, description: event.description })
@@ -240,7 +256,7 @@ function stubHost(
     }
     const text = files.get(e.path)
     if (text === undefined) throw new Error(`ENOENT: ${e.path}`)
-    return { value: text }
+    return { value: e.path.startsWith(`${STATE}/q/`) ? withFixtureLang(text, environment.LANG) : text }
   })
   // A folder exists when a file lies under it, as on disk.
   on('fs.exists', (_$, e) => ({ value: files.has(e.path) || [...files.keys()].some(file => file.startsWith(`${e.path}/`)) }))
@@ -413,6 +429,30 @@ const parsedQuestion = (id: string, ts: number, extra: Record<string, unknown> =
   if (parsed === undefined) throw new Error(`fixture ${id} did not parse`)
   return parsed
 }
+// A complete pt-BR translation of what `question()` writes (title, question, why, and each option's label and tradeoff): a card
+// draws a translation only when it is complete, so a test of a translated card builds on this and changes the fields it checks.
+const ptTranslation = (fields: Record<string, unknown> = {}, options: Record<string, Record<string, unknown>> = {}) => ({
+  title: 'Título',
+  question: 'Qual caminho?',
+  why: 'É menor.',
+  ...fields,
+  options: { ...options, A: { label: 'Manter', tradeoff: 'barato', ...options.A }, B: { label: 'Reescrever', tradeoff: 'lento', ...options.B } },
+})
+// The English counterpart of ptTranslation, for a card whose main text is Portuguese (`lang: 'pt-BR'`).
+// An English entry whose pt-BR translation carries the same option labels, so a test of marker handling reads the same labels
+// in both pane languages: `fields` for question(), with its options.
+const bothLangs = (options: { key: string; label: string }[]) => ({
+  lang: 'en',
+  options,
+  translations: { 'pt-BR': ptTranslation({}, Object.fromEntries(options.map(option => [option.key, { label: option.label }]))) },
+})
+const enTranslation = (fields: Record<string, unknown> = {}, options: Record<string, Record<string, unknown>> = {}) => ({
+  title: 'Title',
+  question: 'Which way?',
+  why: 'It is smaller.',
+  ...fields,
+  options: { ...options, A: { label: 'Keep', tradeoff: 'cheap', ...options.A }, B: { label: 'Rewrite', tradeoff: 'slow', ...options.B } },
+})
 const answerOf = (id: string, key: string, ts: number, text?: string): Answer => ({ id, key, by: 'panel', ts, text })
 const NO_STATUS = { cleared: [], now: 0, leaving: {} } as const
 
@@ -660,7 +700,10 @@ test('model: the Other answer names its typed text; an agent or a named CLI answ
 test('model: a History row names the option label in English and Portuguese, an Other reply its whole text, and a reply with no text the Other label', () => {
   const typed = 'Use a fork of the sync client, keep the offline cache, and tell the team in the weekly standup before merging it'
   const board: Board = {
-    questions: [parsedQuestion('q-h2-000001', 10, { title: 'Pick the queue' }), parsedQuestion('q-h2-000002', 20, { title: 'Second' })],
+    questions: [
+      parsedQuestion('q-h2-000001', 10, { title: 'Pick the queue', translations: { 'pt-BR': ptTranslation() } }),
+      parsedQuestion('q-h2-000002', 20, { title: 'Second', translations: { 'pt-BR': ptTranslation() } }),
+    ],
     answers: [answerOf('q-h2-000001', 'B', localMs(10, 17, 14, 32)), answerOf('q-h2-000002', 'other', localMs(10, 17, 14, 33), typed)],
     delivered: [{ id: 'q-h2-000001', expired: false, ts: localMs(10, 17, 14, 33) }],
   }
@@ -673,7 +716,7 @@ test('model: a History row names the option label in English and Portuguese, an 
   const en = entriesOf('en', board)
   expect(en['q-h2-000001']).toEqual({ id: 'q-h2-000001', title: 'Pick the queue', line: 'Rewrite · sent 14:32 · delivered 14:33 (read by the session)' })
   expect(en['q-h2-000002']?.line).toBe(`“${typed}” · sent 14:33`)
-  expect(entriesOf('pt', board)['q-h2-000001']?.line).toBe('Rewrite · enviada 14:32 · entregue 14:33 (lida pela sessão)')
+  expect(entriesOf('pt', board)['q-h2-000001']?.line).toBe('Reescrever · enviada 14:32 · entregue 14:33 (lida pela sessão)')
   const blank: Board = { questions: board.questions, answers: [answerOf('q-h2-000002', 'other', localMs(10, 17, 14, 33))], delivered: [] }
   expect(entriesOf('en', blank)['q-h2-000002']?.line).toBe('Other… · sent 14:33')
   expect(entriesOf('pt', blank)['q-h2-000002']?.line).toBe('Outra… · enviada 14:33')
@@ -783,12 +826,12 @@ test('model: the footer reads the counts and the last answer in English and Port
 
 test('model: the footer names the last answer by its title in each language, the pt-BR title in Portuguese and the main one in English', () => {
   const board: Board = {
-    questions: [parsedQuestion('q-f-000001', 1, { title: 'Pick the queue', translations: { 'pt-BR': { title: 'Escolha a fila' } } })],
+    questions: [parsedQuestion('q-f-000001', 1, { title: 'Pick the queue', translations: { 'pt-BR': ptTranslation({ title: 'Escolha a fila' }) } })],
     answers: [answerOf('q-f-000001', 'A', FOOT_DAY - 12 * FOOT_MIN)],
     delivered: [{ id: 'q-f-000001', expired: false }],
   }
   expect(footerText('en', board, FOOT_DAY)).toBe('1 answered in the last 24 h · last: Pick the queue → Keep, 12 min ago')
-  expect(footerText('pt', board, FOOT_DAY)).toBe('1 respondida nas últimas 24 h · última: Escolha a fila → Keep, há 12 min')
+  expect(footerText('pt', board, FOOT_DAY)).toBe('1 respondida nas últimas 24 h · última: Escolha a fila → Manter, há 12 min')
 })
 
 test('model: the footer reads the zero and the singular forms in both languages', () => {
@@ -950,7 +993,8 @@ test('model: a translations value that is not an object reads as none, and the q
 test('model: localizedQuestion overlays the language per field and per option, and a question with no translation for it is returned as it is', () => {
   const translated = parsedQuestion('q-t-000005', 10, {
     question: 'Onde?',
-    translations: { en: { title: 'Cache', question: 'Where?', options: { A: { label: 'Disk' } } } },
+    lang: 'pt-BR',
+    translations: { en: { title: 'Cache', question: 'Where?', why: 'Smaller.', options: { A: { label: 'Disk', tradeoff: 'cheap' }, B: { label: 'Rewrite', tradeoff: 'slow' } } } },
   })
   const english = localizedQuestion(translated, 'en')
   expect(english.title).toBe('Cache')
@@ -963,6 +1007,42 @@ test('model: localizedQuestion overlays the language per field and per option, a
   expect(localizedQuestion(plain, 'en')).toBe(plain)
 })
 
+test('model: localizedQuestion is all or nothing: a partial translation is ignored whole, and one into the entry\'s own language is not applied', () => {
+  const partialTitle = parsedQuestion('q-t-000020', 10, { translations: { 'pt-BR': { title: 'Cache' } } })
+  expect(localizedQuestion(partialTitle, 'pt')).toBe(partialTitle)
+  const noOptions = parsedQuestion('q-t-000021', 10, { translations: { 'pt-BR': { title: 'T', question: 'Q', why: 'W' } } })
+  expect(localizedQuestion(noOptions, 'pt')).toBe(noOptions)
+  const missingTradeoff = parsedQuestion('q-t-000022', 10, { translations: { 'pt-BR': ptTranslation({}, { B: { tradeoff: '' } }) } })
+  expect(localizedQuestion(missingTradeoff, 'pt')).toBe(missingTradeoff)
+  const complete = parsedQuestion('q-t-000023', 10, { translations: { 'pt-BR': ptTranslation() } })
+  expect(localizedQuestion(complete, 'pt').title).toBe('Título')
+  const own = parsedQuestion('q-t-000024', 10, { lang: 'pt-BR', translations: { 'pt-BR': ptTranslation({ title: 'Outro' }) } })
+  expect(localizedQuestion(own, 'pt')).toBe(own)
+})
+
+test('model: parseQuestion takes lang when it is en or pt-BR, else detects it from the question text', () => {
+  expect(parsedQuestion('q-t-000030', 1, { lang: 'pt-BR' }).lang).toBe('pt-BR')
+  expect(parsedQuestion('q-t-000031', 1, { lang: 'en', question: 'Qual o caminho para a fila?' }).lang).toBe('en')
+  expect(parsedQuestion('q-t-000032', 1, { question: 'Qual o caminho para a fila de entrada?' }).lang).toBe('pt-BR')
+  expect(parsedQuestion('q-t-000033', 1, { lang: 'fr', question: 'Qual o caminho para a fila de entrada?' }).lang).toBe('pt-BR')
+  expect(parsedQuestion('q-t-000034', 1, { question: 'Which way for the queue of the team?' }).lang).toBe('en')
+  expect(parsedQuestion('q-t-000035', 1, { question: 'Queue?' }).lang).toBe('en')
+  // "do" and "no" are English words too, so they mark no language.
+  expect(parsedQuestion('q-t-000036', 1, { question: 'Do we keep cache?' }).lang).toBe('en')
+  expect(parsedQuestion('q-t-000037', 1, { question: 'Is there no cache?' }).lang).toBe('en')
+})
+
+test('model: cardLangOf is the pane language when the entry is in it or has a complete translation into it, else the entry\'s own', () => {
+  const english = parsedQuestion('q-t-000040', 1)
+  expect(cardLangOf(english, 'en')).toBe('en')
+  expect(cardLangOf(english, 'pt')).toBe('en')
+  const portuguese = parsedQuestion('q-t-000041', 1, { lang: 'pt-BR' })
+  expect(cardLangOf(portuguese, 'pt')).toBe('pt')
+  expect(cardLangOf(portuguese, 'en')).toBe('pt')
+  expect(cardLangOf(parsedQuestion('q-t-000042', 1, { translations: { 'pt-BR': ptTranslation() } }), 'pt')).toBe('pt')
+  expect(cardLangOf(parsedQuestion('q-t-000043', 1, { translations: { 'pt-BR': { title: 'Cache' } } }), 'pt')).toBe('en')
+})
+
 test('model: the delivery line of a translated question is the untranslated one, in every language', () => {
   const translated = parsedQuestion('q-t-000007', 10, { translations: { en: { title: 'Cache', options: { A: { label: 'Disk' } } } } })
   const plain = parsedQuestion('q-t-000007', 10)
@@ -973,7 +1053,10 @@ test('model: the delivery line of a translated question is the untranslated one,
 })
 
 test('model: the text list and the history rows draw the translated title in the language that is open', () => {
-  const translatedQuestion = parsedQuestion('q-t-000008', 10, { translations: { en: { title: 'Cache' } } })
+  const translatedQuestion = parsedQuestion('q-t-000008', 10, {
+    lang: 'pt-BR',
+    translations: { en: { title: 'Cache', question: 'Where?', why: 'Smaller.', options: { A: { label: 'Disk', tradeoff: 'cheap' }, B: { label: 'Rewrite', tradeoff: 'slow' } } } },
+  })
   expect(listText('en', [translatedQuestion], false)).toContain('Cache')
   expect(listText('pt', [translatedQuestion], false)).toContain('Title q-t-000008')
   const board = { ...EMPTY_BOARD, questions: [translatedQuestion], answers: [answerOf(translatedQuestion.id, 'A', 5)] }
@@ -2396,14 +2479,16 @@ test('the new-question toast reads the title in the current language: the pt-BR 
   await clock.advance(5000)
   files.set(path('q', 'q-l5-eeeeee'), question('q-l5-eeeeee', 3000, {
     title: 'Pick a parser',
-    translations: { 'pt-BR': { title: 'Escolha um parser' } },
+    lang: 'en',
+    translations: { 'pt-BR': ptTranslation({ title: 'Escolha um parser' }) },
   }))
   await clock.advance(5000)
   expect(toasts).toEqual(['Nova pergunta: Escolha um parser'])
   await run($, 'lang en')
   files.set(path('q', 'q-l6-ffffff'), question('q-l6-ffffff', 5000, {
     title: 'Escolha uma fila',
-    translations: { en: { title: 'Pick a queue' } },
+    lang: 'pt-BR',
+    translations: { en: enTranslation({ title: 'Pick a queue' }) },
   }))
   await clock.advance(5000)
   expect(toasts).toEqual(['Nova pergunta: Escolha um parser', 'New question: Pick a queue'])
@@ -2496,7 +2581,11 @@ test('/askaway opens the pane, or answers the text list when the pane waits undr
 })
 
 test('/askaway lang en draws the open card in English on the very next draw, with no new question and no poll', async ($, on) => {
-  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { desktop_session: 'local_abc', analogy: 'A ring road' })]])
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, {
+    desktop_session: 'local_abc',
+    analogy: 'Uma avenida',
+    translations: { en: enTranslation({ analogy: 'A ring road' }) },
+  })]])
   stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($, 'desktop')
@@ -2513,7 +2602,9 @@ test('/askaway lang en draws the open card in English on the very next draw, wit
 
 // beta.34: a pt-BR card whose question carries an en translation (the agent wrote the main text in Portuguese).
 const TRANSLATED_CACHE = {
+  lang: 'pt-BR',
   title: 'Cache',
+  why: 'É menor.',
   question: 'Onde guardar o cache?',
   what: 'O cache guarda as respostas.',
   analogy: 'Um atalho',
@@ -2527,6 +2618,7 @@ const TRANSLATED_CACHE = {
       question: 'Where should the cache live?',
       what: 'The cache keeps the answers.',
       analogy: 'A shortcut',
+      why: 'It is smaller.',
       options: {
         A: { label: 'JSONL file', tradeoff: 'simple', does: 'Keeps it in a file', pros: 'Easy', cons: 'Slow' },
         B: { label: 'SQLite file', tradeoff: 'heavy' },
@@ -2561,7 +2653,7 @@ test('/askaway lang en draws a translated card in English on the very next draw,
 test('a pt-BR translation is read and drawn: the main text is English, and /askaway lang pt-BR draws the Portuguese card', async ($, on) => {
   const files = new Map([[path('q', 'q-t-000014'), question('q-t-000014', 1000, {
     translations: {
-      'pt-BR': { title: 'Cache em disco', question: 'Onde guardar o cache?', options: { A: { label: 'Manter', does: 'Mantém como está' } } },
+      'pt-BR': ptTranslation({ title: 'Cache em disco', question: 'Onde guardar o cache?' }, { A: { does: 'Mantém como está' } }),
     },
   })]])
   stubHost(on, files, true, {}, {}, { LANG: 'en_US.UTF-8' })
@@ -2589,7 +2681,7 @@ test('a question with no translations draws its own text in every language', asy
   await pane.unmount()
 })
 
-test('a partial translation falls back per field and per option to the main text', async ($, on) => {
+test('a partial translation is ignored whole: the card keeps its main text in every field and option', async ($, on) => {
   const files = new Map([[path('q', 'q-t-000012'), question('q-t-000012', 1000, {
     title: 'Cache',
     question: 'Onde?',
@@ -2605,12 +2697,16 @@ test('a partial translation falls back per field and per option to the main text
   const pane = await mountPane($, 'terminal')
   await run($, 'lang en')
   const drawn = JSON.stringify(await pane.drawn())
-  expect(drawn).toContain('Where?')
+  expect(drawn).toContain('Onde?')
   expect(drawn).toContain('Texto principal.')
   expect(drawn).toContain('Manter')
-  expect(drawn).toContain('Rewrite it')
-  expect(drawn).not.toContain('Onde?')
-  expect(drawn).not.toContain('Reescrever')
+  expect(drawn).toContain('Reescrever')
+  expect(drawn).not.toContain('Where?')
+  expect(drawn).not.toContain('Rewrite it')
+  // The card keeps its own language end to end: its labels are Portuguese too, while the header follows the pane.
+  expect(drawn).toContain('Enviar tudo')
+  expect(drawn).toContain('Outra…')
+  expect(drawn).toContain('1 pending · 1 group')
   await pane.unmount()
 })
 
@@ -2630,7 +2726,7 @@ test('a malformed translations value is ignored and the card still draws in its 
 })
 
 test('/askaway lang en switches the pane to English at once, and the choice is kept in the store', async ($, on) => {
-  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { translations: { en: enTranslation() } })]])
   const { clock } = stubHost(on, files)
   await $.session.start(SESSION)
   const answered = await run($, 'lang en')
@@ -2662,7 +2758,7 @@ test('Gauntlet M69: /askaway lang re-registers /askaway with the new description
 })
 
 test('/askaway lang pt then the pane reads in pt-BR, even when the environment says English', async ($, on) => {
-  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { translations: { 'pt-BR': ptTranslation() } })]])
   stubHost(on, files, true, {}, {}, { LANG: 'en_US.UTF-8' })
   await $.session.start(SESSION)
   expect((await run($, 'lang pt-BR')).text).toBe('O idioma do Askaway agora é Português.')
@@ -2949,6 +3045,20 @@ test('blank Other… text typed after a recorded Other pick leaves the kept labe
   expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
   expect(JSON.stringify(await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).toContain('Use a fork')
   await pane.unmount()
+})
+
+test('on the desktop the unpicked Other link is not plain, so its letter cue sits at the end as the options do; the terminal keeps the plain link', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  for (const surface of SURFACES) {
+    const pane = await mountPane($, surface)
+    const link = await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' })
+    expect(link?.props.hotkey).toBe('c')
+    expect(link?.props.plain).toBe(surface === 'desktop' ? undefined : true)
+    expect(link?.props.variant).toBe('secondary')
+    await pane.unmount()
+  }
 })
 
 test('a kept label drawn chosen is the primary button with a ✓ mark and bold, as a picked option is; unpicked it stays a plain link (M29b)', async ($, on) => {
@@ -4430,7 +4540,8 @@ test('a tree row reads its title in the current language: the pt-BR title in Por
       session: 's1',
       session_title: 'monta a consulta',
       title: 'Store cache',
-      translations: { 'pt-BR': { title: 'Cache em disco' } },
+      lang: 'en',
+      translations: { 'pt-BR': ptTranslation({ title: 'Cache em disco' }) },
     })],
   ])
   stubHost(on, files)
@@ -7505,7 +7616,7 @@ test('beta.35 review M40: an option label with a line break is drawn on one line
 test('beta.35 review M07: a History row and the footer name the option label of the pane language, from its translation', () => {
   const translated = parsedQuestion('q-n4-000011', 10, {
     title: 'Pick the queue',
-    translations: { 'pt-BR': { options: { A: { label: 'Manter' } } } },
+    translations: { 'pt-BR': ptTranslation({ title: 'Pick the queue' }) },
   })
   const at = localMs(10, 17, 14, 32)
   const board: Board = { questions: [translated], answers: [answerOf('q-n4-000011', 'A', at)], delivered: [] }
@@ -7683,7 +7794,7 @@ test('gauntlet 7 own-1: the recommended option says its mark once in pt and en, 
     { key: 'B', label: 'Rewrite (Recommended) (Recommended)' },
     { key: 'C', label: 'Drop - Recomendado' },
   ]
-  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { options, recommended: 'B' })]])
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { ...bothLangs(options), recommended: 'B' })]])
   stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
@@ -7696,9 +7807,9 @@ test('gauntlet 7 own-1: the recommended option says its mark once in pt and en, 
 })
 
 test('gauntlet 7 own-1: a pt translation label that carries the marker draws it once', async ($, on) => {
-  const translations = { 'pt-BR': { options: { A: { label: 'Manter (Recomendada)' }, B: { label: 'Reescrever' } } } }
+  const translations = { 'pt-BR': ptTranslation({}, { A: { label: 'Manter (Recomendada)' }, B: { label: 'Reescrever' } }) }
   const options = [{ key: 'A', label: 'Keep (Recommended)' }, { key: 'B', label: 'Rewrite' }]
-  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { translations, options })]])
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { lang: 'en', translations, options })]])
   stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
@@ -8040,7 +8151,7 @@ test('gauntlet 7 review F7: a marker at the start of a label is drawn once on th
     { key: 'B', label: '(Recommended) Rewrite' },
     { key: 'C', label: 'Recommended settings' },
   ]
-  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { options, recommended: 'B' })]])
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { ...bothLangs(options), recommended: 'B' })]])
   stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
@@ -8055,7 +8166,7 @@ test('gauntlet 7 review F7: a marker at the start of a label is drawn once on th
 
 test('gauntlet 7 review F7: an old stored label that is only a marker draws the mark once on the button, with no double space, in pt and en', async ($, on) => {
   const options = [{ key: 'A', label: '(Recommended)' }, { key: 'B', label: 'Rewrite' }]
-  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { options, recommended: 'A' })]])
+  const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { ...bothLangs(options), recommended: 'A' })]])
   stubHost(on, files)
   await $.session.start(SESSION)
   const pane = await mountPane($)
@@ -8081,9 +8192,10 @@ test('gauntlet 7 review F7 model: History and the footer name a label marked at 
     expect(footerText(lang, boardOf('A'), now)).not.toMatch(/Recomendada|Recommended/)
   }
   expect(lineOf('en', 'B').startsWith('(Recommended) · ')).toBe(true)
-  expect(lineOf('pt', 'B').startsWith('(Recomendada) · ')).toBe(true)
+  // The entry is English with no pt-BR translation, so its card is English in a pt pane: the only-marker label is its English mark.
+  expect(lineOf('pt', 'B').startsWith('(Recommended) · ')).toBe(true)
   expect(footerText('en', boardOf('B'), now)).toMatch(/ → \(Recommended\), /)
-  expect(footerText('pt', boardOf('B'), now)).toMatch(/ → \(Recomendada\), /)
+  expect(footerText('pt', boardOf('B'), now)).toMatch(/ → \(Recommended\), /)
 })
 
 test('gauntlet 7 review F8: a list --open run that keeps failing the same way is logged once, cut to 500 characters, and again once a run succeeds', async ($, on) => {
@@ -8113,4 +8225,78 @@ test('gauntlet 7 review F8: a list --open run that keeps failing the same way is
   stderr = 'askaway: state folder unreadable\n'
   await clock.advance(5000)
   expect(logs).toEqual([cut, cut, 'askaway: askaway list --open failed (exit 2): askaway: state folder unreadable'])
+})
+
+// The card language (cardLangOf): a card is drawn in one language end to end, while the pane chrome keeps the pane's.
+const PT_ENTRY = {
+  lang: 'pt-BR',
+  question: 'Qual caminho para a fila?',
+  options: [
+    { key: 'A', label: 'Manter', tradeoff: 'barato', fit: 80 },
+    { key: 'B', label: 'Reescrever', tradeoff: 'lento', fit: 40 },
+  ],
+}
+
+for (const surface of SURFACES) {
+  test(`a pt-BR card with no translation in an English pane draws every card label in Portuguese and the header in English (${surface})`, async ($, on) => {
+    const files = new Map([
+      [path('q', 'q-c1-aaaaaa'), question('q-c1-aaaaaa', 1000, PT_ENTRY)],
+      [path('q', 'q-c2-bbbbbb'), question('q-c2-bbbbbb', 2000, PT_ENTRY)],
+    ])
+    stubHost(on, files, true, {}, {}, { LANG: 'en_US.UTF-8' })
+    await $.session.start(SESSION)
+    const pane = await mountPane($, surface)
+    const drawn = JSON.stringify(await pane.drawn())
+    for (const word of ['Próxima', 'Recomendada', 'Outra…', 'Pressione Enter para aplicar a resposta.', 'Sem resposta']) {
+      expect(drawn).toContain(word)
+    }
+    expect(drawn).toContain('Qual caminho para a fila?')
+    expect(drawn).toContain('Questions waiting')
+    expect(drawn).not.toContain('Press Enter to apply the answer.')
+    expect(drawn).not.toContain('(Recommended)')
+    expect(drawn).not.toContain('Next →')
+    await pane.unmount()
+  })
+}
+
+test('an English card with a complete pt-BR translation in a Portuguese pane draws fully in Portuguese, and in English once the pane is English', async ($, on) => {
+  const files = new Map([[path('q', 'q-c3-cccccc'), question('q-c3-cccccc', 1000, { lang: 'en', translations: { 'pt-BR': ptTranslation() } })]])
+  stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($, 'desktop')
+  const portuguese = JSON.stringify(await pane.drawn())
+  for (const word of ['Qual caminho?', 'Manter', 'Reescrever', 'Outra…', 'Pressione Enter para aplicar a resposta.', 'Enviar tudo', 'Perguntas aguardando']) {
+    expect(portuguese).toContain(word)
+  }
+  expect(portuguese).not.toContain('Which way for')
+  await run($, 'lang en')
+  const english = JSON.stringify(await pane.drawn())
+  expect(english).toContain('Which way for q-c3-cccccc?')
+  expect(english).toContain('Questions waiting')
+  await pane.unmount()
+})
+
+test('a History row names the option in its card language while the History heading and Clear all stay in the pane language', async ($, on) => {
+  const files = new Map([
+    [path('q', 'q-c4-dddddd'), question('q-c4-dddddd', 1000, { ...PT_ENTRY, title: 'Escolha a fila' })],
+    [path('q', 'q-c5-eeeeee'), question('q-c5-eeeeee', 2000)],
+    [path('a', 'q-c4-dddddd'), answer('q-c4-dddddd', 'B')],
+  ])
+  stubHost(on, files, true, {}, {}, { LANG: 'en_US.UTF-8' })
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  const drawn = JSON.stringify(await pane.drawn())
+  expect(drawn).toContain('History')
+  expect(drawn).toContain('Clear all')
+  expect(drawn).toContain('Escolha a fila')
+  expect(drawn).toContain('Reescrever')
+  expect(drawn).not.toContain('Histórico')
+  await pane.unmount()
+})
+
+test('the Other label in a History row follows the card language of its question, and a question that is gone follows the pane', () => {
+  const portuguese = parsedQuestion('q-c6-ffffff', 1, PT_ENTRY)
+  expect(answerNameOf('en', { key: 'other' }, portuguese)).toBe('Outra…')
+  expect(answerNameOf('en', { key: 'B' }, portuguese)).toBe('Reescrever')
+  expect(answerNameOf('en', { key: 'other' }, undefined)).toBe('Other…')
 })

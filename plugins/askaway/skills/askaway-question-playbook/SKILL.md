@@ -50,6 +50,7 @@ The CLI refuses longer text as `too long (n/limit)` and names the field, so keep
 
 | Field | Required | Limit | Rule |
 |---|---|---|---|
+| `lang` | yes | | `en` or `pt-BR`: the language every main field is written in. Write all fields in one language; quoting a UI string in another language is fine. Blank is missing; any other value is refiled as `lang: must be one of en, pt-BR`. |
 | `title` | no | 60 | Absent, null or blank: the question, cut to 60. A title that is not a string is refiled as `title: must be a string, or left out to use the question`. |
 | `question` | yes | 400 | One decision, short and concrete. At least 3 words. |
 | `context` | yes | 600 | Task and step that stopped. At least 3 words. |
@@ -63,7 +64,7 @@ The CLI refuses longer text as `too long (n/limit)` and names the field, so keep
 | `undo` | yes | 300 | For example `changing later ≈ 10 min`. |
 | `recommended` | yes | | One of the option keys. Absent or null is listed in `missing`. |
 | `risk` | yes | | `low`, `medium` or `high`. |
-| `translations` | no | as the main field | The same text in the panel's other language, so `/askaway lang` switches the whole card at once. An object keyed by `en` and `pt-BR` only; each language holds any of `title`, `question`, `context`, `what`, `problem`, `analogy`, `why`, `how`, `gains`, `losses`, `urgency`, `undo`, plus `options` keyed by the main option keys with any of `label`, `does`, `pros`, `cons`, `tradeoff`. Each string is checked like its main field; a refusal names its path, such as `translations.pt-BR.options.Z: not a key of the main options`. A missing field shows the main text. A translation with `question` and no `title` gets its title from that question, cut to 60, as the main title does. `"translations": null` counts as absent; inside a language, a null or blank string is refused as `missing`. |
+| `translations` | no | as the main field | The same text in the other language of `en` and `pt-BR` (never the entry's own `lang`), so `/askaway lang` switches the whole card at once. An object keyed by that language. A language is complete or absent: it holds every required text field above and `options` keyed by every main option key, each with `label`, `does`, `pros`, `cons` and `tradeoff`. `title` is optional: without it, the title is the translated question cut to 60. A partial language is refiled as `translations.<key>: missing <names>`, such as `translations.pt-BR: missing what, options.B.tradeoff`. Each string is checked like its main field; a refusal names its path, such as `translations.pt-BR.options.Z: not a key of the main options`. `"translations": null` counts as absent. |
 | `options` | yes | | At least 2. Keys are consecutive uppercase letters from A, in order (A, B, C). Each has `key`, `label` (300), `does`, `pros`, `cons` (300 each, all required; `does`, `pros` and `cons` need at least 3 words each), `tradeoff` (300, required; one line by guidance, as the CLI joins line breaks) and `fit` (integer 0 to 100, or `null` for no estimate; required). An option whose `key` is absent, blank or not a string is still checked: its other gaps are listed under `#<n>` (its position) in `by_option`, so one refile lists every gap. |
 
 The CLI refuses a long text under 3 words as `placeholder`, as it does text made only of `TBD`, `todo`, `n/a` or `lorem`. Dots and the ellipsis character `…` are not words, so text made only of them, such as `...` or `…`, is refused too. For an unspaced script (CJK), the short-text rule counts letters and digits instead of words, and fewer than 6 is refused. Do not pass `session` or `project`: the CLI fills them from the environment and the working directory. A subagent sends `"run_kind":"subagent"`.
@@ -100,7 +101,7 @@ The CLI prints one JSON line: `{"id":"q-...","recommended":"A","title":"...","ac
   denies it.
 
   ```bash
-  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title": "Cache", "question": "Don\u0027t drop the cache?", ...}'
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title": "Cache", "lang": "en", "question": "Don\u0027t drop the cache?", ...}'
   ```
 
   The other fields follow the worked example below.
@@ -146,10 +147,11 @@ The CLI prints one JSON line: `{"id":"q-...","recommended":"A","title":"...","ac
 
 - One question per decision. Do not file the same question twice.
 - Write the main text in the language the user speaks with you (the conversation's
-  language; for a Portuguese-speaking user, Brazilian Portuguese), and put the same
-  text in the panel's other language under `translations` (`en` or `pt-BR`), so the
-  card follows `/askaway lang` at once. Option keys, `risk`, `recommended` and
-  `fit` are never translated.
+  language; for a Portuguese-speaking user, Brazilian Portuguese), and set `lang` to
+  that language. Put the same text in the other language under `translations`, complete
+  or not at all: a partial translation is refiled, so the card never mixes languages.
+  Prefer writing the question in the language the user is using. Option keys, `risk`,
+  `recommended` and `fit` are never translated.
 - Never invent an answer, never file to hand over routine work, and never call
   `answer` yourself: only the user answers.
 - Set `risk` to `high` for real files, credentials and irreversible actions
@@ -173,6 +175,7 @@ through `ask` against a throwaway `ASKAWAY_HOME` and accepted.
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask <<'JSON'
 {
   "title": "Windows install location",
+  "lang": "en",
   "question": "Where should the Windows build install for each user?",
   "context": "Packaging the Windows installer; the install step stops at the install folder. Scope: the installer only, no app code changes.",
   "what": "The Windows installer decides where the app lands on disk. The spec says the app installs into the current user folder under `%LOCALAPPDATA%`, so no admin rights are needed. The installer code today writes to `Program Files`, which needs admin rights, so a standard user gets a permission error at the last step.",
@@ -196,20 +199,30 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask <<'JSON'
 JSON
 ```
 
-The same entry with a Brazilian Portuguese translation, so `/askaway lang pt-BR` turns the
-whole card at once, adds one top-level key (also run through `ask` and accepted). A field
-left out of the translation shows the main text:
+The same entry with a complete Brazilian Portuguese translation, so `/askaway lang pt-BR`
+turns the whole card at once. It adds one top-level key, `translations`; the entry keeps
+`"lang": "en"`. The translation holds every text field and every option field, or the CLI
+refiles it:
 
 ```json
 "translations": {
   "pt-BR": {
     "title": "Local de instalação no Windows",
     "question": "Onde o build do Windows deve instalar para cada usuário?",
-    "what": "O instalador do Windows decide onde o app fica no disco. A spec diz que o app instala na pasta do usuário atual, sem precisar de admin. O código hoje grava em `Program Files`, que exige admin.",
+    "context": "Empacotar o instalador do Windows; a etapa de instalação para na pasta de instalação. Escopo: só o instalador, sem mudar o código do app.",
+    "what": "O instalador do Windows decide onde o app fica no disco. A spec diz que o app instala na pasta do usuário atual, sem precisar de admin. O código hoje grava em `Program Files`, que exige admin, então um usuário padrão recebe erro de permissão no último passo.",
+    "problem": "Se nada for decidido, o próximo build do Windows mantém essa divergência e usuários padrão não conseguem instalar. Exemplo: um novo funcionário, em um notebook sem admin, roda o instalador, recebe o erro de permissão e não usa o app naquele dia.",
+    "analogy": "Como guardar os arquivos na gaveta da própria mesa, que não precisa de chave, em vez do depósito do prédio, que pede a chave do zelador.",
+    "why": "A spec já cita a pasta por usuário, e ela não precisa de admin, então a instalação funciona nas máquinas onde falha hoje.",
+    "how": "O instalador grava o app em `%LOCALAPPDATA%` para o usuário atual e cria um atalho no menu Iniciar só para ele.",
+    "gains": "A instalação funciona sem admin, e o instalador volta a seguir a spec.",
+    "losses": "Cada conta do Windows ganha a sua cópia, então uma atualização precisa chegar a todos os perfis em um PC compartilhado.",
+    "urgency": "Pode esperar a próxima versão",
+    "undo": "mudar depois ≈ 2 h, instalador e um teste",
     "options": {
-      "A": {"label": "Pasta do usuário", "tradeoff": "Seguro de aceitar e fácil de mudar depois."},
-      "B": {"label": "Program Files para todos"},
-      "C": {"label": "Pasta que o usuário escolhe"}
+      "A": {"label": "Pasta do usuário", "does": "O instalador grava o app em `%LOCALAPPDATA%` para o usuário atual e cria um atalho no menu Iniciar só para ele.", "pros": "Sem admin; funciona em PCs compartilhados; segue a spec.", "cons": "Cada conta ganha uma cópia, então atualizações precisam chegar a todos os perfis.", "tradeoff": "Seguro de aceitar e fácil de mudar depois; só o instalador muda."},
+      "B": {"label": "Program Files para todos", "does": "O instalador mantém o local atual e grava o app em `Program Files` para todas as contas do PC.", "pros": "Uma cópia serve a todos; é onde o usuário do Windows procura programas.", "cons": "Exige admin, então a maioria dos usuários padrão não instala; contraria a spec.", "tradeoff": "Aceitar mantém a instalação quebrada para usuários padrão; mudar depois exige reescrever o instalador."},
+      "C": {"label": "Pasta que o usuário escolhe", "does": "O instalador pergunta onde instalar, guarda a resposta e usa essa pasta nas atualizações.", "pros": "Cada usuário escolhe disco e pasta; funciona em PCs compartilhados.", "cons": "Acrescenta uma tela ao instalador e exige um padrão testado para quem clica em Avançar.", "tradeoff": "Custa mais uma tela e seus testes; reversível depois, removendo o aviso."}
     }
   }
 }

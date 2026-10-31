@@ -49,6 +49,14 @@ function question(id: string, ts: number, extra: Record<string, unknown> = {}): 
   })
 }
 
+// A question fixture that names no `lang` is written in the language the test's pane reads in (pt-BR when LANG says pt, else
+// English), so its card draws in the pane's language.
+function withFixtureLang(text: string, paneLocale: string): string {
+  const raw: unknown = JSON.parse(text)
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw) || 'lang' in raw) return text
+  return JSON.stringify({ ...raw, lang: paneLocale.startsWith('pt') ? 'pt-BR' : 'en' })
+}
+
 const path = (dir: string, id: string): string => `${STATE}/${dir}/${id}.json`
 
 // A group of two questions, the first with the given fields (its options, say).
@@ -93,7 +101,7 @@ function stubHost(on: On, files: Map<string, string>, env: Record<string, string
   on('fs.read', (_$, e) => {
     const text = files.get(e.path)
     if (text === undefined) throw new Error(`ENOENT: ${e.path}`)
-    return { value: text }
+    return { value: e.path.startsWith(`${STATE}/q/`) ? withFixtureLang(text, env.LANG ?? '') : text }
   })
   // A folder exists when a file lies under it, as on disk.
   on('fs.exists', (_$, e) => ({ value: files.has(e.path) || [...files.keys()].some(file => file.startsWith(`${e.path}/`)) }))

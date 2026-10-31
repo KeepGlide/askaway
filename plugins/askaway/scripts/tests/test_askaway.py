@@ -64,6 +64,7 @@ def clock(monkeypatch):
 def base_entry(**over) -> dict:
     entry = {
         "title": "Cache backend",
+        "lang": "en",
         "question": "Which cache should the service use?",
         "options": [
             {"key": "A", "label": "Redis", "tradeoff": "one more service to run", "fit": 88,
@@ -288,47 +289,44 @@ PT_BR_TRANSLATION = {
                       "cons": "Mais um serviço para rodar."}},
 }
 LONG_TEXT_PT = ("Esta frase tem palavras suficientes para passar. " * 5).strip()
+PT_BR_LONG_QUESTION = "Onde o serviço deve guardar o cache das respostas da API e por quanto tempo?"
+TRANSLATED_TEXT = ("what", "problem", "context", "why", "how", "gains", "losses", "analogy", "urgency", "undo")
+OPTION_FIELDS = ("label", "tradeoff", "does", "pros", "cons")
 
 
-def test_ask_stores_a_pt_br_translation_as_sent(home, capsys):
-    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations={"pt-BR": PT_BR_TRANSLATION})))
+def complete_translation(**over) -> dict:
+    """A translation with every field and every option field of base_entry's options A and B: a complete one."""
+    translation = {"title": "Cache", "question": PT_BR_LONG_QUESTION, **{name: LONG_TEXT_PT for name in TRANSLATED_TEXT},
+                   "options": {key: {name: LONG_TEXT_PT for name in OPTION_FIELDS} for key in "AB"}}
+    return {**translation, **over}
+
+
+def test_ask_stores_a_complete_pt_br_translation_as_sent(home, capsys):
+    translation = complete_translation()
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations={"pt-BR": translation})))
     assert out["action"] == "continue"
-    assert stored(home, "q", out["id"])["translations"] == {"pt-BR": PT_BR_TRANSLATION}
+    assert stored(home, "q", out["id"])["translations"] == {"pt-BR": translation}
 
 
 def test_ask_stores_translated_text_cleaned_like_the_main_text(home, capsys):
-    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations={"pt-BR": {"title": "Cache\u202e"}})))
-    assert stored(home, "q", out["id"])["translations"] == {"pt-BR": {"title": "Cache"}}
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations={"pt-BR": complete_translation(title="Cache\u202e")})))
+    assert stored(home, "q", out["id"])["translations"]["pt-BR"]["title"] == "Cache"
 
 
-PT_BR_LONG_QUESTION = "Onde o serviço deve guardar o cache das respostas da API e por quanto tempo?"
-
-
-def test_a_translation_with_only_a_question_gets_its_title_clipped_from_that_question(home, capsys):
-    entry = base_entry(translations={"pt-BR": {"question": PT_BR_LONG_QUESTION}})
-    del entry["title"]
-    out = cli(capsys, "ask", "--json", json.dumps(entry))
+def test_a_complete_translation_without_title_gets_its_title_clipped_from_the_question(home, capsys):
+    translation = complete_translation()
+    del translation["title"]
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations={"pt-BR": translation})))
     assert out["action"] == "continue"
-    assert stored(home, "q", out["id"])["translations"] == {"pt-BR": {
-        "question": PT_BR_LONG_QUESTION,
-        "title": "Onde o serviço deve guardar o cache das respostas da API e …",
-    }}
-
-
-def test_a_translation_with_neither_question_nor_title_keeps_no_title(home, capsys):
-    what = PT_BR_TRANSLATION["what"]
-    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations={"pt-BR": {"what": what}})))
-    assert out["action"] == "continue"
-    assert stored(home, "q", out["id"])["translations"] == {"pt-BR": {"what": what}}
+    title_text = askaway._clip(PT_BR_LONG_QUESTION, askaway.TITLE_MAX)
+    assert stored(home, "q", out["id"])["translations"]["pt-BR"]["title"] == title_text
 
 
 @pytest.mark.parametrize("title", [None, "", "   "])
 def test_a_null_or_blank_translated_title_counts_as_absent_and_takes_the_clipped_question(title, home, capsys):
-    entry = base_entry(translations={"pt-BR": {"title": title, "question": PT_BR_LONG_QUESTION}})
-    out = cli(capsys, "ask", "--json", json.dumps(entry))
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations={"pt-BR": complete_translation(title=title)})))
     title_text = askaway._clip(PT_BR_LONG_QUESTION, askaway.TITLE_MAX)
-    assert stored(home, "q", out["id"])["translations"] == {"pt-BR": {"question": PT_BR_LONG_QUESTION,
-                                                                      "title": title_text}}
+    assert stored(home, "q", out["id"])["translations"]["pt-BR"]["title"] == title_text
 
 
 def test_null_translations_file_the_question_without_translations(home, capsys):
@@ -337,10 +335,17 @@ def test_null_translations_file_the_question_without_translations(home, capsys):
     assert stored(home, "q", out["id"]).get("translations", {}) == {}
 
 
-def test_an_english_translation_is_accepted_and_stored_as_sent(home, capsys):
-    question = "Where should the cache live?"
-    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations={"en": {"question": question}})))
-    assert stored(home, "q", out["id"])["translations"] == {"en": {"question": question, "title": question}}
+def test_an_english_translation_is_accepted_when_the_entry_is_pt_br(home, capsys):
+    translation = complete_translation(question="Where should the cache live?")
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(lang="pt-BR", translations={"en": translation})))
+    assert out["action"] == "continue"
+    assert stored(home, "q", out["id"])["translations"] == {"en": translation}
+
+
+def test_a_translation_into_the_entry_own_language_is_refused(home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations={"en": complete_translation()})))
+    assert out["action"] == "refile" and "translations.en: the entry is already in en" in out["error"]
+    assert not (home / "q").exists() or list((home / "q").glob("*.json")) == []
 
 
 @pytest.mark.parametrize(("translations", "reason"), [
@@ -351,7 +356,7 @@ def test_an_english_translation_is_accepted_and_stored_as_sent(home, capsys):
     ("texto", "translations: must be a non-empty object"),
     ({"pt-BR": "texto"}, "translations.pt-BR: must be a non-empty object"),
     ({"pt-BR": {}}, "translations.pt-BR: must be a non-empty object"),
-    ({"pt-BR": {"what": ""}}, "translations.pt-BR.what: missing"),
+    ({"pt-BR": {"what": ""}}, "translations.pt-BR: missing question, what"),
     ({"pt-BR": {"what": "Uma frase só, sem fim"}}, "translations.pt-BR.what: needs at least 2 sentences"),
     ({"pt-BR": {"question": "x" * 401}}, "translations.pt-BR.question: too long (401/400)"),
     ({"pt-BR": {"price": "Dez reais"}}, "translations.pt-BR.price: not a translatable field"),
@@ -359,7 +364,7 @@ def test_an_english_translation_is_accepted_and_stored_as_sent(home, capsys):
     ({"pt-BR": {"options": {}}}, "translations.pt-BR.options: must be a non-empty object"),
     ({"pt-BR": {"options": {"Z": {"label": "Redis"}}}}, "translations.pt-BR.options.Z: not a key of the main options"),
     ({"pt-BR": {"options": {"A": {}}}}, "translations.pt-BR.options.A: must be a non-empty object"),
-    ({"pt-BR": {"options": {"A": {"label": ""}}}}, "translations.pt-BR.options.A.label: missing"),
+    ({"pt-BR": {"options": {"A": {"label": ""}}}}, "translations.pt-BR: missing question"),
     ({"pt-BR": {"options": {"A": {"price": "10"}}}}, "translations.pt-BR.options.A.price: not a translatable field"),
     ({"pt-BR": {"options": {"A": {"fit": 50}}}}, "translations.pt-BR.options.A.fit: not a translatable field"),
 ])
@@ -367,6 +372,70 @@ def test_ask_refiles_a_bad_translation_naming_its_path_and_files_nothing(transla
     out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations=translations)))
     assert out["action"] == "refile" and reason in out["error"]
     assert not (home / "q").exists() or list((home / "q").glob("*.json")) == []
+
+
+def test_ask_refiles_an_entry_without_lang(home, capsys):
+    entry = base_entry()
+    del entry["lang"]
+    out = cli(capsys, "ask", "--json", json.dumps(entry))
+    assert out["action"] == "refile" and out["missing"] == ["lang"]
+    assert "missing fields: lang" in out["error"]
+    assert not (home / "q").exists() or list((home / "q").glob("*.json")) == []
+
+
+@pytest.mark.parametrize("lang", ["", "   "])
+def test_ask_refiles_a_blank_lang_as_missing(lang, home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(lang=lang)))
+    assert out["action"] == "refile" and out["missing"] == ["lang"]
+    assert "missing fields: lang" in out["error"]
+
+
+@pytest.mark.parametrize("lang", ["pt", "pt-br", "fr", "EN", 5])
+def test_ask_refiles_an_unknown_lang_value(lang, home, capsys):
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(lang=lang)))
+    assert out["action"] == "refile" and out["missing"] == ["lang"]
+    assert "lang: must be one of en, pt-BR" in out["error"]
+    assert not (home / "q").exists() or list((home / "q").glob("*.json")) == []
+
+
+@pytest.mark.parametrize("name", ["question", "what", "problem", "undo"])
+def test_ask_refiles_a_translation_missing_a_required_field(name, home, capsys):
+    translation = complete_translation()
+    del translation[name]
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations={"pt-BR": translation})))
+    assert out["action"] == "refile"
+    assert f"translations.pt-BR: missing {name}" in out["error"]
+    assert not (home / "q").exists() or list((home / "q").glob("*.json")) == []
+
+
+@pytest.mark.parametrize(("remove", "gap"), [
+    (lambda translation: translation["options"]["B"].pop("tradeoff"), "translations.pt-BR: missing options.B.tradeoff"),
+    (lambda translation: translation["options"].pop("B"),
+     "translations.pt-BR: missing options.B.label, options.B.tradeoff, options.B.does, options.B.pros, options.B.cons"),
+    (lambda translation: translation.pop("options"), "translations.pt-BR: missing options"),
+])
+def test_ask_refiles_a_translation_missing_an_option_field(remove, gap, home, capsys):
+    translation = complete_translation()
+    remove(translation)
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations={"pt-BR": translation})))
+    assert out["action"] == "refile" and gap in out["error"]
+    assert not (home / "q").exists() or list((home / "q").glob("*.json")) == []
+
+
+@pytest.mark.parametrize("lang", ["en", "pt-BR"])
+def test_ask_stores_lang_and_a_complete_translation(lang, home, capsys):
+    other = "pt-BR" if lang == "en" else "en"
+    translation = complete_translation()
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(lang=lang, translations={other: translation})))
+    filed = stored(home, "q", out["id"])
+    assert out["action"] == "continue"
+    assert filed["lang"] == lang
+    assert filed["translations"] == {other: translation}
+
+
+def test_lang_is_a_known_field_not_unknown_keys():
+    assert "lang" in askaway.ENTRY_FIELDS
+    assert askaway._unknown_keys({"lang": "pt-BR", "price": 10}, askaway.Gaps()) == {"price": 10}
 
 
 def test_translations_are_not_counted_in_the_unknown_keys_cap(home, capsys):
@@ -381,13 +450,13 @@ def test_translations_are_not_counted_in_the_unknown_keys_cap(home, capsys):
 
 
 def test_delivery_line_does_not_read_translations(home, capsys):
-    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations={"pt-BR": PT_BR_TRANSLATION})))
+    out = cli(capsys, "ask", "--json", json.dumps(base_entry(translations={"pt-BR": complete_translation()})))
     entry = stored(home, "q", out["id"])
     plain = {name: value for name, value in entry.items() if name != "translations"}
     answer = {"key": "A"}
     line = askaway._delivery_line(entry, answer)
     assert line == askaway._delivery_line(plain, answer)
-    assert PT_BR_TRANSLATION["question"] not in line
+    assert PT_BR_LONG_QUESTION not in line
 
 
 def test_ask_ignores_session_and_project_sent_in_payload(home, capsys, monkeypatch):
@@ -1109,7 +1178,7 @@ def test_ask_guard_skeleton_carries_the_question_with_empty_explanations(capsys,
                      "does": "", "pros": "", "cons": ""},
                     {"key": "B", "label": "Redis", "tradeoff": "one more service", "fit": None,
                      "does": "", "pros": "", "cons": ""}],
-        "recommended": "B", "what": "", "problem": "", "why": "", "how": "", "gains": "", "losses": "",
+        "lang": "", "recommended": "B", "what": "", "problem": "", "why": "", "how": "", "gains": "", "losses": "",
         "analogy": "", "urgency": "", "undo": "", "risk": "low",
     }
 
@@ -1144,6 +1213,7 @@ def test_ask_guard_command_runs_its_json_as_one_argument_under_sh(home, capsys, 
     reason = hook_json(capsys, monkeypatch, "ask-guard", payload)["hookSpecificOutput"]["permissionDecisionReason"]
     line = next(text for text in reason.splitlines() if '"title":"Cache"' in text)
     command = line.split(". ", 1)[1]
+    command = command.replace('"lang":""', '"lang":"en"')
     for name in (*REQUIRED_TEXT, *REQUIRED_OPTION_TEXT):
         command = command.replace(f'"{name}":""', f'"{name}":"Filled in. Done."')
     command = command.replace('"fit":null', '"fit":80')
@@ -6323,11 +6393,19 @@ def test_ask_from_stdin_takes_the_recommended_marks_off_too(home, capsys, monkey
 
 
 def test_ask_takes_the_recommended_marks_off_translated_labels(home, capsys):
-    translations = {"pt-BR": {"options": {"A": {"label": "Redis (Recomendada)"}, "B": {"label": "Na memória: recomendado"}}},
-                    "en": {"options": {"A": {"label": "Redis [Recommended]"}}}}
-    filed = stored(home, "q", cli(capsys, "ask", "--json", json.dumps(base_entry(translations=translations)))["id"])
-    assert filed["translations"]["pt-BR"]["options"] == {"A": {"label": "Redis"}, "B": {"label": "Na memória"}}
-    assert filed["translations"]["en"]["options"] == {"A": {"label": "Redis"}}
+    translation = complete_translation()
+    translation["options"]["A"]["label"] = "Redis (Recomendada)"
+    translation["options"]["B"]["label"] = "Na memória: recomendado"
+    filed = stored(home, "q", cli(capsys, "ask", "--json", json.dumps(base_entry(translations={"pt-BR": translation})))["id"])
+    assert [filed["translations"]["pt-BR"]["options"][key]["label"] for key in "AB"] == ["Redis", "Na memória"]
+
+
+def test_ask_takes_the_recommended_mark_off_an_english_translated_label(home, capsys):
+    translation = complete_translation()
+    translation["options"]["A"]["label"] = "Redis [Recommended]"
+    entry = base_entry(lang="pt-BR", translations={"en": translation})
+    filed = stored(home, "q", cli(capsys, "ask", "--json", json.dumps(entry))["id"])
+    assert filed["translations"]["en"]["options"]["A"]["label"] == "Redis"
 
 
 def test_a_label_that_is_only_a_mark_is_refiled_as_missing(home, capsys):

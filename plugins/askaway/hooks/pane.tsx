@@ -16,6 +16,7 @@ import {
   SUBMIT_ALL_KEY,
   ageLabel,
   answerNameOf,
+  cardLangOf,
   clearableIdsOf,
   counterText,
   escapeMarkdown,
@@ -499,14 +500,16 @@ const answerLabelOf = (lang: Lang, card: CardContext, label: string): string => 
 // pros and cons, and "Other…". Then a separator, and the Back / Next or Submit all row. One blank line sits under it.
 function renderQuestion(
   ui: Ui,
-  lang: Lang,
+  paneLang: Lang,
   view: PaneView,
   actions: PaneActions,
   screen: Screen,
   held: HeldButtons,
 ): RenderElement {
   const { Box, Text } = ui
-  const question = localizedQuestion(screen.question, lang)
+  // One language for the whole card (cardLangOf): every label it draws follows it, while the pane around it keeps the pane's.
+  const lang = cardLangOf(screen.question, paneLang)
+  const question = localizedQuestion(screen.question, paneLang)
   const card: CardContext = {
     question,
     wizard: view.wizard,
@@ -689,8 +692,8 @@ function renderOption(ui: Ui, lang: Lang, actions: PaneActions, card: CardContex
   )
 }
 
-// "Other…": the last row under the options, a plain link drawn with its letter, "C · Other…" (otherLetterOf; the desktop draws
-// the letter as the hotkey chip). Its field sits on the row under it, under the same "└ " branch glyph the option sub-rows
+// "Other…": the last row under the options, a link drawn with its letter: "C · Other…" in the terminal, a plain link
+// (otherLetterOf); on the desktop a Button with the letter as its hotkey chip after the label, as the options draw it. Its field sits on the row under it, under the same "└ " branch glyph the option sub-rows
 // draw. The field is always open, ready to type. Typing keeps the text in the
 // pane's memory (typeOther), with no redraw. Keep (Enter)
 // moves the text to the link, which then draws "C · <label>", picks it and empties the field; the focus goes to the link.
@@ -721,13 +724,16 @@ function renderOther(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext
     if (kept === undefined) actions.focusOther(question.id)
     else actions.pick(question.id, { key: OTHER_KEY, text: kept })
   }
+  // The desktop draws a plain Button's hotkey cue before its label and any other Button's after it, so there the link is not
+  // plain: its letter sits at the end, as the options' letters do. The terminal draws no cue and keeps the plain link.
+  const isPlain = !isKeptChosen && card.surface !== 'desktop'
   return (
     <Box key={`other-row-${question.id}`} flexDirection="column">
-      {held.hold(key, [label, isChosen, isLeaving, isMoveLocked, hotkey], onPress, press => (
+      {held.hold(key, [label, isChosen, isLeaving, isMoveLocked, hotkey, isPlain], onPress, press => (
         <Button
           key={key}
           label={label}
-          plain={isKeptChosen ? undefined : true}
+          plain={isPlain ? true : undefined}
           variant={isKeptChosen ? 'primary' : 'secondary'}
           dimColor={isDisabled}
           hotkey={hotkey}
