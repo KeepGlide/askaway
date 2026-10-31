@@ -50,7 +50,7 @@
 
 ## 📌 Status
 
-**Stable** (`0.4.2`). Askaway follows [SemVer](https://semver.org/): while the version is `0.y.z`, anything may change at any time. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
+**Stable** (`0.4.3`). Askaway follows [SemVer](https://semver.org/): while the version is `0.y.z`, anything may change at any time. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
 > The mod API moves between Claude Code releases, so expect changes until a stable release.
@@ -750,10 +750,10 @@ Found one? [Open an issue](https://github.com/KeepGlide/askaway/issues/new).
 
 | Category | Tests |
 |---|---|
-| Mod (TypeScript), `plugins/askaway/tests/` | 545 |
+| Mod (TypeScript), `plugins/askaway/tests/` | 542 |
 | CLI and hooks (Python), `plugins/askaway/scripts/tests/` | 1697 |
 
-Python count from `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts`, at commit `8793695`, 2026-10-28. The mod count is from a fresh run of `claude plugin test plugins/askaway` at the same commit (the runner has no collection mode).
+Python count from `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts`, at the 0.4.3 release commit, 2026-10-31. The mod count is from a fresh run of `claude plugin test plugins/askaway` at the same commit (the runner has no collection mode).
 
 ## 🔧 Development
 
@@ -802,6 +802,7 @@ The changes of each version are in [CHANGELOG.md](CHANGELOG.md), in the [Keep a 
 | 0.4.0 | 2026-10-30 | The first stable release: the scanner reads heredocs fed to a sourced fd path, a process substitution and a `read` before `eval` (#16 to #18), allows backquotes and `<<` in a single-quoted `ask` JSON (#8); the deny after `cd "$VAR"` stays by decision (#9). |
 | 0.4.1 | 2026-10-30 | The field under Other… stretches to the pane's right edge instead of keeping its own short width. |
 | 0.4.2 | 2026-10-30 | An Apply button under the Other field; on the desktop the option letter shows only in its key chip; the plain "Not answered yet: pick an option." line is gone; the field's height fits its text at full width. |
+| 0.4.3 | 2026-10-31 | The Other field has no button: Enter applies the text, as its placeholder says; Clear all sits on the History heading row, under the open questions. |
 
 ## 🤝 Contributing
 

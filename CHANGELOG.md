@@ -2,10 +2,19 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.2, set by the 0.4.2 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 0.4.3, set by the 0.4.3 release commit.
 Commit hashes name the change in `git log`.
 
 ## [Unreleased]
+
+## [0.4.3] - 2026-10-31
+
+### Changed
+- The field under Other… has no button: it passes no `submitLabel`, so the desktop draws no submit button beside it and plain Enter keeps the text (with a `submitLabel` it drew a button and Enter typed a newline). Its placeholder says so: "Press Enter to apply the answer." (pt "Pressione Enter para aplicar a resposta.").
+- Clear all sits on the History heading row, right-aligned, under the open questions and the card, since it clears the History alone; the divider under the pane header is gone (`renderHistory`).
+
+### Removed
+- The Apply button under the Other field that 0.4.2 added (`applyOther`), and the field's "Enter" submit label.
 
 ### Docs
 
@@ -839,7 +848,8 @@ Third gauntlet round (40 personas over betas 14 to 25): 150 findings, 64 adopted
 - The README describes the away flow and what each card carries, matches every claim to the plugin, and adds a screenshot (150ad49, 6020300).
 - SPEC.md records the 0.4.0-beta.5 live check of the pane layout (0f43a9f).
 
-[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/KeepGlide/askaway/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/KeepGlide/askaway/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/KeepGlide/askaway/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/KeepGlide/askaway/compare/v0.4.0-beta.49...v0.4.0

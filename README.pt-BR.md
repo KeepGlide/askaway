@@ -50,7 +50,7 @@
 
 ## 📌 Status
 
-**Estável** (`0.4.2`). O Askaway segue o [SemVer](https://semver.org/): enquanto a versão for `0.y.z`, qualquer coisa pode mudar a qualquer momento. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
+**Estável** (`0.4.3`). O Askaway segue o [SemVer](https://semver.org/): enquanto a versão for `0.y.z`, qualquer coisa pode mudar a qualquer momento. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
 > A API de mods muda entre as versões do Claude Code, então espere mudanças até uma versão estável.
@@ -750,10 +750,10 @@ Encontrou um? [Abra uma issue](https://github.com/KeepGlide/askaway/issues/new).
 
 | Categoria | Testes |
 |---|---|
-| Mod (TypeScript), `plugins/askaway/tests/` | 545 |
+| Mod (TypeScript), `plugins/askaway/tests/` | 542 |
 | CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 1697 |
 
-Contagem Python de `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts`, no commit `8793695`, em 2026-10-28. A contagem do mod vem de uma execução nova de `claude plugin test plugins/askaway` no mesmo commit (o runner não tem modo de coleta).
+Contagem Python de `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts`, no commit da versão 0.4.3, em 2026-10-31. A contagem do mod vem de uma execução nova de `claude plugin test plugins/askaway` no mesmo commit (o runner não tem modo de coleta).
 
 ## 🔧 Desenvolvimento
 
@@ -802,6 +802,7 @@ As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md), no formato 
 | 0.4.0 | 2026-10-30 | A primeira versão estável: o leitor lê heredocs passados a um caminho de fd com `source`, a uma substituição de processo e a um `read` antes de `eval` (#16 a #18), aceita crases e `<<` no JSON entre aspas simples do `ask` (#8); a negação depois de `cd "$VAR"` fica por decisão (#9). |
 | 0.4.1 | 2026-10-30 | O campo sob Outro… estica até a borda direita do painel em vez de ficar curto. |
 | 0.4.2 | 2026-10-30 | Um botão Aplicar sob o campo Outra; no desktop a letra da opção aparece só no quadradinho da tecla; a linha "Ainda não respondida: escolha uma opção." saiu; a altura do campo acompanha o texto na largura toda. |
+| 0.4.3 | 2026-10-31 | O campo Outra não tem botão: o Enter aplica o texto, como diz o placeholder; o Limpar tudo fica na linha do título do Histórico, abaixo das perguntas abertas. |
 
 ## 🤝 Contribuição
 
