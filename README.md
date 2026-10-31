@@ -50,10 +50,10 @@
 
 ## 📌 Status
 
-**Stable** (`0.4.3`). Askaway follows [SemVer](https://semver.org/): while the version is `0.y.z`, anything may change at any time. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
+**Stable** (`1.0.0`). Askaway follows [SemVer](https://semver.org/): from `1.0.0` on, a change that breaks the CLI's JSON contract or the stored question format comes only in a new major version. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
-> The mod API moves between Claude Code releases, so expect changes until a stable release.
+> The mod API moves between Claude Code releases, so a newer Claude Code can change the panel before Askaway follows ([Known issues](#-known-issues)).
 
 ## 💡 Why it exists
 
@@ -242,7 +242,7 @@ Ground rules:
 | 4 | 🧑 Install the plugin | `claude plugin install askaway@keepglide` | Exit 0; `claude plugin list` shows `askaway@keepglide`. |
 | 5 | Make a test state folder | `mkdir -p /tmp/askaway-test` | Exit 0; the folder is empty. |
 | 6 | Check away mode | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" away status` | Prints `{"away": false}`. |
-| 7 | File a test question | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Test","question":"Pick option A today?","what":"A test question for the Askaway CLI. It only checks that a question is filed.","problem":"Nothing is decided by this test, so the check has no cost.","context":"Install spec check of the Askaway CLI.","options":[{"key":"A","label":"Yes","tradeoff":"Safe to accept and easy to change later","fit":90,"does":"The check takes option A.","pros":"Quick to verify.","cons":"Tests nothing else."},{"key":"B","label":"No","tradeoff":"Keeps the current behavior","fit":10,"does":"The check takes option B.","pros":"Changes nothing at all.","cons":"Gives no result."}],"recommended":"A","why":"A is the safe default for this test.","how":"The session continues on A at once.","gains":"The check finishes without a human.","losses":"Nothing is changed by the test.","analogy":"A dry run before the real job.","urgency":"Can wait","undo":"changing later ≈ 1 min","risk":"low"}'` | Prints `{"id": "q-…", "recommended": "A", "title": "Test", "action": "continue"}`. |
+| 7 | File a test question | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Test","lang":"en","question":"Pick option A today?","what":"A test question for the Askaway CLI. It only checks that a question is filed.","problem":"Nothing is decided by this test, so the check has no cost.","context":"Install spec check of the Askaway CLI.","options":[{"key":"A","label":"Yes","tradeoff":"Safe to accept and easy to change later","fit":90,"does":"The check takes option A.","pros":"Quick to verify.","cons":"Tests nothing else."},{"key":"B","label":"No","tradeoff":"Keeps the current behavior","fit":10,"does":"The check takes option B.","pros":"Changes nothing at all.","cons":"Gives no result."}],"recommended":"A","why":"A is the safe default for this test.","how":"The session continues on A at once.","gains":"The check finishes without a human.","losses":"Nothing is changed by the test.","analogy":"A dry run before the real job.","urgency":"Can wait","undo":"changing later ≈ 1 min","risk":"low"}'` | Prints `{"id": "q-…", "recommended": "A", "title": "Test", "action": "continue"}`. |
 | 8 | Check the pause rule | Step 7 again in a second folder, `ASKAWAY_HOME=/tmp/askaway-test-2`, with `"risk":"high"` instead of `"risk":"low"` | Prints `"action": "pause"`. In the step 7 folder, the same text from the same session is a duplicate and prints `"action": "open"`. |
 | 9 | 🧑 Open the panel (in a Claude Code session) | `/askaway` | The Askaway panel opens. |
 | 10 | Hand back to the user | none | Report each result, the folders `/tmp/askaway-test` and `/tmp/askaway-test-2` and any skipped step. Ask the user to delete both folders. |
@@ -389,7 +389,7 @@ The `ask-guard` hook runs before every `AskUserQuestion` call. When one of these
 Otherwise the question is asked in Claude Code as usual. The CLI prints one JSON line:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache backend","question":"Which cache should the service use?","what":"The service needs a cache in front of its reads. Three workers run the API, and each one can keep its own cache or share one.","problem":"Without a choice, each worker keeps a separate cache and repeats the same reads.","context":"Sizing the API for three workers; the cache sits in front of the reads.","options":[{"key":"A","label":"Redis","tradeoff":"Safe to accept and easy to change later; one more service to run and monitor","fit":88,"does":"Redis runs as a service next to the API, and the workers share its cache.","pros":"Hits are shared across workers and survive a restart.","cons":"One more service to run and monitor."},{"key":"B","label":"In-process","tradeoff":"Give up sharing hits across workers; the cache is lost on restart","fit":40,"does":"Each worker keeps its own cache in memory.","pros":"No extra service to run.","cons":"Hits are not shared, and the cache is lost on restart."}],"recommended":"A","why":"Workers share one cache, so a hit on one serves all three.","analogy":"A shared filing cabinet instead of one desk drawer per worker.","how":"Redis runs as a service in `docker-compose.yml` next to the API; the cache client points at it.","gains":"Hits are shared across workers and survive a restart.","losses":"One more service to run and monitor.","urgency":"Can wait","undo":"changing later ≈ 10 min","risk":"low"}'
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache backend","lang":"en","question":"Which cache should the service use?","what":"The service needs a cache in front of its reads. Three workers run the API, and each one can keep its own cache or share one.","problem":"Without a choice, each worker keeps a separate cache and repeats the same reads.","context":"Sizing the API for three workers; the cache sits in front of the reads.","options":[{"key":"A","label":"Redis","tradeoff":"Safe to accept and easy to change later; one more service to run and monitor","fit":88,"does":"Redis runs as a service next to the API, and the workers share its cache.","pros":"Hits are shared across workers and survive a restart.","cons":"One more service to run and monitor."},{"key":"B","label":"In-process","tradeoff":"Give up sharing hits across workers; the cache is lost on restart","fit":40,"does":"Each worker keeps its own cache in memory.","pros":"No extra service to run.","cons":"Hits are not shared, and the cache is lost on restart."}],"recommended":"A","why":"Workers share one cache, so a hit on one serves all three.","analogy":"A shared filing cabinet instead of one desk drawer per worker.","how":"Redis runs as a service in `docker-compose.yml` next to the API; the cache client points at it.","gains":"Hits are shared across workers and survive a restart.","losses":"One more service to run and monitor.","urgency":"Can wait","undo":"changing later ≈ 10 min","risk":"low"}'
 ```
 
 ```text
@@ -399,6 +399,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache b
 | Field | Required | Notes |
 |---|---|---|
 | `question` | yes | Up to 400 characters. |
+| `lang` | yes | `en` or `pt-BR`: the language the entry's own text is written in. The card draws in it, labels included, unless a complete translation into the panel language exists. A missing or blank value is refiled. |
 | `options` | yes | At least 2 objects. Their `key`s are consecutive uppercase letters in order: `A`, `B`, `C`… Each has a `label`, a `tradeoff` (up to 300 characters), a `fit` (the agent's own estimate, an integer 0-100; `null` is accepted and means no estimate), and `does` (what happens if it is chosen), `pros` and `cons`, each up to 300 characters. The panel draws the fit after the trade-off as `· fit 88`. |
 | `recommended` | yes | One of the option keys. |
 | `title` | no | Up to 60 characters. When it is missing, the question is clipped to 60 characters and used as the title. |
@@ -413,7 +414,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache b
 | `risk` | yes | The risk of accepting the recommended option: `low` is safe to accept and easy to change later; `medium` is reversible but costs rework; `high` is irreversible, or touches real files, credentials or money, and pauses the agent that asked until the answer is delivered to it (the whole session when the question has no asker yet). There is no default: a missing `risk` is refiled. |
 | `pause` | no | Type-checked only; it does not pause anything. A question pauses the agent that asked when `risk` is `high` (the whole session when it has no asker yet), and never otherwise. |
 | `urgency_level` | no | `low`, `medium` or `high` (any case): the grade the panel colours the urgency by. Without it the panel grades the urgency text by keywords. Any other value is refiled. |
-| `translations` | no | The question's text in the other panel language, keyed by `en` and `pt-BR` only (another key is refiled), so `/askaway lang` switches the whole card. Each language holds a non-empty subset of the text fields and option fields. |
+| `translations` | no | The question's text in the other panel language, keyed by `en` or `pt-BR` (never the entry's own `lang`; another key is refiled), so `/askaway lang` switches the whole card. A language is complete or absent: every required text field, and `label`, `does`, `pros`, `cons` and `tradeoff` for every option; a gap is refiled as `translations.<key>: missing <names>`. |
 | `run_kind` | no | `main`, `subagent`, `goal`, `loop`, `bash` or `codex`. |
 
 Do not pass `session` or `project`: the CLI fills them from the environment and the working directory. Text longer than its limit is refused, not cut: the refile reply carries `too long (n/limit)`, so shorten the text and file the entry again.
@@ -750,10 +751,10 @@ Found one? [Open an issue](https://github.com/KeepGlide/askaway/issues/new).
 
 | Category | Tests |
 |---|---|
-| Mod (TypeScript), `plugins/askaway/tests/` | 542 |
-| CLI and hooks (Python), `plugins/askaway/scripts/tests/` | 1697 |
+| Mod (TypeScript), `plugins/askaway/tests/` | 551 |
+| CLI and hooks (Python), `plugins/askaway/scripts/tests/` | 1716 |
 
-Python count from `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts`, at the 0.4.3 release commit, 2026-10-31. The mod count is from a fresh run of `claude plugin test plugins/askaway` at the same commit (the runner has no collection mode).
+Python count from `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts`, at the 1.0.0 release commit, 2026-10-31. The mod count is from a fresh run of `claude plugin test plugins/askaway` at the same commit (the runner has no collection mode).
 
 ## 🔧 Development
 
@@ -803,6 +804,7 @@ The changes of each version are in [CHANGELOG.md](CHANGELOG.md), in the [Keep a 
 | 0.4.1 | 2026-10-30 | The field under Other… stretches to the pane's right edge instead of keeping its own short width. |
 | 0.4.2 | 2026-10-30 | An Apply button under the Other field; on the desktop the option letter shows only in its key chip; the plain "Not answered yet: pick an option." line is gone; the field's height fits its text at full width. |
 | 0.4.3 | 2026-10-31 | The Other field has no button: Enter applies the text, as its placeholder says; Clear all sits on the History heading row, under the open questions. |
+| 1.0.0 | 2026-10-31 | Each card draws in one language, labels included: `ask` requires `lang`, translations are complete or absent, and old entries get their language detected; on the desktop the Other link shows its letter only in the key chip, as the options do. |
 
 ## 🤝 Contributing
 

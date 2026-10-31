@@ -50,10 +50,10 @@
 
 ## 📌 Status
 
-**Estável** (`0.4.3`). O Askaway segue o [SemVer](https://semver.org/): enquanto a versão for `0.y.z`, qualquer coisa pode mudar a qualquer momento. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
+**Estável** (`1.0.0`). O Askaway segue o [SemVer](https://semver.org/): a partir da `1.0.0`, uma mudança que quebre o contrato JSON da CLI ou o formato das perguntas guardadas só vem numa nova versão major. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
-> A API de mods muda entre as versões do Claude Code, então espere mudanças até uma versão estável.
+> A API de mods muda entre as versões do Claude Code, então um Claude Code mais novo pode mudar o painel antes de o Askaway acompanhar ([Problemas conhecidos](#-problemas-conhecidos)).
 
 ## 💡 Por que existe
 
@@ -242,7 +242,7 @@ Regras básicas:
 | 4 | 🧑 Instalar o plugin | `claude plugin install askaway@keepglide` | Código de saída 0; `claude plugin list` mostra `askaway@keepglide`. |
 | 5 | Criar uma pasta de estado de teste | `mkdir -p /tmp/askaway-test` | Código de saída 0; a pasta está vazia. |
 | 6 | Verificar o modo ausente | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" away status` | Imprime `{"away": false}`. |
-| 7 | Registrar uma pergunta de teste | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Test","question":"Pick option A today?","what":"A test question for the Askaway CLI. It only checks that a question is filed.","problem":"Nothing is decided by this test, so the check has no cost.","context":"Install spec check of the Askaway CLI.","options":[{"key":"A","label":"Yes","tradeoff":"Safe to accept and easy to change later","fit":90,"does":"The check takes option A.","pros":"Quick to verify.","cons":"Tests nothing else."},{"key":"B","label":"No","tradeoff":"Keeps the current behavior","fit":10,"does":"The check takes option B.","pros":"Changes nothing at all.","cons":"Gives no result."}],"recommended":"A","why":"A is the safe default for this test.","how":"The session continues on A at once.","gains":"The check finishes without a human.","losses":"Nothing is changed by the test.","analogy":"A dry run before the real job.","urgency":"Can wait","undo":"changing later ≈ 1 min","risk":"low"}'` | Imprime `{"id": "q-…", "recommended": "A", "title": "Test", "action": "continue"}`. |
+| 7 | Registrar uma pergunta de teste | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Test","lang":"en","question":"Pick option A today?","what":"A test question for the Askaway CLI. It only checks that a question is filed.","problem":"Nothing is decided by this test, so the check has no cost.","context":"Install spec check of the Askaway CLI.","options":[{"key":"A","label":"Yes","tradeoff":"Safe to accept and easy to change later","fit":90,"does":"The check takes option A.","pros":"Quick to verify.","cons":"Tests nothing else."},{"key":"B","label":"No","tradeoff":"Keeps the current behavior","fit":10,"does":"The check takes option B.","pros":"Changes nothing at all.","cons":"Gives no result."}],"recommended":"A","why":"A is the safe default for this test.","how":"The session continues on A at once.","gains":"The check finishes without a human.","losses":"Nothing is changed by the test.","analogy":"A dry run before the real job.","urgency":"Can wait","undo":"changing later ≈ 1 min","risk":"low"}'` | Imprime `{"id": "q-…", "recommended": "A", "title": "Test", "action": "continue"}`. |
 | 8 | Verificar a regra de pausa | Passo 7 de novo numa segunda pasta, `ASKAWAY_HOME=/tmp/askaway-test-2`, com `"risk":"high"` no lugar de `"risk":"low"` | Imprime `"action": "pause"`. Na pasta do passo 7, a mesma pergunta da mesma sessão é uma duplicata e imprime `"action": "open"`. |
 | 9 | 🧑 Abrir o painel (numa sessão do Claude Code) | `/askaway` | A janela do painel do Askaway abre. |
 | 10 | Devolver ao usuário | nenhum | Informe cada resultado, as pastas `/tmp/askaway-test` e `/tmp/askaway-test-2` e qualquer passo pulado. Peça ao usuário para apagar as duas pastas. |
@@ -389,7 +389,7 @@ O gancho `ask-guard` roda antes de toda chamada de `AskUserQuestion`. Quando uma
 Fora disso, a pergunta é feita no Claude Code como de costume. A CLI imprime uma linha JSON:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache backend","question":"Which cache should the service use?","what":"The service needs a cache in front of its reads. Three workers run the API, and each one can keep its own cache or share one.","problem":"Without a choice, each worker keeps a separate cache and repeats the same reads.","context":"Sizing the API for three workers; the cache sits in front of the reads.","options":[{"key":"A","label":"Redis","tradeoff":"Safe to accept and easy to change later; one more service to run and monitor","fit":88,"does":"Redis runs as a service next to the API, and the workers share its cache.","pros":"Hits are shared across workers and survive a restart.","cons":"One more service to run and monitor."},{"key":"B","label":"In-process","tradeoff":"Give up sharing hits across workers; the cache is lost on restart","fit":40,"does":"Each worker keeps its own cache in memory.","pros":"No extra service to run.","cons":"Hits are not shared, and the cache is lost on restart."}],"recommended":"A","why":"Workers share one cache, so a hit on one serves all three.","analogy":"A shared filing cabinet instead of one desk drawer per worker.","how":"Redis runs as a service in `docker-compose.yml` next to the API; the cache client points at it.","gains":"Hits are shared across workers and survive a restart.","losses":"One more service to run and monitor.","urgency":"Can wait","undo":"changing later ≈ 10 min","risk":"low"}'
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache backend","lang":"en","question":"Which cache should the service use?","what":"The service needs a cache in front of its reads. Three workers run the API, and each one can keep its own cache or share one.","problem":"Without a choice, each worker keeps a separate cache and repeats the same reads.","context":"Sizing the API for three workers; the cache sits in front of the reads.","options":[{"key":"A","label":"Redis","tradeoff":"Safe to accept and easy to change later; one more service to run and monitor","fit":88,"does":"Redis runs as a service next to the API, and the workers share its cache.","pros":"Hits are shared across workers and survive a restart.","cons":"One more service to run and monitor."},{"key":"B","label":"In-process","tradeoff":"Give up sharing hits across workers; the cache is lost on restart","fit":40,"does":"Each worker keeps its own cache in memory.","pros":"No extra service to run.","cons":"Hits are not shared, and the cache is lost on restart."}],"recommended":"A","why":"Workers share one cache, so a hit on one serves all three.","analogy":"A shared filing cabinet instead of one desk drawer per worker.","how":"Redis runs as a service in `docker-compose.yml` next to the API; the cache client points at it.","gains":"Hits are shared across workers and survive a restart.","losses":"One more service to run and monitor.","urgency":"Can wait","undo":"changing later ≈ 10 min","risk":"low"}'
 ```
 
 ```text
@@ -399,6 +399,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache b
 | Campo | Obrigatório | Observações |
 |---|---|---|
 | `question` | sim | Até 400 caracteres. |
+| `lang` | sim | `en` ou `pt-BR`: o idioma em que o texto da própria entrada está escrito. O cartão é desenhado nele, rótulos incluídos, a menos que exista uma tradução completa para o idioma do painel. Um valor ausente ou vazio volta como `refile`. |
 | `options` | sim | Pelo menos 2 objetos. As `key` são letras maiúsculas consecutivas, em ordem: `A`, `B`, `C`… Cada um tem `label`, `tradeoff` (até 300 caracteres), `fit` (a estimativa do próprio agente, um inteiro de 0 a 100; `null` é aceito e quer dizer que não há estimativa) e `does` (o que acontece se for escolhida), `pros` e `cons`, cada um até 300 caracteres. O painel desenha o fit depois da troca, como `· aderência 88`. |
 | `recommended` | sim | Uma das chaves das opções. |
 | `title` | não | Até 60 caracteres. Quando falta, a pergunta é cortada em 60 caracteres e usada como título. |
@@ -413,7 +414,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache b
 | `risk` | sim | O risco de aceitar a opção recomendada: `low` é seguro de aceitar e fácil de mudar depois; `medium` é reversível, mas mudar custa retrabalho; `high` é irreversível, ou toca arquivos reais, credenciais ou dinheiro, e pausa o agente que perguntou até a resposta ser entregue a ele (a sessão inteira quando a pergunta não tem autor). Não há padrão: um `risk` faltando faz a entrada voltar como `refile`. |
 | `pause` | não | Só é verificado quanto ao tipo; não pausa nada. Uma pergunta pausa o agente que perguntou quando `risk` é `high` (a sessão inteira quando ainda não tem autor), e nunca em outro caso. |
 | `urgency_level` | não | `low`, `medium` ou `high` (qualquer caixa): o grau pelo qual o painel colore a urgência. Sem ele, o painel gradua o texto da urgência por palavras-chave. Qualquer outro valor volta como `refile`. |
-| `translations` | não | O texto da pergunta no outro idioma do painel, com as chaves `en` e `pt-BR` só (outra chave volta como `refile`), para que `/askaway lang` troque o cartão inteiro. Cada idioma tem um subconjunto não vazio dos campos de texto e dos campos das opções. |
+| `translations` | não | O texto da pergunta no outro idioma do painel, com a chave `en` ou `pt-BR` (nunca o `lang` da própria entrada; outra chave volta como `refile`), para que `/askaway lang` troque o cartão inteiro. Um idioma vem completo ou não vem: todos os campos de texto obrigatórios, e `label`, `does`, `pros`, `cons` e `tradeoff` de cada opção; uma falta volta como `translations.<chave>: missing <nomes>`. |
 | `run_kind` | não | `main`, `subagent`, `goal`, `loop`, `bash` ou `codex`. |
 
 Não passe `session` nem `project`: a CLI os preenche a partir do ambiente e do diretório de trabalho. Texto acima do limite é recusado, não cortado: a resposta de refile traz `too long (n/limit)`; encurte o texto e registre a entrada de novo.
@@ -750,10 +751,10 @@ Encontrou um? [Abra uma issue](https://github.com/KeepGlide/askaway/issues/new).
 
 | Categoria | Testes |
 |---|---|
-| Mod (TypeScript), `plugins/askaway/tests/` | 542 |
-| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 1697 |
+| Mod (TypeScript), `plugins/askaway/tests/` | 551 |
+| CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 1716 |
 
-Contagem Python de `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts`, no commit da versão 0.4.3, em 2026-10-31. A contagem do mod vem de uma execução nova de `claude plugin test plugins/askaway` no mesmo commit (o runner não tem modo de coleta).
+Contagem Python de `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts`, no commit da versão 1.0.0, em 2026-10-31. A contagem do mod vem de uma execução nova de `claude plugin test plugins/askaway` no mesmo commit (o runner não tem modo de coleta).
 
 ## 🔧 Desenvolvimento
 
@@ -803,6 +804,7 @@ As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md), no formato 
 | 0.4.1 | 2026-10-30 | O campo sob Outro… estica até a borda direita do painel em vez de ficar curto. |
 | 0.4.2 | 2026-10-30 | Um botão Aplicar sob o campo Outra; no desktop a letra da opção aparece só no quadradinho da tecla; a linha "Ainda não respondida: escolha uma opção." saiu; a altura do campo acompanha o texto na largura toda. |
 | 0.4.3 | 2026-10-31 | O campo Outra não tem botão: o Enter aplica o texto, como diz o placeholder; o Limpar tudo fica na linha do título do Histórico, abaixo das perguntas abertas. |
+| 1.0.0 | 2026-10-31 | Cada cartão é desenhado num idioma só, rótulos incluídos: o `ask` exige `lang`, uma tradução vem completa ou não vem, e as entradas antigas têm o idioma detectado; no desktop o link Outra mostra a letra só no quadradinho da tecla, como as opções.
 
 ## 🤝 Contribuição
 

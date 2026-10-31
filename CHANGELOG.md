@@ -2,10 +2,37 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 0.4.3, set by the 0.4.3 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 1.0.0, set by the 1.0.0 release commit.
 Commit hashes name the change in `git log`.
 
 ## [Unreleased]
+
+## [1.0.0] - 2026-10-31
+
+Askaway 1.0.0 is the first SemVer-stable release: from here on, a change that breaks the CLI's JSON contract or the stored
+question format comes only in a new major version. It fixes the mixed languages on a card: an English question with Portuguese
+labels, or a card half translated.
+
+### Changed
+- `ask` requires `lang`, `en` or `pt-BR`: the language the entry's own text is written in. A missing or blank value is refiled
+  (`missing fields: lang`); any other value is refused. The `askuser` skeleton carries `"lang": ""` for the agent to fill.
+- A translation is complete or absent: it needs every required text field and `label`, `does`, `pros`, `cons` and `tradeoff`
+  for every option; a gap is refiled as `translations.<tag>: missing <names>`. A translation into the entry's own `lang` is refused.
+- Each card draws in one language, its card language: the panel's when the entry is in it or has a complete translation into
+  it, else the entry's own `lang`. Every label on the card follows it: option rows, the Recommended mark, Pros and Cons, the Other
+  link and its field placeholder, the nav labels, and the answer names in the History and footer. The pane's own chrome (header,
+  counter, tree and History headings, Clear all, the review screen's Back and Submit) stays in the panel language (`cardLangOf`).
+- A partial translation stored before this release is ignored whole, so it no longer mixes two languages on one card.
+- On the desktop the Other link is no longer a plain Button: the engine draws its hotkey letter after the label, as on the
+  option rows, instead of before it. The terminal keeps the plain link.
+
+### Fixed
+- Entries written before `lang` existed get their language detected from the question and `what` text, by function words
+  only one language uses, so "do" and "no" no longer read an English question as Portuguese.
+
+### Docs
+- The README pair, SPEC and the question playbook describe `lang` and complete-or-absent translations; the `ask` examples carry
+  `lang`. SECURITY.md supports `1.x`.
 
 ## [0.4.3] - 2026-10-31
 
@@ -848,7 +875,8 @@ Third gauntlet round (40 personas over betas 14 to 25): 150 findings, 64 adopted
 - The README describes the away flow and what each card carries, matches every claim to the plugin, and adds a screenshot (150ad49, 6020300).
 - SPEC.md records the 0.4.0-beta.5 live check of the pane layout (0f43a9f).
 
-[Unreleased]: https://github.com/KeepGlide/askaway/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/KeepGlide/askaway/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/KeepGlide/askaway/compare/v0.4.3...v1.0.0
 [0.4.3]: https://github.com/KeepGlide/askaway/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/KeepGlide/askaway/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/KeepGlide/askaway/compare/v0.4.0...v0.4.1
