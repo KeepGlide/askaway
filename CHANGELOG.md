@@ -2,10 +2,16 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 1.0.0, set by the 1.0.0 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 1.0.1, set by the 1.0.1 release commit.
 Commit hashes name the change in `git log`.
 
 ## [Unreleased]
+
+## [1.0.1] - 2026-11-01
+
+### Changed
+- The History's button reads Clear history (pt Limpar histórico) instead of Clear all (pt Limpar tudo), since it clears the
+  History alone. Its place and rules stay: on the History heading row, only while the History has rows to clear.
 
 ## [1.0.0] - 2026-10-31
 
@@ -875,7 +881,8 @@ Third gauntlet round (40 personas over betas 14 to 25): 150 findings, 64 adopted
 - The README describes the away flow and what each card carries, matches every claim to the plugin, and adds a screenshot (150ad49, 6020300).
 - SPEC.md records the 0.4.0-beta.5 live check of the pane layout (0f43a9f).
 
-[Unreleased]: https://github.com/KeepGlide/askaway/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/KeepGlide/askaway/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/KeepGlide/askaway/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/KeepGlide/askaway/compare/v0.4.3...v1.0.0
 [0.4.3]: https://github.com/KeepGlide/askaway/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/KeepGlide/askaway/compare/v0.4.1...v0.4.2

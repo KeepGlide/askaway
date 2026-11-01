@@ -50,7 +50,7 @@
 
 ## 📌 Status
 
-**Estável** (`1.0.0`). O Askaway segue o [SemVer](https://semver.org/): a partir da `1.0.0`, uma mudança que quebre o contrato JSON da CLI ou o formato das perguntas guardadas só vem numa nova versão major. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
+**Estável** (`1.0.1`). O Askaway segue o [SemVer](https://semver.org/): a partir da `1.0.0`, uma mudança que quebre o contrato JSON da CLI ou o formato das perguntas guardadas só vem numa nova versão major. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
 > A API de mods muda entre as versões do Claude Code, então um Claude Code mais novo pode mudar o painel antes de o Askaway acompanhar ([Problemas conhecidos](#-problemas-conhecidos)).
@@ -308,9 +308,9 @@ Enquanto há perguntas abertas, uma faixa fica acima do prompt: `2 perguntas agu
 
 ### Histórico
 
-Embaixo do cartão, o bloco **Histórico** é desenhado como a árvore acima: um ícone de histórico (um relógio voltando) e **Histórico** como cabeçalho, depois as respostas do último período, agrupadas por grupo do Desktop ou família, e por sessão, cada uma como uma única linha `○`: o título inteiro da pergunta, ` ✓ ` e a resposta com a situação dela (`Manter · enviada 14:32`, em que Manter é o rótulo da opção escolhida ou o texto entre aspas de uma resposta Outra, depois `entregue 14:33 (lida pela sessão)` quando a sessão a leu, `a sessão encerrou antes de ler`, ou `expirou sem ser lida`: nenhuma sessão a leu em 7 dias; nada é acrescentado enquanto ela espera). Quando a pergunta veio de uma sessão do Desktop, o rótulo da família e a linha da sessão são links que abrem essas sessões no Desktop; o nome de um grupo do Desktop e o título da pergunta são texto puro; o terminal desenha todos como texto puro. Uma linha entregue fica até **Limpar tudo**; as outras também ficam. **Limpar tudo (N)** no fim remove todas as linhas mostradas, inclusive as que aguardam (o arquivo da resposta fica, então a sessão ainda a lê).
+Embaixo do cartão, o bloco **Histórico** é desenhado como a árvore acima: um ícone de histórico (um relógio voltando) e **Histórico** como cabeçalho, depois as respostas do último período, agrupadas por grupo do Desktop ou família, e por sessão, cada uma como uma única linha `○`: o título inteiro da pergunta, ` ✓ ` e a resposta com a situação dela (`Manter · enviada 14:32`, em que Manter é o rótulo da opção escolhida ou o texto entre aspas de uma resposta Outra, depois `entregue 14:33 (lida pela sessão)` quando a sessão a leu, `a sessão encerrou antes de ler`, ou `expirou sem ser lida`: nenhuma sessão a leu em 7 dias; nada é acrescentado enquanto ela espera). Quando a pergunta veio de uma sessão do Desktop, o rótulo da família e a linha da sessão são links que abrem essas sessões no Desktop; o nome de um grupo do Desktop e o título da pergunta são texto puro; o terminal desenha todos como texto puro. Uma linha entregue fica até **Limpar histórico**; as outras também ficam. **Limpar histórico (N)** no fim remove todas as linhas mostradas, inclusive as que aguardam (o arquivo da resposta fica, então a sessão ainda a lê).
 
-Quando nenhuma pergunta está aberta, o painel mostra uma linha de rodapé sob a árvore do Histórico, com as contagens: `1 respondida nas últimas 24 h · última: <título> → <rótulo>, <idade> · 1 ainda não lida · 1 expirada`. A primeira parte vira `nenhuma respondida nas últimas 24 h` quando nenhuma resposta cai nas últimas 24 h; as partes de não lidas e expiradas aparecem só quando não são zero, e deixam de fora as linhas que um Limpar tudo ocultou. Ela some enquanto uma pergunta está aberta.
+Quando nenhuma pergunta está aberta, o painel mostra uma linha de rodapé sob a árvore do Histórico, com as contagens: `1 respondida nas últimas 24 h · última: <título> → <rótulo>, <idade> · 1 ainda não lida · 1 expirada`. A primeira parte vira `nenhuma respondida nas últimas 24 h` quando nenhuma resposta cai nas últimas 24 h; as partes de não lidas e expiradas aparecem só quando não são zero, e deixam de fora as linhas que um Limpar histórico ocultou. Ela some enquanto uma pergunta está aberta.
 
 ### Anatomia de um cartão
 
@@ -468,7 +468,7 @@ python3 "<askaway>/scripts/askaway.py" wait <id> --strict
 ├── s/<id>.json   a marca de entrega da cópia do próprio subagente que perguntou
 ├── away.json     modo ausente: {"on": true, "ts": ...}
 ├── draft.json    as escolhas do assistente, compartilhadas por todas as sessões da pasta
-├── cleared.json  as linhas do Histórico que um Limpar tudo ocultou, compartilhadas por todas as sessões da pasta
+├── cleared.json  as linhas do Histórico que um Limpar histórico ocultou, compartilhadas por todas as sessões da pasta
 ├── foreign_check quando as respostas não lidas de outras sessões foram conferidas por último (a data de modificação), no máximo uma vez por minuto
 └── last_prune    quando a última limpeza rodou (a data de modificação)
 ```
@@ -558,9 +558,9 @@ As escolhas por trás do comportamento do Askaway, agrupadas por área. Cada lin
 | Uma escolha, Próxima ou Voltar inicia uma trava de movimento visível de 350 ms. | Sem trava | Um clique duplo pulava uma pergunta. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
 | Um cartão respondido fica esmaecido até a resposta ser gravada e volta na hora em caso de falha. | Um esmaecimento fixo de 250 ms | O esmaecimento diz a verdade sobre a gravação. | [beta.38](CHANGELOG.md#040-beta38---2026-10-22) |
 | As escolhas são compartilhadas por todas as sessões pelo `draft.json` (mescladas por id, a mais nova vence); um rascunho datado à frente do relógio é trazido de volta. | Escolhas por sessão | Um só quadro de respostas em toda janela. | [beta.24](CHANGELOG.md#040-beta24---2026-10-18) |
-| Uma linha entregue do Histórico fica até o Limpar tudo. | Sumir em 30 s | O usuário decide quando o histórico sai. | [beta.27](CHANGELOG.md#040-beta27---2026-10-19) |
+| Uma linha entregue do Histórico fica até o Limpar histórico. | Sumir em 30 s | O usuário decide quando o histórico sai. | [beta.27](CHANGELOG.md#040-beta27---2026-10-19) |
 | As linhas do Histórico são texto simples: o título inteiro, o rótulo da resposta ou o texto de Outra entre aspas, e os horários. | Links nos títulos | Nenhum cartão abre uma pergunta respondida, e o Desktop desenhava um link como um chip de sessão. | [beta.35](CHANGELOG.md#040-beta35---2026-10-21) |
-| Limpar tudo é de mão única e não destrói nada: grava só `cleared.json`, compartilhado por todas as sessões. | Desfazer; apagar arquivos | Os arquivos de resposta ficam, então as sessões ainda os leem. | [beta.25](CHANGELOG.md#040-beta25---2026-10-19) |
+| Limpar histórico é de mão única e não destrói nada: grava só `cleared.json`, compartilhado por todas as sessões. | Desfazer; apagar arquivos | Os arquivos de resposta ficam, então as sessões ainda os leem. | [beta.25](CHANGELOG.md#040-beta25---2026-10-19) |
 | A opção recomendada é só negrito; a cor de destaque nunca é usada em texto. | Ciano ou magenta | Neutro em qualquer tema; o destaque mediu 3,28:1 no escuro. | [beta.7](CHANGELOG.md#040-beta7---2026-10-17) |
 | O bloco de detalhes é preenchido com a chave de tema do motor `userMessageBackground`, sem borda. | Um hex por família de tema; uma borda | O preenchimento escuro ficava ilegível no Desktop claro. | [beta.28](CHANGELOG.md#040-beta28---2026-10-20) |
 | O rodapé e as sublinhas das opções são desenhados sem esmaecer. | Texto esmaecido | O rodapé esmaecido mediu 3,95:1, abaixo de 4,5:1. | [beta.33](CHANGELOG.md#040-beta33---2026-10-21) |
@@ -754,7 +754,7 @@ Encontrou um? [Abra uma issue](https://github.com/KeepGlide/askaway/issues/new).
 | Mod (TypeScript), `plugins/askaway/tests/` | 551 |
 | CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 1716 |
 
-Contagem Python de `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts`, no commit da versão 1.0.0, em 2026-10-31. A contagem do mod vem de uma execução nova de `claude plugin test plugins/askaway` no mesmo commit (o runner não tem modo de coleta).
+Contagem Python de `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts`, no commit da versão 1.0.1, em 2026-11-01. A contagem do mod vem de uma execução nova de `claude plugin test plugins/askaway` no mesmo commit (o runner não tem modo de coleta).
 
 ## 🔧 Desenvolvimento
 
@@ -805,6 +805,7 @@ As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md), no formato 
 | 0.4.2 | 2026-10-30 | Um botão Aplicar sob o campo Outra; no desktop a letra da opção aparece só no quadradinho da tecla; a linha "Ainda não respondida: escolha uma opção." saiu; a altura do campo acompanha o texto na largura toda. |
 | 0.4.3 | 2026-10-31 | O campo Outra não tem botão: o Enter aplica o texto, como diz o placeholder; o Limpar tudo fica na linha do título do Histórico, abaixo das perguntas abertas. |
 | 1.0.0 | 2026-10-31 | Cada cartão é desenhado num idioma só, rótulos incluídos: o `ask` exige `lang`, uma tradução vem completa ou não vem, e as entradas antigas têm o idioma detectado; no desktop o link Outra mostra a letra só no quadradinho da tecla, como as opções.
+| 1.0.1 | 2026-11-01 | O botão do Histórico diz Limpar histórico em vez de Limpar tudo. |
 
 ## 🤝 Contribuição
 

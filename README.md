@@ -50,7 +50,7 @@
 
 ## 📌 Status
 
-**Stable** (`1.0.0`). Askaway follows [SemVer](https://semver.org/): from `1.0.0` on, a change that breaks the CLI's JSON contract or the stored question format comes only in a new major version. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
+**Stable** (`1.0.1`). Askaway follows [SemVer](https://semver.org/): from `1.0.0` on, a change that breaks the CLI's JSON contract or the stored question format comes only in a new major version. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
 > The mod API moves between Claude Code releases, so a newer Claude Code can change the panel before Askaway follows ([Known issues](#-known-issues)).
@@ -308,9 +308,9 @@ While questions are open, a band sits above the prompt: `2 questions waiting · 
 
 ### History
 
-Under the card, the **History** block is drawn as the tree above is: a history icon (a clock turning back) and **History** as its heading, then the answers of the last while, grouped by Desktop Group or session family, and by session, each answer as one `○` row: the question's whole title, ` ✓ ` and the answer with where it stands (`Keep · sent 14:32`, where Keep is the chosen option's label or an Other reply's quoted text, then `delivered 14:33 (read by the session)` once the session has read it, `the session ended before reading it`, or `expired unread`: no session read it within 7 days; nothing is added while it waits). When the question was asked from a Desktop session, the family label and the session row are links that open those sessions on the Desktop; a Desktop Group's name and the question's title are plain text; the terminal draws all of them as plain text. A delivered line stays until Clear all; the other lines stay too. **Clear all (N)** at the very bottom removes every row shown, waiting ones included (the answer file stays, so the session still reads it).
+Under the card, the **History** block is drawn as the tree above is: a history icon (a clock turning back) and **History** as its heading, then the answers of the last while, grouped by Desktop Group or session family, and by session, each answer as one `○` row: the question's whole title, ` ✓ ` and the answer with where it stands (`Keep · sent 14:32`, where Keep is the chosen option's label or an Other reply's quoted text, then `delivered 14:33 (read by the session)` once the session has read it, `the session ended before reading it`, or `expired unread`: no session read it within 7 days; nothing is added while it waits). When the question was asked from a Desktop session, the family label and the session row are links that open those sessions on the Desktop; a Desktop Group's name and the question's title are plain text; the terminal draws all of them as plain text. A delivered line stays until Clear history; the other lines stay too. **Clear history (N)** at the very bottom removes every row shown, waiting ones included (the answer file stays, so the session still reads it).
 
-When no question is open, the pane shows one footer line under the History tree, with the counts: `1 answered in the last 24 h · last: <title> → <label>, <age> · 1 not yet read · 1 expired`. The first part reads `none answered in the last 24 h` when no answer falls in the last 24 h; the unread and expired parts show only when they are not zero, and leave out the rows Clear all hid. It is absent while a question is open.
+When no question is open, the pane shows one footer line under the History tree, with the counts: `1 answered in the last 24 h · last: <title> → <label>, <age> · 1 not yet read · 1 expired`. The first part reads `none answered in the last 24 h` when no answer falls in the last 24 h; the unread and expired parts show only when they are not zero, and leave out the rows Clear history hid. It is absent while a question is open.
 
 ### Anatomy of a card
 
@@ -468,7 +468,7 @@ python3 "<askaway>/scripts/askaway.py" wait <id> --strict
 ├── s/<id>.json   the delivery marker of the asking subagent's own copy
 ├── away.json     away mode: {"on": true, "ts": ...}
 ├── draft.json    the wizard's picks, shared by every session of the folder
-├── cleared.json  the History lines a Clear all hid, shared by every session of the folder
+├── cleared.json  the History lines a Clear history hid, shared by every session of the folder
 ├── foreign_check when unread answers of other sessions were last re-checked (its mtime), at most once a minute
 └── last_prune    when the last prune ran (its mtime)
 ```
@@ -558,9 +558,9 @@ The choices behind Askaway's behaviour, grouped by area. Each row says what was 
 | A pick, Next or Back starts a visible 350 ms move lock. | No lock | A double click skipped a question. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
 | An answered card stays dimmed until its reply is written and undims at once on failure. | A fixed 250 ms fade | The dim tells the truth about the write. | [beta.38](CHANGELOG.md#040-beta38---2026-10-22) |
 | Picks are shared by every session through `draft.json` (merged per id, newest wins); a draft stamped ahead of the clock is pulled back. | Per-session picks | One answer board in every window. | [beta.24](CHANGELOG.md#040-beta24---2026-10-18) |
-| A delivered History line stays until Clear all. | A 30 s fade | The user decides when the history goes. | [beta.27](CHANGELOG.md#040-beta27---2026-10-19) |
+| A delivered History line stays until Clear history. | A 30 s fade | The user decides when the history goes. | [beta.27](CHANGELOG.md#040-beta27---2026-10-19) |
 | History rows are plain text: the whole title, the reply's label or quoted Other text, and the times. | Links on titles | No card opens an answered question, and the Desktop drew a link as a session chip. | [beta.35](CHANGELOG.md#040-beta35---2026-10-21) |
-| Clear all is one-way and non-destructive: it writes only `cleared.json`, shared by every session. | An undo; deleting files | Answer files stay, so sessions still read them. | [beta.25](CHANGELOG.md#040-beta25---2026-10-19) |
+| Clear history is one-way and non-destructive: it writes only `cleared.json`, shared by every session. | An undo; deleting files | Answer files stay, so sessions still read them. | [beta.25](CHANGELOG.md#040-beta25---2026-10-19) |
 | The recommended option is plain bold; the accent colour is never used for text. | Cyan or magenta | Neutral in any theme; the accent measured 3.28:1 on dark. | [beta.7](CHANGELOG.md#040-beta7---2026-10-17) |
 | The details block is filled with the engine theme key `userMessageBackground`, with no border. | A hex fill per theme family; a border | The dark fill was unreadable on the light Desktop. | [beta.28](CHANGELOG.md#040-beta28---2026-10-20) |
 | The footer and option sub-rows are drawn without dim. | Dim text | The dim footer measured 3.95:1, under 4.5:1. | [beta.33](CHANGELOG.md#040-beta33---2026-10-21) |
@@ -754,7 +754,7 @@ Found one? [Open an issue](https://github.com/KeepGlide/askaway/issues/new).
 | Mod (TypeScript), `plugins/askaway/tests/` | 551 |
 | CLI and hooks (Python), `plugins/askaway/scripts/tests/` | 1716 |
 
-Python count from `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts`, at the 1.0.0 release commit, 2026-10-31. The mod count is from a fresh run of `claude plugin test plugins/askaway` at the same commit (the runner has no collection mode).
+Python count from `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts`, at the 1.0.1 release commit, 2026-11-01. The mod count is from a fresh run of `claude plugin test plugins/askaway` at the same commit (the runner has no collection mode).
 
 ## 🔧 Development
 
@@ -805,6 +805,7 @@ The changes of each version are in [CHANGELOG.md](CHANGELOG.md), in the [Keep a 
 | 0.4.2 | 2026-10-30 | An Apply button under the Other field; on the desktop the option letter shows only in its key chip; the plain "Not answered yet: pick an option." line is gone; the field's height fits its text at full width. |
 | 0.4.3 | 2026-10-31 | The Other field has no button: Enter applies the text, as its placeholder says; Clear all sits on the History heading row, under the open questions. |
 | 1.0.0 | 2026-10-31 | Each card draws in one language, labels included: `ask` requires `lang`, translations are complete or absent, and old entries get their language detected; on the desktop the Other link shows its letter only in the key chip, as the options do. |
+| 1.0.1 | 2026-11-01 | The History's button reads Clear history instead of Clear all. |
 
 ## 🤝 Contributing
 
