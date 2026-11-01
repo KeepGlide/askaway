@@ -50,7 +50,7 @@
 
 ## 📌 Status
 
-**Estável** (`1.0.1`). O Askaway segue o [SemVer](https://semver.org/): a partir da `1.0.0`, uma mudança que quebre o contrato JSON da CLI ou o formato das perguntas guardadas só vem numa nova versão major. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
+**Estável** (`1.0.2`). O Askaway segue o [SemVer](https://semver.org/): a partir da `1.0.0`, uma mudança que quebre o contrato JSON da CLI ou o formato das perguntas guardadas só vem numa nova versão major. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
 > A API de mods muda entre as versões do Claude Code, então um Claude Code mais novo pode mudar o painel antes de o Askaway acompanhar ([Problemas conhecidos](#-problemas-conhecidos)).
@@ -751,10 +751,10 @@ Encontrou um? [Abra uma issue](https://github.com/KeepGlide/askaway/issues/new).
 
 | Categoria | Testes |
 |---|---|
-| Mod (TypeScript), `plugins/askaway/tests/` | 551 |
+| Mod (TypeScript), `plugins/askaway/tests/` | 552 |
 | CLI e ganchos (Python), `plugins/askaway/scripts/tests/` | 1716 |
 
-Contagem Python de `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts`, no commit da versão 1.0.1, em 2026-11-01. A contagem do mod vem de uma execução nova de `claude plugin test plugins/askaway` no mesmo commit (o runner não tem modo de coleta).
+Contagem Python de `python3 -m pytest --collect-only -q` em `plugins/askaway/scripts`, no commit da versão 1.0.2, em 2026-11-01. A contagem do mod vem de uma execução nova de `claude plugin test plugins/askaway` no mesmo commit (o runner não tem modo de coleta).
 
 ## 🔧 Desenvolvimento
 
@@ -806,6 +806,7 @@ As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md), no formato 
 | 0.4.3 | 2026-10-31 | O campo Outra não tem botão: o Enter aplica o texto, como diz o placeholder; o Limpar tudo fica na linha do título do Histórico, abaixo das perguntas abertas. |
 | 1.0.0 | 2026-10-31 | Cada cartão é desenhado num idioma só, rótulos incluídos: o `ask` exige `lang`, uma tradução vem completa ou não vem, e as entradas antigas têm o idioma detectado; no desktop o link Outra mostra a letra só no quadradinho da tecla, como as opções.
 | 1.0.1 | 2026-11-01 | O botão do Histórico diz Limpar histórico em vez de Limpar tudo. |
+| 1.0.2 | 2026-11-01 | Quando todas as perguntas de uma rodada são respondidas, o painel volta ao topo. |
 
 ## 🤝 Contribuição
 

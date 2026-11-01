@@ -50,7 +50,7 @@
 
 ## 📌 Status
 
-**Stable** (`1.0.1`). Askaway follows [SemVer](https://semver.org/): from `1.0.0` on, a change that breaks the CLI's JSON contract or the stored question format comes only in a new major version. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
+**Stable** (`1.0.2`). Askaway follows [SemVer](https://semver.org/): from `1.0.0` on, a change that breaks the CLI's JSON contract or the stored question format comes only in a new major version. The changes of each version are in [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
 > The mod API moves between Claude Code releases, so a newer Claude Code can change the panel before Askaway follows ([Known issues](#-known-issues)).
@@ -751,10 +751,10 @@ Found one? [Open an issue](https://github.com/KeepGlide/askaway/issues/new).
 
 | Category | Tests |
 |---|---|
-| Mod (TypeScript), `plugins/askaway/tests/` | 551 |
+| Mod (TypeScript), `plugins/askaway/tests/` | 552 |
 | CLI and hooks (Python), `plugins/askaway/scripts/tests/` | 1716 |
 
-Python count from `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts`, at the 1.0.1 release commit, 2026-11-01. The mod count is from a fresh run of `claude plugin test plugins/askaway` at the same commit (the runner has no collection mode).
+Python count from `python3 -m pytest --collect-only -q` in `plugins/askaway/scripts`, at the 1.0.2 release commit, 2026-11-01. The mod count is from a fresh run of `claude plugin test plugins/askaway` at the same commit (the runner has no collection mode).
 
 ## 🔧 Development
 
@@ -806,6 +806,7 @@ The changes of each version are in [CHANGELOG.md](CHANGELOG.md), in the [Keep a 
 | 0.4.3 | 2026-10-31 | The Other field has no button: Enter applies the text, as its placeholder says; Clear all sits on the History heading row, under the open questions. |
 | 1.0.0 | 2026-10-31 | Each card draws in one language, labels included: `ask` requires `lang`, translations are complete or absent, and old entries get their language detected; on the desktop the Other link shows its letter only in the key chip, as the options do. |
 | 1.0.1 | 2026-11-01 | The History's button reads Clear history instead of Clear all. |
+| 1.0.2 | 2026-11-01 | Once every question of a round is answered, the pane scrolls back to its top. |
 
 ## 🤝 Contributing
 
