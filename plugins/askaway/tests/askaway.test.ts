@@ -1225,6 +1225,21 @@ test('a single-question window: Submit all is dim until its pick, then primary, 
   await pane.unmount()
 })
 
+test('once every question of the round is answered, the pane scrolls back to its start; a pick alone does not', async ($, on) => {
+  const files = new Map([[path('q', 'q-l1-cccccc'), question('q-l1-cccccc', 1000)]])
+  const { logs, writes } = stubHost(on, files)
+  await $.session.start(SESSION)
+  const pane = await mountPane($)
+  // The test kit answers no plugin's own $.ui.scroll, so each call shows as its logged failure, which never stops the submit.
+  const scrollCalls = (): string[] => logs.filter(line => line.includes('ui.scroll'))
+  await pane.press({ key: 'opt-q-l1-cccccc-B' })
+  expect(scrollCalls()).toEqual([])
+  await pane.press({ key: 'submit-all' })
+  expect(writes).toEqual([path('a', 'q-l1-cccccc')])
+  expect(scrollCalls()).toEqual(['askaway: no implementation for ui.scroll'])
+  await pane.unmount()
+})
+
 test('a second press on another option replaces the pick; the answer is written only by Submit all', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   const { writes, clock } = stubHost(on, files)
@@ -2890,8 +2905,9 @@ test('Other… keeps the text Enter sends as its label, a link click picks it in
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa')])
   expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ id: 'q-l1-aaaaaa', key: 'other', by: 'panel', text: 'Use a fork' })
-  // The harness answers no plugin ui.focus, so the link's focus move is logged and nothing else is.
-  expect(logs.filter(line => !line.includes('ui.focus'))).toEqual([])
+  // The harness answers no plugin ui.focus or ui.scroll, so the link's focus move and the round's scroll back to the start
+  // are logged and nothing else is.
+  expect(logs.filter(line => !line.includes('ui.focus') && !line.includes('ui.scroll'))).toEqual([])
   await pane.unmount()
 })
 

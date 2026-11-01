@@ -1123,6 +1123,7 @@ async function submitGroup($: EngineInterface, group: Group): Promise<void> {
     await changeWizard($, prev => clearPicks(prev, ids, group.questions[0]?.id ?? null))
     // The review belongs to the group just sent: a later group must not draw it with one question picked.
     await closeReview($)
+    if (ids.length === items.length) await scrollToStart($)
   } finally {
     submitting.delete(group.key)
   }
@@ -1151,8 +1152,20 @@ async function submitOne($: EngineInterface, id: string): Promise<void> {
     const ids = await settledIds($, [id])
     await setUndelivered($, [id], ids)
     await changeWizard($, prev => clearPicks(prev, ids))
+    const isRoundDone = group.questions.every(question => question.id === id || fading[question.id] !== undefined)
+    if (ids.includes(id) && isRoundDone) await scrollToStart($)
   } finally {
     submitting.delete(submittingOne(id))
+  }
+}
+
+// Once every question of a round is answered, the pane goes back to its top, where the next round's questions start. A move
+// the engine refuses is left as it is; a call that throws is logged, and the submit already went through.
+async function scrollToStart($: EngineInterface): Promise<void> {
+  try {
+    await $.ui.scroll({ in: PANE, to: 'start' })
+  } catch (error) {
+    logFailure($, error)
   }
 }
 
