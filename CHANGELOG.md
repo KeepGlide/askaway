@@ -7,6 +7,11 @@ Commit hashes name the change in `git log`.
 
 ## [Unreleased]
 
+### Changed
+- The review that opens after Next on a group's last question no longer copies the group's rows into a block under the
+  tree: the group's own block of the open tree gets a round border, its rows name the chosen answers, and Back and
+  Submit all sit inside that border. No card is drawn while the review is open (`renderReview`).
+
 ## [1.0.2] - 2026-11-01
 
 ### Added

@@ -4036,8 +4036,12 @@ test('Next on the last question shows the review: each answer links to its card,
   await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Revise as suas respostas')
   expect(await rows()).toEqual([expect.stringMatching(/1\. Cache layer → Rewrite/), expect.stringMatching(/2\. Retry policy → Keep/)])
+  // The review is the group's own block of the open tree, set apart by a border: its rows are drawn once, and no card is drawn.
+  expect((await pane.find({ type: 'Box', key: 'review' }))?.props.borderStyle).toBe('round')
+  expect((await textsOf(pane)).filter(text => text.includes('Cache layer'))).toHaveLength(1)
+  expect(await pane.find({ type: 'Box', key: 'card-q-l2-bbbbbb' })).toBeUndefined()
   // A row jumps to its card; changing the pick there and walking back with Next brings the review back with the new answer.
-  await pane.press({ key: 'review-jump-q-l1-aaaaaa', link: { href: 'file:///askaway/jump/q-l1-aaaaaa' } })
+  await pane.press({ key: 'tree-jump-q-l1-aaaaaa', link: { href: 'file:///askaway/jump/q-l1-aaaaaa' } })
   expect(await textsOf(pane)).toContain('Cache layer')
   expect(await textsOf(pane)).not.toContain('Revise as suas respostas')
   await clock.advance(350)

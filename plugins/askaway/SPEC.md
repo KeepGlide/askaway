@@ -484,11 +484,12 @@ not in moving the button above the questions. `hooks/pane.tsx`, `renderPane`.
   line above the title. Back and Next keep the pick; it changes only on a new pick. An Other text recorded from its field
   (on a blur or a nav action, see Other…) records the pick in the same way, unless a kept label sets it aside. No answer is written until Submit all, and the picks
   are shared through `draft.json` (see "Shared picks").
-  In a group of two or more questions, Next on the last question opens the **review** in place of the card, whether or not
-  every question has a pick (`nextOrReview`, `reviewAtom`, `renderReview`): a bordered block that opens with the group's tree, drawn as the open tree draws
-  it (the group's name on top, then its sessions), with one link row per question, "○ <n>. <title> → <chosen answer>"
+  In a group of two or more questions, Next on the last question opens the **review**, whether or not every question has a
+  pick (`nextOrReview`, `reviewAtom`, `renderReview`): no card is drawn, and the group's own block of the open tree is set
+  apart by a round border, in its place in the tree (never a copy of it below). Its rows stay the tree's rows (`tree-jump-<id>`,
+  with the row's Submit once picked), each reading "○ <n>. <title> → <chosen answer>"
   (the option label, or an Other text in typographic quotes, `answerNameOf`; "No answer", pt "Sem resposta", for a question
-  with no pick, as "→ No answer"), whose press jumps to that question's card;
+  with no pick, as "→ No answer"), whose press jumps to that question's card; under the rows, inside the border, come
   then the title "Review your answers" (pt "Revise as suas respostas") and the hint "Press a question to change its
   answer." (pt "Clique numa pergunta para mudar a resposta."), then a separator, then [← Back] (its answer state first: "Answer: D · ← Back",
   or "No answer · ← Back" for the last question) and the plain [Submit all (n)] (pt "Enviar tudo (n)"), dim until every question of

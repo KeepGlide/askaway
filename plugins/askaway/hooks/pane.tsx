@@ -136,10 +136,7 @@ export function renderPane(ui: Ui, view: PaneView, actions: PaneActions, lang: L
       {view.groups.length > 0 && renderTree(tree)}
       {view.askWho && view.questions.length > 0 && renderAskWho(ui, lang, actions, held)}
       {view.damagedPauses?.map(id => renderDamagedPause(ui, lang, actions, held, id))}
-      {screen !== undefined &&
-        (reviewDrawnOf(view, screen)
-          ? renderReview(ui, lang, view, actions, screen, held)
-          : renderQuestion(ui, lang, view, actions, screen, held))}
+      {screen !== undefined && !reviewDrawnOf(view, screen) && renderQuestion(ui, lang, view, actions, screen, held)}
       {view.history.length > 0 && renderHistory(tree, view.history, clearCount)}
       {view.footer !== undefined && view.questions.length === 0 && renderFooter(ui, view.footer)}
     </Box>
@@ -226,8 +223,11 @@ function renderTree(tree: TreeContext): RenderElement {
   )
 }
 
-// One group of the open questions. Its questions are drawn by renderTreeQuestion.
+// One group of the open questions. Its questions are drawn by renderTreeQuestion; the group under review is drawn by
+// renderReview, in its own place in the tree.
 function renderGroup(tree: TreeContext, group: Group): RenderElement {
+  const { screen } = tree.view
+  if (screen !== undefined && group.key === tree.view.active?.key && reviewDrawnOf(tree.view, screen)) return renderReview(tree, group, screen)
   return renderBranch(tree.ui, {
     key: `group-${group.key}`,
     label: groupLabelOf(group.questions[0], tree.lang),
@@ -362,10 +362,11 @@ function renderHistoryClear(tree: TreeContext, count: number): RenderElement {
 // is bold while the card on screen is that question.
 // One question row of the tree: its link, then, once the question has a pick not yet submitted, " ✓ - " and its own
 // Submit link. The one mark before the text is the state: on screen (●) or waiting (○); no link mark joins it.
-export function renderTreeQuestion(tree: TreeContext, question: Question, place: RowPlace): RenderElement {
+// In the review (`reviewLabel`), the row names its answer and no card is on screen, so no row is marked ●.
+export function renderTreeQuestion(tree: TreeContext, question: Question, place: RowPlace, reviewLabel?: string): RenderElement {
   const { ui, view, actions, held, lang } = tree
   const { Box, Text } = ui
-  const isOnScreen = view.screen?.question.id === question.id
+  const isOnScreen = reviewLabel === undefined && view.screen?.question.id === question.id
   const isPicked = view.wizard.picks[question.id] !== undefined
   return (
     <Box key={`tree-${question.id}`} paddingLeft={place.indent} flexDirection="row">
@@ -373,7 +374,7 @@ export function renderTreeQuestion(tree: TreeContext, question: Question, place:
         key: `tree-jump-${question.id}`,
         lead: place.lead,
         mark: isOnScreen ? '●' : '○',
-        label: questionLabel(localizedQuestion(question, lang)),
+        label: reviewLabel ?? questionLabel(localizedQuestion(question, lang)),
         href: linkHref('jump', question.id),
         bold: isOnScreen,
         onPress: () => actions.jump(question.id),
@@ -865,20 +866,15 @@ function renderNext(ui: Ui, lang: Lang, actions: PaneActions, card: CardContext,
 const reviewDrawnOf = (view: PaneView, screen: Screen): boolean =>
   view.review !== null && view.active !== undefined && view.review === reviewKeyOf(view.active) && screen.total > 1
 
-// The review, drawn in place of the card once Next on the last question asked for it, whether or not every question has a
-// pick: one link per question with the answer chosen for it, "No answer" for one without (a press jumps to its card to
-// change it), then Back (to the card of the last question, its answer first) and Submit all, dim until every question has
-// a pick. The review's card context is the last question's, whatever step the wizard stores.
-function renderReview(
-  ui: Ui,
-  lang: Lang,
-  view: PaneView,
-  actions: PaneActions,
-  screen: Screen,
-  held: HeldButtons,
-): RenderElement {
+// The review, drawn once Next on the last question asked for it, whether or not every question has a pick: the group's own
+// block of the open tree, set apart by a border, with no card under the tree. Each row names the answer chosen for it, "No
+// answer" for one without (a press jumps to its card to change it); under the rows, Back (to the card of the last question,
+// its answer first) and Submit all, dim until every question has a pick. The review's card context is the last question's,
+// whatever step the wizard stores.
+function renderReview(tree: TreeContext, group: Group, screen: Screen): RenderElement {
+  const { ui, lang, view, actions, held } = tree
   const { Box, Button, Text } = ui
-  const lastQuestion = view.active?.questions[screen.total - 1] ?? screen.question
+  const lastQuestion = group.questions[screen.total - 1] ?? screen.question
   const card: CardContext = {
     question: localizedQuestion(lastQuestion, lang),
     wizard: view.wizard,
@@ -891,42 +887,25 @@ function renderReview(
   const isBackOff = card.isMoveLocked
   const backLabel = navLabelOf(card, 'back', answerLabelOf(lang, card, t(lang, 'nav.back')))
   const hotkey = letterFor(card, 'back')
-  const group = view.active
-  const order = (group?.questions ?? []).map(question => question.id)
-  // One answer's row, at its place in the group's tree: the question's number and title, then the answer chosen for it.
+  const order = group.questions.map(question => question.id)
+  // Each question keeps its own tree row, which names its number and the answer chosen for it.
   const reviewRow = (question: Question) => (place: RowPlace) => {
     const pick = view.wizard.picks[question.id]
     const answer = pick === undefined ? t(lang, 'nav.noAnswer') : answerNameOf(lang, pick, question)
-    return (
-      <Box key={`review-row-${question.id}`} paddingLeft={place.indent} flexDirection="row">
-        {treeLink(ui, held, {
-          key: `review-jump-${question.id}`,
-          lead: place.lead,
-          mark: '○',
-          label: `${order.indexOf(question.id) + 1}. ${questionLabel(localizedQuestion(question, lang))} → ${singleLine(answer)}`,
-          href: linkHref('jump', question.id),
-          bold: false,
-          onPress: () => actions.jump(question.id),
-        })}
-      </Box>
-    )
+    const label = `${order.indexOf(question.id) + 1}. ${questionLabel(localizedQuestion(question, lang))} → ${singleLine(answer)}`
+    return renderTreeQuestion(tree, question, place, label)
   }
-  // The answers sit in the group's tree, as the open questions do: the group's name on top, then its sessions and rows.
-  const tree =
-    group === undefined
-      ? false
-      : renderBranch(ui, {
-          key: `review-group-${group.key}`,
-          label: groupLabelOf(group.questions[0], lang),
-          sessions: group.sessions.flatMap(questions => {
-            const [first] = questions
-            if (first === undefined) return []
-            return [{ key: `review-session-${first.id}`, label: sessionLabelOf(first, lang), isRoot: isRootSession(first), rows: questions.map(reviewRow) }]
-          }),
-        })
   return (
     <Box key="review" flexDirection="column" gap={1} borderStyle="round" paddingX={1} paddingBottom={1}>
-      {tree}
+      {renderBranch(ui, {
+        key: `group-${group.key}`,
+        label: groupLabelOf(group.questions[0], lang),
+        sessions: group.sessions.flatMap(questions => {
+          const [first] = questions
+          if (first === undefined) return []
+          return [{ key: `session-${first.id}`, label: sessionLabelOf(first, lang), isRoot: isRootSession(first), rows: questions.map(reviewRow) }]
+        }),
+      })}
       <Box flexDirection="column">
         <Text bold>{t(lang, 'review.title')}</Text>
         <Text dimColor>{t(lang, 'review.hint')}</Text>
