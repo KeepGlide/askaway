@@ -2,10 +2,12 @@
 
 All notable changes to Askaway are recorded here, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
-`plugins/askaway/.claude-plugin/plugin.json` is 1.0.2, set by the 1.0.2 release commit.
+`plugins/askaway/.claude-plugin/plugin.json` is 1.0.3, set by the 1.0.3 release commit.
 Commit hashes name the change in `git log`.
 
 ## [Unreleased]
+
+## [1.0.3] - 2026-11-02
 
 ### Changed
 - The review that opens after Next on a group's last question no longer copies the group's rows into a block under the
