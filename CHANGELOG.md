@@ -8,6 +8,11 @@ Commit hashes name the change in `git log`.
 
 ## [Unreleased]
 
+### Added
+- A root `.claude-plugin/marketplace.json` (marketplace `keepglide-local`, plugin `askaway-user` at `./plugins/askaway`),
+  so the downloaded `.zip` installs offline with `/plugin marketplace add ./<folder>`. See the README section
+  "Install from a downloaded zip".
+
 ### Changed
 - The plugin is renamed AskAway User (DEC-W65). The display name, the panel title, the plugin id in
   `plugins/askaway/.claude-plugin/plugin.json` (now `askaway-user`), the skill `askaway-user-question-playbook` (namespace
