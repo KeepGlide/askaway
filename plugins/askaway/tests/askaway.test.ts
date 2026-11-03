@@ -44,7 +44,7 @@ const HOME = '/test-home'
 const STATE = `${HOME}/.claude/state/askaway`
 const SESSION = { cwd: '/work/app', surface: 'terminal', isInteractive: true } as const
 const PANE_PROPS = {
-  title: 'Askaway',
+  title: 'AskAway User',
   isFocused: false,
   bodyColumns: 100,
   placement: 'inline',
@@ -373,10 +373,10 @@ const readJson = (files: Map<string, string>, file: string): Record<string, unkn
   JSON.parse(files.get(file) ?? '{}') as Record<string, unknown>
 
 const mountPane = ($: Engine, surface: 'terminal' | 'desktop' = 'terminal') =>
-  $.ui.mount({ plugin: 'askaway', surface, component: 'Pane', requestId: 'askaway', props: PANE_PROPS })
+  $.ui.mount({ plugin: 'askaway-user', surface, component: 'Pane', requestId: 'askaway', props: PANE_PROPS })
 
 const mountBand = ($: Engine, surface: 'terminal' | 'desktop' = 'terminal') =>
-  $.ui.mount({ plugin: 'askaway', surface, component: 'AbovePrompt', props: BAND_PROPS })
+  $.ui.mount({ plugin: 'askaway-user', surface, component: 'AbovePrompt', props: BAND_PROPS })
 
 // The text a tree link (a Markdown block) reads as: its markup gone, the link as its label, its escapes undone.
 const plainMarkdown = (markdown: string): string =>
@@ -964,12 +964,12 @@ test('model: the lead line names the recommended key and the local time, or says
 test('model: the list header and rows read in each language, with away mode when it is on', () => {
   const q = parsedQuestion('q-m-000001', 10)
   expect(listText('en', [q], true)).toBe(
-    'Askaway: 1 pending, away mode on.\npending · q-m-000001 · Title q-m-000001 (recommended A)',
+    'AskAway User: 1 pending, away mode on.\npending · q-m-000001 · Title q-m-000001 (recommended A)',
   )
   expect(listText('pt', [q], true)).toBe(
-    'Askaway: 1 pendente, modo ausente ligado.\npendente · q-m-000001 · Title q-m-000001 (recomendada A)',
+    'AskAway User: 1 pendente, modo ausente ligado.\npendente · q-m-000001 · Title q-m-000001 (recomendada A)',
   )
-  expect(listText('pt', [], false)).toBe('Askaway: 0 pendentes.')
+  expect(listText('pt', [], false)).toBe('AskAway User: 0 pendentes.')
 })
 
 // beta.34: the optional `translations` of a question (per language, per field and per option) and the overlay the pane draws.
@@ -1085,7 +1085,7 @@ test('model: the due answers group by asking session, and a question with no ses
   expect(groups.map(group => group.session)).toEqual(['s1', 's2'])
   expect(groups[0]?.items.map(item => item.answer.id)).toEqual(['q-m-000001'])
   expect(groups[1]?.items.map(item => item.text)).toEqual([
-    'Answered via panel by "unknown": B · "Rewrite". Askaway question q-m-000002 ("Title q-m-000002"). (you were using A · "Keep")',
+    'Answered via panel by "unknown": B · "Rewrite". AskAway User question q-m-000002 ("Title q-m-000002"). (you were using A · "Keep")',
   ])
   expect(groupBySession({ ...board, delivered: [{ id: 'q-m-000002', expired: false }] }, 100_000).map(group => group.session)).toEqual(['s1'])
 })
@@ -1708,7 +1708,7 @@ test('the heading draws the logo before it: the glyph on the terminal, the SVG o
   expect(await terminal.find({ type: 'Svg' })).toBeUndefined()
   await terminal.unmount()
   const desktop = await mountPane($, 'desktop')
-  expect((await desktop.find({ type: 'Svg' }))?.props).toMatchObject({ alt: 'Askaway', width: 16, height: 16 })
+  expect((await desktop.find({ type: 'Svg' }))?.props).toMatchObject({ alt: 'AskAway User', width: 16, height: 16 })
   expect(await desktop.find({ type: 'Text', text: 'Perguntas aguardando' })).toBeDefined()
   await desktop.unmount()
 })
@@ -1828,7 +1828,7 @@ test('the card draws the lead line right under the question in pt-BR: the recomm
   const lead = 'Na opção B desde 18/10 14:02. Escolha outra opção para trocar; sem resposta, fica a opção B.'
   // The lead is the text drawn straight after the question, and the details block comes before the question.
   expect(texts.indexOf(lead)).toBe(texts.indexOf('Which way for q-l1-aaaaaa?') + 1)
-  expect(texts.indexOf('Detalhes do Askaway:')).toBeLessThan(texts.indexOf('Which way for q-l1-aaaaaa?'))
+  expect(texts.indexOf('Detalhes do AskAway User:')).toBeLessThan(texts.indexOf('Which way for q-l1-aaaaaa?'))
   expect(texts.indexOf('Title q-l1-aaaaaa')).toBeLessThan(texts.indexOf(lead))
 })
 
@@ -2241,7 +2241,7 @@ test('the footer drops an answer from the last-24-hours count once the window pa
   await pane.unmount()
 })
 
-test('the card has no details toggle and no e hotkey: every section is drawn at once, under the Askaway Details title', async ($, on) => {
+test('the card has no details toggle and no e hotkey: every section is drawn at once, under the AskAway User Details title', async ($, on) => {
   const long = {
     what: 'What W', problem: 'Problem P', analogy: 'Analogy N', why: 'Reason R', undo: 'Undo U', how: 'How H',
     gains: 'Gain G', losses: 'Loss L', context: 'Context C', urgency: 'Blocks soon',
@@ -2269,8 +2269,8 @@ test('the card has no details toggle and no e hotkey: every section is drawn at 
   for (const button of await pane.findAll({ type: 'Button' })) expect(button.props.hotkey).not.toBe('e')
   // The title line sits after the first block (What, then The problem) and before the details; the question and Urgency come after them.
   const at = (name: string): number => texts.findIndex(text => text.includes(name))
-  expect(at('What W')).toBeLessThan(at('Detalhes do Askaway:'))
-  expect(at('Detalhes do Askaway:')).toBeLessThan(at('Analogy N'))
+  expect(at('What W')).toBeLessThan(at('Detalhes do AskAway User:'))
+  expect(at('Detalhes do AskAway User:')).toBeLessThan(at('Analogy N'))
   expect(at('Analogy N')).toBeLessThan(at('Reason R'))
   expect(at('Reason R')).toBeLessThan(at('Context C'))
   expect(at('Context C')).toBeLessThan(at('Which way for q-f1-aaaaaa?'))
@@ -2463,7 +2463,7 @@ test('the band row is absent with a survey up, and with no open question', async
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   const { clock } = stubHost(on, files)
   await $.session.start(SESSION)
-  const surveyUp = await $.ui.mount({ plugin: 'askaway', surface: 'terminal', component: 'AbovePrompt', props: { ...BAND_PROPS, hasSurvey: true } })
+  const surveyUp = await $.ui.mount({ plugin: 'askaway-user', surface: 'terminal', component: 'AbovePrompt', props: { ...BAND_PROPS, hasSurvey: true } })
   expect(await surveyUp.find({ type: 'Button', key: 'open' })).toBeUndefined()
   expect(await surveyUp.find({ text: 'drawn beneath' })).toBeDefined()
   await surveyUp.unmount()
@@ -2514,10 +2514,10 @@ test('/askaway away toggles away.json and reports the new state', async ($, on) 
   stubHost(on, files)
   await $.session.start(SESSION)
   const first = await run($, 'away')
-  expect(first.text).toBe('Modo ausente do Askaway ligado.')
+  expect(first.text).toBe('Modo ausente do AskAway User ligado.')
   expect(readJson(files, `${STATE}/away.json`)).toMatchObject({ on: true })
   const second = await run($, 'away')
-  expect(second.text).toBe('Modo ausente do Askaway desligado.')
+  expect(second.text).toBe('Modo ausente do AskAway User desligado.')
   expect(readJson(files, `${STATE}/away.json`)).toMatchObject({ on: false })
 })
 
@@ -2591,7 +2591,7 @@ test('/askaway opens the pane, or answers the text list when the pane waits undr
   stubHost(on, files, false)
   await $.session.start(SESSION)
   const listed = await run($, '')
-  expect(listed.text).toContain('Askaway: 1 pendente.')
+  expect(listed.text).toContain('AskAway User: 1 pendente.')
   expect(listed.text).toContain('Pick a parser')
 })
 
@@ -2608,7 +2608,7 @@ test('/askaway lang en draws the open card in English on the very next draw, wit
   const drawn = JSON.stringify(await pane.drawn())
   expect(drawn).toContain('On A since')
   expect(drawn).toContain("fit N: the agent's estimate of fit, 0 to 100")
-  expect(drawn).toContain('Askaway Details:')
+  expect(drawn).toContain('AskAway User Details:')
   expect(drawn).toContain('Analogy: ')
   expect(drawn).toContain('See session')
   expect(await labelOf(pane, 'nav-back')).toBe('No answer · ← Back')
@@ -2745,7 +2745,7 @@ test('/askaway lang en switches the pane to English at once, and the choice is k
   const { clock } = stubHost(on, files)
   await $.session.start(SESSION)
   const answered = await run($, 'lang en')
-  expect(answered.text).toBe('Askaway language is now English.')
+  expect(answered.text).toBe('AskAway User language is now English.')
   const pane = await mountPane($)
   expect(await pane.find({ type: 'Text', text: '1 pending · 1 group' })).toBeDefined()
   expect(await pane.find({ type: 'Text', text: 'Questions waiting' })).toBeDefined()
@@ -2755,10 +2755,10 @@ test('/askaway lang en switches the pane to English at once, and the choice is k
   // Object keys of the prototype are not choices either; nothing is stored for them.
   expect(await run($, 'lang constructor')).toEqual({ text: 'Use /askaway lang pt-BR, en or auto.' })
   expect(await run($, 'lang __proto__')).toEqual({ text: 'Use /askaway lang pt-BR, en or auto.' })
-  expect(await run($, 'lang en')).toEqual({ text: 'Askaway language is now English.' })
+  expect(await run($, 'lang en')).toEqual({ text: 'AskAway User language is now English.' })
   // The older spellings of Brazilian Portuguese still work, whatever the case.
-  expect((await run($, 'lang pt')).text).toBe('O idioma do Askaway agora é Português.')
-  expect((await run($, 'lang PT_BR')).text).toBe('O idioma do Askaway agora é Português.')
+  expect((await run($, 'lang pt')).text).toBe('O idioma do AskAway User agora é Português.')
+  expect((await run($, 'lang PT_BR')).text).toBe('O idioma do AskAway User agora é Português.')
   await clock.advance(0)
 })
 
@@ -2766,17 +2766,17 @@ test('Gauntlet M69: /askaway lang re-registers /askaway with the new description
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   const { registrations } = stubHost(on, files)
   await $.session.start(SESSION)
-  expect(registrations).toEqual([{ name: 'askaway', description: 'Abre o painel do Askaway com as perguntas pendentes' }])
+  expect(registrations).toEqual([{ name: 'askaway', description: 'Abre o painel do AskAway User com as perguntas pendentes' }])
   await run($, 'lang en')
   expect(registrations).toHaveLength(2)
-  expect(registrations[1]).toEqual({ name: 'askaway', description: 'Open the Askaway pane with the pending questions' })
+  expect(registrations[1]).toEqual({ name: 'askaway', description: 'Open the AskAway User pane with the pending questions' })
 })
 
 test('/askaway lang pt then the pane reads in pt-BR, even when the environment says English', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { translations: { 'pt-BR': ptTranslation() } })]])
   stubHost(on, files, true, {}, {}, { LANG: 'en_US.UTF-8' })
   await $.session.start(SESSION)
-  expect((await run($, 'lang pt-BR')).text).toBe('O idioma do Askaway agora é Português.')
+  expect((await run($, 'lang pt-BR')).text).toBe('O idioma do AskAway User agora é Português.')
   const pane = await mountPane($)
   expect(await pane.find({ type: 'Text', text: 'Perguntas aguardando' })).toBeDefined()
   expect(await labelOf(pane, 'submit-all')).toBe('Sem resposta · Enviar tudo (1) (w)')
@@ -2892,11 +2892,11 @@ test('Other… keeps the text Enter sends as its label, a link click picks it in
   expect(await pane.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa' })).toBeDefined()
   expect(writes).toEqual([])
   // Blank Enter changes nothing: the field keeps its round and nothing is drafted.
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: '   ' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: '   ' })
   expect(await pane.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa' })).toBeDefined()
   expect(drafts).toEqual([])
   // Enter keeps the trimmed text as the label and picks it: the same question stays on screen, and nothing is written yet.
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: '  Use a fork  ' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: '  Use a fork  ' })
   expect(writes).toEqual([])
   expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
   expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
@@ -2916,7 +2916,7 @@ test('typing in Other… changes nothing drawn and writes nothing: no pick, no b
   const { writes } = stubHost(on, files)
   // Every state write goes through state.set; the pane's text lives in memory, so no key may reach it.
   const stateWrites: string[] = []
-  on('state.set', { plugin: 'askaway' }, (_$, e, next) => {
+  on('state.set', { plugin: 'askaway-user' }, (_$, e, next) => {
     stateWrites.push(e.key)
     return next(e)
   })
@@ -2926,7 +2926,7 @@ test('typing in Other… changes nothing drawn and writes nothing: no pick, no b
   const drawnBefore = JSON.stringify(await pane.drawn())
   const writesBefore = stateWrites.length
   for (const text of ['U', 'Us', 'Use', 'Use a', 'Use a fork']) {
-    await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text, kind: 'change' })
+    await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text, kind: 'change' })
     expect(JSON.stringify(await pane.drawn())).toBe(drawnBefore)
   }
   expect(stateWrites.length).toBe(writesBefore)
@@ -2942,9 +2942,9 @@ test('the Other field opens three rows tall and grows with the typed text up to 
   const pane = await mountPane($)
   const rows = async () => (await pane.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa' }))?.props.rows
   expect(await rows()).toBe(3)
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'a\nb\nc\nd\ne', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'a\nb\nc\nd\ne', kind: 'change' })
   expect(await rows()).toBe(5)
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'x'.repeat(2000), kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'x'.repeat(2000), kind: 'change' })
   expect(await rows()).toBe(10)
   await pane.unmount()
 })
@@ -2981,7 +2981,7 @@ test('Next records the Other text typed and not confirmed, before the card moves
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: '  Use a fork  ', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: '  Use a fork  ', kind: 'change' })
   await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Title q-l2-bbbbbb')
   await clock.advance(350)
@@ -3009,8 +3009,8 @@ test('Enter drops the pending draft: the link picks the text Enter kept, not the
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fo', kind: 'change' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fo', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
   // Enter keeps the text and picks it, so the older typing is gone and the pick is the kept text.
   expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
   await pane.press({ key: 'nav-next' })
@@ -3041,7 +3041,7 @@ test('blank Other… text typed after a recorded Other pick leaves the kept labe
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
   // Keep moves the text to the link and picks it; a click on the link picks it again, and the card stays on its question.
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
@@ -3053,7 +3053,7 @@ test('blank Other… text typed after a recorded Other pick leaves the kept labe
   expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
   // The field is open again under its new round: blank text typed there, not kept, takes the pick away when Next leaves it.
   await clock.advance(350)
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa-1', text: '   ', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa-1', text: '   ', kind: 'change' })
   await pane.press({ key: 'nav-next' })
   await clock.advance(350)
   await pane.press({ key: 'nav-back' })
@@ -3088,7 +3088,7 @@ test('a kept label drawn chosen is the primary button with a ✓ mark and bold, 
   expect(unpicked?.props.variant).not.toBe('primary')
   expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(false)
   // Enter keeps the text and picks it, so the kept label is drawn chosen at once.
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
   const chosen = await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' })
   expect(chosen?.props.plain).toBeUndefined()
   expect(chosen?.props.variant).toBe('primary')
@@ -3127,7 +3127,7 @@ test('a focus move off the Other field records its typed text: the move is passe
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await moveRing($, 'other-input-q-l1-aaaaaa')
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
   expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(false)
   await moveRing($, 'nav-next')
   expect(moves).toEqual(['other-input-q-l1-aaaaaa', 'nav-next'])
@@ -3141,7 +3141,7 @@ test('a focus move within the Other field records nothing, and a move to an engi
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await moveRing($, 'other-input-q-l1-aaaaaa')
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
   await moveRing($, 'other-input-q-l1-aaaaaa')
   expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(false)
   await moveRing($)
@@ -3155,7 +3155,7 @@ test('a focus move from Submit all onto another element records the Other text t
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await moveRing($, 'other-input-q-l1-aaaaaa')
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
   await moveRing($, 'submit-all')
   await moveRing($, 'submit-all')
   expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(false)
@@ -3174,7 +3174,7 @@ test('Back records the Other text typed on the card it leaves', async ($, on) =>
   const pane = await mountPane($)
   await pane.press({ key: 'nav-next' })
   await pane.press({ key: 'other-q-l2-bbbbbb' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l2-bbbbbb', text: 'Use a fork', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l2-bbbbbb', text: 'Use a fork', kind: 'change' })
   await clock.advance(350)
   await pane.press({ key: 'nav-back' })
   await clock.advance(350)
@@ -3198,7 +3198,7 @@ test('Submit all records the Other text typed after the picks, before it writes'
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
   await clock.advance(350)
   await pane.press({ key: 'other-q-l2-bbbbbb' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l2-bbbbbb', text: 'Use a fork', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l2-bbbbbb', text: 'Use a fork', kind: 'change' })
   // Next on the last question records the typed text first, then opens the review, where Submit all writes both answers.
   await clock.advance(350)
   await pane.press({ key: 'nav-next' })
@@ -3214,9 +3214,9 @@ test('Submit all with a kept label sends the text typed after it: the typed text
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'First text' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'First text' })
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa-1', text: 'Use a fork', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa-1', text: 'Use a fork', kind: 'change' })
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa')])
   expect(readJson(files, path('a', 'q-l1-aaaaaa'))).toMatchObject({ key: 'other', text: 'Use a fork' })
@@ -3262,7 +3262,7 @@ test('Submit all drawn off takes the press when the only answer is an Other text
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
   // No Enter and no focus move: the pane still draws the button off, as the draft is not in the store yet.
   expect((await pane.find({ type: 'Button', key: 'submit-all' }))?.props.dimColor).toBe(true)
   await pane.press({ key: 'submit-all' })
@@ -3282,7 +3282,7 @@ test('Submit all drawn off with an Other text on one of two questions records th
   await pane.press({ key: 'nav-next' })
   await clock.advance(350)
   await pane.press({ key: 'other-q-l2-bbbbbb' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l2-bbbbbb', text: 'Use a fork', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l2-bbbbbb', text: 'Use a fork', kind: 'change' })
   // Next on the last question records the typed text, then opens the review: q-l1-aaaaaa has no answer, so Submit all is dim.
   await pane.press({ key: 'nav-next' })
   expect(await textsOf(pane)).toContain('Revise as suas respostas')
@@ -3293,7 +3293,7 @@ test('Submit all drawn off with an Other text on one of two questions records th
   await clock.advance(350)
   await pane.press({ key: 'review-back' })
   await clock.advance(350)
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l2-bbbbbb', text: '   ', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l2-bbbbbb', text: '   ', kind: 'change' })
   await pane.press({ key: 'nav-next' })
   expect((await textsOf(pane)).filter(text => text.includes('→ Sem resposta'))).toHaveLength(2)
   await pane.press({ key: 'submit-all' })
@@ -3313,7 +3313,7 @@ test('an Other text recorded from its field that completes a group of two keeps 
   await clock.advance(350)
   await pane.press({ key: 'nav-next' })
   await moveRing($, 'other-input-q-l2-bbbbbb')
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l2-bbbbbb', text: 'Use a fork', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l2-bbbbbb', text: 'Use a fork', kind: 'change' })
   expect(await textsOf(pane)).not.toContain('Revise as suas respostas')
   // Leaving the field records the text as the pick; the card stays on its question until Next.
   await moveRing($, 'nav-back')
@@ -3334,7 +3334,7 @@ test('an option pick records the pending Other text first, so the pick stands an
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
   await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
   await clock.advance(350)
   await pane.press({ key: 'nav-back' })
@@ -3352,7 +3352,7 @@ test('a question that left the board drops its pending Other text: Next records 
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
   files.delete(path('q', 'q-l1-aaaaaa'))
   await clock.advance(5000)
   await pane.press({ key: 'opt-q-l2-bbbbbb-A' })
@@ -3370,7 +3370,7 @@ test('a tree jump records the pending Other text on the question it leaves', asy
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork', kind: 'change' })
   await pressTreeLink(pane, 'jump', 'q-l2-bbbbbb')
   await pane.press({ key: 'nav-back' })
   expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
@@ -3383,7 +3383,7 @@ test('Other… text that is itself an option word reaches the CLI as one --text=
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: '--help' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: '--help' })
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   await pane.press({ key: 'submit-all' })
   const argv = calls.find(call => call.argv[2] === 'answer')?.argv ?? []
@@ -3403,7 +3403,7 @@ test('Keep in Other… draws the text on the link and picks it, empties the fiel
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
   // Keep does not move on, and it picks the kept text: the same question stays, the field is empty under its new round.
   expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
   expect(await textsOf(pane)).not.toContain('Title q-l2-bbbbbb')
@@ -3432,7 +3432,7 @@ test('Keep, click, type without Keep, Next, Back: the pick stays the kept label,
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'First text' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'First text' })
   // Enter picked the kept text and the link's click picks it again; Next moves on, and Back returns to question 1,
   // whose field is under its new round.
   await pane.press({ key: 'other-q-l1-aaaaaa' })
@@ -3443,7 +3443,7 @@ test('Keep, click, type without Keep, Next, Back: the pick stays the kept label,
   await clock.advance(350)
   await pane.press({ key: 'nav-back' })
   await clock.advance(350)
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa-1', text: 'Second text', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa-1', text: 'Second text', kind: 'change' })
   // The harness does not expose the typed text on the Input node; the field is still there under its round key.
   expect(await pane.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa-1' })).toBeDefined()
   // Next leaves the field without Keep: the typed text is not recorded as the pick; the pick and the link are what the
@@ -3491,7 +3491,7 @@ test('blank Enter in Other… changes nothing: the Other pick and its label stay
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
   // The link's click picks the kept text again and the card stays; Next and Back bring question 1 back with the pick.
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
@@ -3501,7 +3501,7 @@ test('blank Enter in Other… changes nothing: the Other pick and its label stay
   await clock.advance(350)
   await pane.press({ key: 'nav-back' })
   expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa-1', text: '   ' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa-1', text: '   ' })
   expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
   expect(JSON.stringify(await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).toContain('Use a fork')
   expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
@@ -3514,7 +3514,7 @@ test('Keep draws the link as its letter and the text, picks it, and empties the 
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: '  Use a fork  ' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: '  Use a fork  ' })
   expect(await labelOf(pane, 'other-q-l1-aaaaaa')).toContain('C · Use a fork')
   expect(await pane.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa' })).toBeUndefined()
   expect(await pane.find({ type: 'Input', key: 'other-input-q-l1-aaaaaa-1' })).toBeDefined()
@@ -3528,10 +3528,10 @@ test('Keep again replaces the label and the Other pick with the new text, and Ke
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa-1', text: 'Use a fork two' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa-1', text: 'Use a fork two' })
   expect(await otherBold(pane, 'q-l1-aaaaaa')).toBe(true)
   expect(JSON.stringify(await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).toContain('Use a fork two')
   expect(JSON.parse(drafts[drafts.length - 1] ?? '{}')).toMatchObject({
@@ -3562,7 +3562,7 @@ test('the kept label is still drawn after the panel closes and reopens', async (
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
   expect(JSON.parse(drafts[drafts.length - 1] ?? '{}')).toMatchObject({ labels: { 'q-l1-aaaaaa': 'Use a fork' } })
   await pane.unmount()
   const reopened = await mountPane($)
@@ -3621,7 +3621,7 @@ test('draft.json has no labels key while no Other text is kept, and writes the l
   await pane.press({ key: 'opt-q-l1-aaaaaa-B' })
   expect(JSON.parse(drafts[0] ?? '{}')).toEqual({ ts: expect.any(Number), picks: { 'q-l1-aaaaaa': { key: 'B' } } })
   await clock.advance(350)
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
   // Keep picks the kept text, which replaces the option pick: the label and the Other pick are written together.
   expect(JSON.parse(drafts[drafts.length - 1] ?? '{}')).toEqual({
     ts: expect.any(Number),
@@ -3641,7 +3641,7 @@ test('the move lock dims option, Other, Next and Back for 350 ms after a move, p
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
   // A pick is a move: it locks the moves for 350 ms, and the card stays on its question.
   await pane.press({ key: 'opt-q-l1-aaaaaa-A' })
   expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
@@ -3745,7 +3745,7 @@ test('three polls with nothing new write no atom the pane draws from, so the pan
   const { clock } = stubHost(on, files)
   // Every state write the plugin makes goes through the state.set event; the test hook counts them and passes them on.
   const stateWrites: string[] = []
-  on('state.set', { plugin: 'askaway' }, (_$, e, next) => {
+  on('state.set', { plugin: 'askaway-user' }, (_$, e, next) => {
     stateWrites.push(e.key)
     return next(e)
   })
@@ -3771,7 +3771,7 @@ test('an Other… answer keeps its link bold, with no echo of the typed text und
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
   // Keep picked the text: the link is the chosen primary button, bold, with its label and no echo of the text.
   await clock.advance(350)
   await pane.press({ key: 'nav-next' })
@@ -3790,7 +3790,7 @@ test('a pane that stays mounted reads the age on as the clock moves: 60 s, then 
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 0)]])
   const { clock } = stubHost(on, files)
   const stateWrites: string[] = []
-  on('state.set', { plugin: 'askaway' }, (_$, e, next) => {
+  on('state.set', { plugin: 'askaway-user' }, (_$, e, next) => {
     stateWrites.push(e.key)
     return next(e)
   })
@@ -3814,7 +3814,7 @@ test('an idle session is handed its own answer once, as a prompt, and the d/ mar
   await $.session.start(SESSION)
   expect(submits).toEqual([])
   await clock.advance(5000)
-  expect(submits).toEqual(['Answered via panel by "unknown": B · "Rewrite". Askaway question q-l1-aaaaaa ("Title q-l1-aaaaaa"). (you were using A · "Keep")'])
+  expect(submits).toEqual(['Answered via panel by "unknown": B · "Rewrite". AskAway User question q-l1-aaaaaa ("Title q-l1-aaaaaa"). (you were using A · "Keep")'])
   expect(readJson(files, path('d', 'q-l1-aaaaaa'))).toMatchObject({ id: 'q-l1-aaaaaa', session: SELF, via: 'prompt' })
   await clock.advance(5000)
   expect(submits).toHaveLength(1)
@@ -3831,8 +3831,8 @@ test('the answers of one session are handed as one prompt, their lines joined by
   await $.session.start(SESSION)
   await clock.advance(5000)
   expect(submits).toEqual([
-    'Answered via panel by "unknown": B · "Rewrite". Askaway question q-l1-aaaaaa ("Title q-l1-aaaaaa"). (you were using A · "Keep")\n' +
-      'Answered via panel by "unknown": A · "Keep". Askaway question q-l2-bbbbbb ("Title q-l2-bbbbbb").',
+    'Answered via panel by "unknown": B · "Rewrite". AskAway User question q-l1-aaaaaa ("Title q-l1-aaaaaa"). (you were using A · "Keep")\n' +
+      'Answered via panel by "unknown": A · "Keep". AskAway User question q-l2-bbbbbb ("Title q-l2-bbbbbb").',
   ])
   expect(writes).toEqual([path('d', 'q-l1-aaaaaa'), path('d', 'q-l2-bbbbbb')])
 })
@@ -4402,7 +4402,7 @@ test('hotkeys: each option its key letter, Other the next letter c, then z, x an
   // the field, so the letters stay drawn, also once Enter has recorded its text.
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   expect(await hotkeyOf('opt-q-l1-aaaaaa-A')).toBe('a')
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'o' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'o' })
   expect(await hotkeyOf('opt-q-l1-aaaaaa-A')).toBe('a')
   expect(await hotkeyOf('other-q-l1-aaaaaa')).toBe('c')
   await pane.unmount()
@@ -4496,13 +4496,13 @@ test('draw order: every status line is drawn after the card\'s Back and Next but
   await pane.unmount()
 })
 
-test('band logo: the desktop band draws the SVG logo with alt "Askaway", and no glyph', async ($, on) => {
+test('band logo: the desktop band draws the SVG logo with alt "AskAway User", and no glyph', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   const { clock } = stubHost(on, files)
   await $.session.start(SESSION)
   await clock.advance(5000)
   const desktop = await mountBand($, 'desktop')
-  expect((await desktop.find({ type: 'Svg' }))?.props).toMatchObject({ alt: 'Askaway', width: 16, height: 16 })
+  expect((await desktop.find({ type: 'Svg' }))?.props).toMatchObject({ alt: 'AskAway User', width: 16, height: 16 })
   expect(await textsOf(desktop)).not.toContain('?')
   await desktop.unmount()
 })
@@ -4537,7 +4537,7 @@ const keyOfNode = (node: Record<string, unknown>): unknown => node.key ?? (node.
 // The state writes the plugin makes, in order: every write goes through the state.set event, and the hook passes it on.
 function recordStateWrites(on: On): string[] {
   const writes: string[] = []
-  on('state.set', { plugin: 'askaway' }, (_$, e, next) => {
+  on('state.set', { plugin: 'askaway-user' }, (_$, e, next) => {
     writes.push(e.key)
     return next(e)
   })
@@ -5301,7 +5301,7 @@ test('the card draws the first block as two plain paragraphs, then the details b
     '⏱️ Urgência: Soon',
     'W',
     'P',
-    'Detalhes do Askaway:',
+    'Detalhes do AskAway User:',
     '🔁 Analogia: An',
     '💡 Por que A: It is smaller.',
     '↩️ Como desfazer: U',
@@ -5335,11 +5335,11 @@ test('the section titles are bold and their bodies regular; the details block ha
     const inBlock = nodesOf(block)
     expect(block?.props).not.toHaveProperty('borderStyle')
     expect(block?.props).toMatchObject({ backgroundColor: 'userMessageBackground' })
-    expect(inBlock.some(node => isBoldText(node) && childrenOf(node).includes('Detalhes do Askaway:'))).toBe(true)
-    // The title row is the block's first child; its mark is the Askaway SVG on the desktop and the glyph on the terminal.
+    expect(inBlock.some(node => isBoldText(node) && childrenOf(node).includes('Detalhes do AskAway User:'))).toBe(true)
+    // The title row is the block's first child; its mark is the AskAway User SVG on the desktop and the glyph on the terminal.
     const firstChild = Array.isArray(block?.children) ? block.children[0] : undefined
     expect(keyOfNode(firstChild as Record<string, unknown>)).toBe('details-title')
-    expect(inBlock.some(node => node.type === 'Svg' && (node.props as Record<string, unknown>).alt === 'Askaway')).toBe(surface === 'desktop')
+    expect(inBlock.some(node => node.type === 'Svg' && (node.props as Record<string, unknown>).alt === 'AskAway User')).toBe(surface === 'desktop')
     expect(inBlock.some(node => node.type === 'Text' && childrenOf(node).includes('?'))).toBe(surface === 'terminal')
     // Each section title is a bold run; its body, drawn in the same line, is not bold.
     const boldRuns = nodes.filter(isBoldText).flatMap(childrenOf)
@@ -5361,7 +5361,7 @@ test('the card draws the same order in English: the details block with its title
     '⏱️ Urgency: Soon',
     'W',
     'P',
-    'Askaway Details:',
+    'AskAway User Details:',
     '🔁 Analogy: An',
     '💡 Why A: It is smaller.',
     '↩️ Undo: U',
@@ -5592,9 +5592,9 @@ test('the pane asks for the answerer name once; Save stores it and the question 
   await $.session.start(SESSION)
   const pane = await mountPane($)
   expect(await textsOf(pane)).toContain('Your name, shown on the answers you give. Asked once; change it with /askaway who <name>.')
-  await $.ui.input({ plugin: 'askaway', key: 'who-input', text: '  Ana\tSilva ' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'who-input', text: '  Ana\tSilva ' })
   expect(await textsOf(pane)).not.toContain('Your name, shown on the answers you give. Asked once; change it with /askaway who <name>.')
-  expect((await run($, 'who')).text).toBe('Askaway signs your answers as Ana Silva. Change it with /askaway who <name>.')
+  expect((await run($, 'who')).text).toBe('AskAway User signs your answers as Ana Silva. Change it with /askaway who <name>.')
   await pane.unmount()
 })
 
@@ -5611,9 +5611,9 @@ test('/askaway who <name> stores the name; with no name it shows it, or says non
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000)]])
   stubHost(on, files, true, {}, {}, { LANG: '' })
   await $.session.start(SESSION)
-  expect((await run($, 'who')).text).toBe('Askaway has no name for you yet. Set one with /askaway who <name>.')
-  expect((await run($, 'who Ana  Maria')).text).toBe('Askaway will sign your answers as Ana Maria.')
-  expect((await run($, 'who')).text).toBe('Askaway signs your answers as Ana Maria. Change it with /askaway who <name>.')
+  expect((await run($, 'who')).text).toBe('AskAway User has no name for you yet. Set one with /askaway who <name>.')
+  expect((await run($, 'who Ana  Maria')).text).toBe('AskAway User will sign your answers as Ana Maria.')
+  expect((await run($, 'who')).text).toBe('AskAway User signs your answers as Ana Maria. Change it with /askaway who <name>.')
 })
 
 test('the stored name goes to the CLI as ASKAWAY_WHO on a panel answer', async ($, on) => {
@@ -5641,11 +5641,11 @@ test('/askaway quiet on|off stores the flag, reports it in both languages, and r
   const files = new Map<string, string>()
   stubHost(on, files)
   await $.session.start(SESSION)
-  expect((await run($, 'quiet')).text).toBe('Modo silencioso do Askaway desligado.')
-  expect((await run($, 'quiet on')).text).toBe('Modo silencioso do Askaway ligado: sem aviso para pergunta nova e sem esmaecer depois de uma resposta.')
+  expect((await run($, 'quiet')).text).toBe('Modo silencioso do AskAway User desligado.')
+  expect((await run($, 'quiet on')).text).toBe('Modo silencioso do AskAway User ligado: sem aviso para pergunta nova e sem esmaecer depois de uma resposta.')
   expect((await run($, 'quiet')).text).toContain('ligado')
   expect((await run($, 'quiet maybe')).text).toBe('Digite /askaway quiet on ou off.')
-  expect((await run($, 'quiet off')).text).toBe('Modo silencioso do Askaway desligado.')
+  expect((await run($, 'quiet off')).text).toBe('Modo silencioso do AskAway User desligado.')
 })
 
 test('quiet mode raises no toast for a new question, and the stored flag holds across a session start', async ($, on) => {
@@ -6224,7 +6224,7 @@ test('Gauntlet 5 B3 M16 probe: a pick, then an Other text typed on the next card
   await clock.advance(350)
   await pane.press({ key: 'nav-next' })
   await pane.press({ key: 'other-q-l2-bbbbbb' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l2-bbbbbb', text: 'Stale text' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l2-bbbbbb', text: 'Stale text' })
   await pane.unmount()
 })
 
@@ -6348,7 +6348,7 @@ test('Gauntlet B2 H13: with no state folder the pane footer says away mode is un
   await $.session.start(SESSION)
   for (const surface of SURFACES) {
     const pane = await mountPane($, surface)
-    expect(await textsOf(pane)).toContain('Askaway away mode is unavailable: no state folder (HOME is unset).')
+    expect(await textsOf(pane)).toContain('AskAway User away mode is unavailable: no state folder (HOME is unset).')
     await pane.unmount()
   }
 })
@@ -6699,7 +6699,7 @@ test('Gauntlet 4 B1 M22: a pick made while a poll applies the draft is kept, and
   // The first wizard write after `armed` (the poll's apply of the draft's picks) waits here, after the poll has read the wizard.
   const landed = gate()
   let armed = false
-  on('state.set', { plugin: 'askaway' }, async (_$, e, next) => {
+  on('state.set', { plugin: 'askaway-user' }, async (_$, e, next) => {
     if (armed && e.key === 'wizard') {
       armed = false
       await landed.promise
@@ -6749,7 +6749,7 @@ test('Gauntlet 5 B2 M12: a marker write that fails after another marker landed s
   const { submits, toasts, writes, clock } = stubHost(on, files, true, {}, { tornWriteTo: 'd/.q-l2-bbbbbb.json.' })
   await $.session.start(SESSION)
   await clock.advance(5000)
-  expect(submits).toEqual(['Answered via panel by "unknown": B · "Rewrite". Askaway question q-l1-aaaaaa ("Title q-l1-aaaaaa"). (you were using A · "Keep")'])
+  expect(submits).toEqual(['Answered via panel by "unknown": B · "Rewrite". AskAway User question q-l1-aaaaaa ("Title q-l1-aaaaaa"). (you were using A · "Keep")'])
   expect(writes).toEqual([path('d', 'q-l1-aaaaaa')])
   expect(toasts.filter(text => text.includes('q-l2-bbbbbb'))).toHaveLength(1)
   expect(toasts.some(text => text.includes('q-l1-aaaaaa'))).toBe(false)
@@ -6878,7 +6878,7 @@ test('Gauntlet 4 B1 M24: a failed read of away.json keeps the away state the pan
   holds.failReadOf = `${STATE}/away.json`
   await clock.advance(5000)
   expect(await pane.find({ type: 'Text', text: /away mode on/ })).toBeDefined()
-  expect(await run($, 'away')).toEqual({ text: 'Askaway away mode is off.' })
+  expect(await run($, 'away')).toEqual({ text: 'AskAway User away mode is off.' })
   expect(readJson(files, `${STATE}/away.json`)).toMatchObject({ on: false })
   await pane.unmount()
 })
@@ -6988,7 +6988,7 @@ test('Gauntlet 4 B1 M47: a poll drops a draft pick for a question already replie
     [path('a', 'q-l1-aaaaaa'), answer('q-l1-aaaaaa', 'A', 500)],
   ])
   const wizardWrites: string[] = []
-  on('state.set', { plugin: 'askaway' }, (_$, e, next) => {
+  on('state.set', { plugin: 'askaway-user' }, (_$, e, next) => {
     if (e.key === 'wizard') wizardWrites.push(e.key)
     return next(e)
   })
@@ -7653,9 +7653,9 @@ test('pane-conc5-1: a focus move onto Submit all keeps the pending Other text, s
   await $.session.start(SESSION)
   const pane = await mountPane($)
   // Enter keeps the label; the field then gets a new text that is typed but not kept yet.
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
   await moveRing($, 'other-input-q-l1-aaaaaa-1')
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa-1', text: 'Typed reply', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa-1', text: 'Typed reply', kind: 'change' })
   // The ring moves onto Submit all before the press: the focus move must not drop the typed text.
   await moveRing($, 'submit-all')
   await pane.press({ key: 'submit-all' })
@@ -7861,11 +7861,11 @@ test('gauntlet 7 pane-exec3-1: with a kept label, Tab from the Other field onto 
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'First text' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'First text' })
   // The click picks the kept label; then the person types a new text in the field under its new round and Tabs to Back.
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   await moveRing($, 'other-input-q-l1-aaaaaa-1')
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa-1', text: 'Use a fork', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa-1', text: 'Use a fork', kind: 'change' })
   await moveRing($, 'nav-back')
   // The blur records nothing under the kept label: the button still draws the label as the pick.
   expect(JSON.stringify(await pane.find({ type: 'Button', key: 'other-q-l1-aaaaaa' }))).toContain('✓ C · First text')
@@ -7881,10 +7881,10 @@ test('gauntlet 7 pane-exec3-1: with a kept label, Esc out of the Other field, th
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'First text' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'First text' })
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   await moveRing($, 'other-input-q-l1-aaaaaa-1')
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa-1', text: 'Use a fork', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa-1', text: 'Use a fork', kind: 'change' })
   await moveRing($)
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([path('a', 'q-l1-aaaaaa')])
@@ -7901,7 +7901,7 @@ test('gauntlet 7 pane-exec3-1: a text a kept label set aside is dropped once Nex
   await $.session.start(SESSION)
   const pane = await mountPane($)
   await pane.press({ key: 'other-q-l1-aaaaaa' })
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'First text' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'First text' })
   await pane.press({ key: 'other-q-l1-aaaaaa' })
   await clock.advance(350)
   await pane.press({ key: 'nav-next' })
@@ -7915,7 +7915,7 @@ test('gauntlet 7 pane-exec3-1: a text a kept label set aside is dropped once Nex
   await pane.press({ key: 'nav-back' })
   await clock.advance(350)
   await moveRing($, 'other-input-q-l1-aaaaaa-1')
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa-1', text: 'Second text', kind: 'change' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa-1', text: 'Second text', kind: 'change' })
   await moveRing($, 'nav-next')
   await pane.press({ key: 'nav-next' })
   await clock.advance(350)
@@ -8115,7 +8115,7 @@ async function handedUnreadReply($: Engine, on: On, stored: Record<string, unkno
 }
 
 const handedLineBy = (who: string): string =>
-  `Answered via panel by ${JSON.stringify(who)}: B · "Rewrite". Askaway question q-l1-aaaaaa ("Title q-l1-aaaaaa"). (you were using A · "Keep")`
+  `Answered via panel by ${JSON.stringify(who)}: B · "Rewrite". AskAway User question q-l1-aaaaaa ("Title q-l1-aaaaaa"). (you were using A · "Keep")`
 
 test('gauntlet 7 review F6: a written reply that does not read back is handed with the stored name, which the CLI stamps', async ($, on) => {
   expect(await handedUnreadReply($, on, { who: 'Ana' }, { ASKAWAY_WHO: 'Bia', USER: 'jdoe' })).toEqual([handedLineBy('Ana')])
@@ -8220,7 +8220,7 @@ test('gauntlet 7 review F7 model: History and the footer name a label marked at 
 
 test('gauntlet 7 review F8: a list --open run that keeps failing the same way is logged once, cut to 500 characters, and again once a run succeeds', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone' })]])
-  let stderr = `askaway: ${'x'.repeat(5000)}\n`
+  let stderr = `askaway-user: ${'x'.repeat(5000)}\n`
   let isListFailing = true
   // Registered before the host stub: a `list` call fails with `stderr` while the test says so, else the stub lists.
   on('process.run', {}, (_$, e, next) => {
@@ -8232,7 +8232,7 @@ test('gauntlet 7 review F8: a list --open run that keeps failing the same way is
   await clock.advance(5000)
   await clock.advance(5000)
   const detail = `failed (exit 2): askaway: ${'x'.repeat(5000)}`
-  const cut = `askaway: askaway list --open ${detail.slice(0, 500)}…`
+  const cut = `askaway-user: askaway list --open ${detail.slice(0, 500)}…`
   expect(logs).toEqual([cut])
   // A run that succeeds ends the failure; the same failure after it is logged again, once (the next run is due 30 s later).
   isListFailing = false

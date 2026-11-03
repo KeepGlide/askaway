@@ -10,7 +10,7 @@ const HOME = '/test-home'
 const STATE = `${HOME}/.claude/state/askaway`
 const SESSION = { cwd: '/work/app', surface: 'terminal', isInteractive: true } as const
 const PANE_PROPS = {
-  title: 'Askaway',
+  title: 'AskAway User',
   isFocused: false,
   bodyColumns: 100,
   placement: 'inline',
@@ -172,7 +172,7 @@ const lastPicks = (drafts: string[]): Record<string, unknown> =>
   (JSON.parse(drafts[drafts.length - 1] ?? '{}') as { picks?: Record<string, unknown> }).picks ?? {}
 
 const mountPane = ($: Engine) =>
-  $.ui.mount({ plugin: 'askaway', surface: 'desktop', component: 'Pane', requestId: 'askaway', props: PANE_PROPS })
+  $.ui.mount({ plugin: 'askaway-user', surface: 'desktop', component: 'Pane', requestId: 'askaway', props: PANE_PROPS })
 
 type Pane = Awaited<ReturnType<typeof mountPane>>
 
@@ -269,7 +269,7 @@ for (const [lang, copy] of Object.entries(COPY)) {
     await $.session.start(SESSION)
     const pane = await mountPane($)
     // With options A, B and C the Other row is D.
-    await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+    await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
     expect(await labelOf(pane, 'nav-next')).toBe(`${copy.answer}: D · ${copy.next}`)
     expect(await labelOf(pane, 'nav-back')).toBe(`${copy.answer}: D · ${copy.back}`)
     expect(String(await labelOf(pane, 'nav-next'))).not.toContain('Use a fork')
@@ -282,11 +282,11 @@ for (const [lang, copy] of Object.entries(COPY)) {
     await $.session.start(SESSION)
     const pane = await mountPane($)
     // Blank Keep: no pick, no draft, the Next label keeps its "No answer" state.
-    await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: '   ' })
+    await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: '   ' })
     expect(drafts).toEqual([])
     expect(await labelOf(pane, 'nav-next')).toBe(`${copy.noAnswer} · ${copy.next}`)
     // Keep with text: the text becomes the Other button's label, the pick is drafted, and the card stays on its question.
-    await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: '  Use a fork  ' })
+    await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: '  Use a fork  ' })
     expect(await textsOf(pane)).toContain('Title q-l1-aaaaaa')
     // With options A and B the Other row is C; the desktop draws C as the hotkey chip, not in the label.
     expect(await labelOf(pane, 'other-q-l1-aaaaaa')).toBe('✓ Use a fork')
@@ -431,15 +431,15 @@ test('Keep with the same Other text as a failed Submit all keeps the not-deliver
   await $.session.start(SESSION)
   const pane = await mountPane($)
   const notDelivered = async () => (await textsOf(pane)).filter(text => text.startsWith('Not delivered yet'))
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa', text: 'Use a fork' })
   await pane.press({ key: 'submit-all' })
   expect(await notDelivered()).toEqual(['Not delivered yet: press Submit all again.'])
   // The field is the next round after a Keep. The same text keeps the same pick, so the line stays.
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa-1', text: 'Use a fork' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa-1', text: 'Use a fork' })
   expect(await labelOf(pane, 'other-q-l1-aaaaaa')).toBe('✓ Use a fork')
   expect(await notDelivered()).toEqual(['Not delivered yet: press Submit all again.'])
   // A different text is a changed pick: the line goes.
-  await $.ui.input({ plugin: 'askaway', key: 'other-input-q-l1-aaaaaa-2', text: 'Another fork' })
+  await $.ui.input({ plugin: 'askaway-user', key: 'other-input-q-l1-aaaaaa-2', text: 'Another fork' })
   expect(await notDelivered()).toEqual([])
   await pane.unmount()
 })

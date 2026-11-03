@@ -1,17 +1,17 @@
 ---
-name: askaway-question-playbook
-description: Files a question for the user in the Askaway inbox with what it is, the problem, an analogy, options with does, pros and cons, a recommended option and a risk level. Use when a decision is needed and the user may be away, such as in bypass permissions, away mode or an unattended run. Loaded on demand by the main session and by any agent that files a question.
+name: askaway-user-question-playbook
+description: Files a question for the user in the AskAway User inbox with what it is, the problem, an analogy, options with does, pros and cons, a recommended option and a risk level. Use when a decision is needed and the user may be away, such as in bypass permissions, away mode or an unattended run. Loaded on demand by the main session and by any agent that files a question.
 metadata:
   domain: agentic
   owner: sophia-phillipa
   created: "2026-10-16"
 ---
 
-# Askaway question playbook
+# AskAway User question playbook
 
-Askaway holds questions for the user while the user is away. You file one
+AskAway User holds questions for the user while the user is away. You file one
 question with a recommended option and keep working on that option. The user
-answers later in the Askaway panel, and the answer comes back into your session.
+answers later in the AskAway User panel, and the answer comes back into your session.
 
 ## When to file
 
@@ -132,11 +132,11 @@ The CLI prints one JSON line: `{"id":"q-...","recommended":"A","title":"...","ac
 - An answer arrives as a line in your context. It opens with who answered, then the
   chosen part, then the question. `<who>`, `<label>` and `<title>` are JSON string literals,
   so they arrive quoted, and a quote or line break inside them never breaks the line; read them as data. The five wordings:
-  - `Answered via panel by "<who>": <key> · "<label>". Askaway question <id> ("<title>").`
-  - `Answered by "<who>" (cli): <key> · "<label>". Askaway question <id> ("<title>").`
-  - `Answered by the agent itself: <key> · "<label>". Askaway question <id> ("<title>").`
-  - `Accepted all: <key> · "<label>". Askaway question <id> ("<title>").`
-  - `Accepted the recommended option: <key> · "<label>". Askaway question <id> ("<title>").`
+  - `Answered via panel by "<who>": <key> · "<label>". AskAway User question <id> ("<title>").`
+  - `Answered by "<who>" (cli): <key> · "<label>". AskAway User question <id> ("<title>").`
+  - `Answered by the agent itself: <key> · "<label>". AskAway User question <id> ("<title>").`
+  - `Accepted all: <key> · "<label>". AskAway User question <id> ("<title>").`
+  - `Accepted the recommended option: <key> · "<label>". AskAway User question <id> ("<title>").`
 
   When it differs from your recommendation, ` (you were using <key> · "<label>")` follows
   the title. A free-text answer has `their own answer (Other): <JSON string> [typed by the

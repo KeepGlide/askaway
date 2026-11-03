@@ -1,6 +1,6 @@
 import type { UrgencyGrade } from '../types'
 
-// The Askaway palette. The pane takes the theme's own text colours and background, with no fill of its own, except the
+// The AskAway User palette. The pane takes the theme's own text colours and background, with no fill of its own, except the
 // details block of a card: it takes the engine's user-message background (DETAILS_FILL). The accent is never a text colour; no
 // element draws it today (the history rows that took it are plain since 0.4.0-beta.19). It stays measured for a non-text
 // mark, which needs 3:1 (WCAG 2.2 1.4.11).

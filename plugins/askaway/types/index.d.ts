@@ -1,4 +1,4 @@
-// The Askaway state folder contract (SPEC.md, "State folder"). The CLI writes questions and delivery
+// The AskAway User state folder contract (SPEC.md, "State folder"). The CLI writes questions and delivery
 // markers; this mod reads them and writes answers only. Field names follow the spec.
 
 // The urgency grade of a question's Urgency line: its colour (look.ts URGENCY_COLOR). Optional in q/<id>.json; absent, the
@@ -120,7 +120,7 @@ export type Board = {
 // The shape is written out here so the contract stands on its own.
 declare module 'claude-code' {
   interface PluginState {
-    askaway: {
+    'askaway-user': {
       board: Board
       away: boolean
       tick: number

@@ -51,19 +51,19 @@ TMP_ROOT: Final = os.path.realpath("/tmp")
 HOME_VAR: Final = "ASKAWAY_HOME"
 
 
-ANSWER_DENIED: Final = ("Denied: an Askaway question is answered only by the user, in the Askaway panel, never "
+ANSWER_DENIED: Final = ("Denied: an AskAway User question is answered only by the user, in the AskAway User panel, never "
                         "from a shell command. Keep working on the recommended option or end the turn.")
 
 
-AWAY_DENIED: Final = ("Denied: the Askaway away mode is switched only by the user, in the Askaway panel or the user's "
+AWAY_DENIED: Final = ("Denied: the AskAway User away mode is switched only by the user, in the AskAway User panel or the user's "
                       "own shell, never by a shell command of the agent. Questions keep going to the inbox meanwhile.")
 
 
 AWAY_SWITCHES: Final = frozenset({"on", "off"})
 
 
-STATE_DENIED: Final = ("Denied: the Askaway state folder is written only by askaway.py itself. The user answers "
-                       "in the Askaway panel, so a shell command or a file edit must not write into that folder.")
+STATE_DENIED: Final = ("Denied: the AskAway User state folder is written only by askaway.py itself. The user answers "
+                       "in the AskAway User panel, so a shell command or a file edit must not write into that folder.")
 
 
 FORCE_PRUNE_DENIED: Final = ("Denied: prune --force is for the user's own terminal only. It removes an open question "

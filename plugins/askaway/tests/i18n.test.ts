@@ -101,8 +101,8 @@ test('plural picks the one form for exactly 1 and the many form otherwise, in bo
 })
 
 test('the pt-BR reply to the language command names the language with its placeholder filled', () => {
-  expect(t('pt', 'command.langSet', { lang: 'Português' })).toBe('O idioma do Askaway agora é Português.')
-  expect(t('en', 'command.langSet', { lang: 'English' })).toBe('Askaway language is now English.')
+  expect(t('pt', 'command.langSet', { lang: 'Português' })).toBe('O idioma do AskAway User agora é Português.')
+  expect(t('en', 'command.langSet', { lang: 'English' })).toBe('AskAway User language is now English.')
 })
 
 // gauntlet 4, package B2

@@ -1,4 +1,4 @@
-// The Askaway logo: a speech bubble with a question mark and a dot at its corner, the question that waits for the
+// The AskAway User logo: a speech bubble with a question mark and a dot at its corner, the question that waits for the
 // person. Drawn as inline SVG on the desktop surface (the band, the pane header); the terminal shows a text glyph.
 
 // The 24x24 stroke paths: the bubble, the hook of the question mark, its dot, and the waiting dot at the corner.
