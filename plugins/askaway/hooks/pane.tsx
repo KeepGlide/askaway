@@ -1,4 +1,4 @@
-// The Askaway pane: the header, the tree of the open questions (every group in turn, one under the other, with its
+// The AskAway User pane: the header, the tree of the open questions (every group in turn, one under the other, with its
 // sessions and questions), the question card (one question at a time; Submit all on the last one of its group) and the
 // status lines of the answers. Everything is drawn from data handed in; the pane never reads state or writes it. Every
 // callback it receives is a handler; the register supplies them, and the held table keeps each Button's press handle.
@@ -496,7 +496,7 @@ const answerLabelOf = (lang: Lang, card: CardContext, label: string): string => 
 }
 
 // One question on screen: the title row (renderTitleRow), the Urgency box under it (when set), the first
-// block (What it is and The problem, plain paragraphs), then the details block: the "Askaway Details:" title and Analogy,
+// block (What it is and The problem, plain paragraphs), then the details block: the "AskAway User Details:" title and Analogy,
 // Why to Context. Then the question, the dim lead line under it, the options with their tradeoff, fit, what happens,
 // pros and cons, and "Other…". Then a separator, and the Back / Next or Submit all row. One blank line sits under it.
 function renderQuestion(
@@ -551,7 +551,7 @@ function renderQuestion(
   )
 }
 
-// The details block: the "Askaway Details:" title line (the mark, then the text in bold), then the sections (Analogy,
+// The details block: the "AskAway User Details:" title line (the mark, then the text in bold), then the sections (Analogy,
 // Why to Context). It has no border: its fill is the engine's user-message background (DETAILS_FILL), and its padding keeps
 // the text off the fill's edge. The title is the block's first child.
 function renderDetailsBlock(ui: Ui, lang: Lang, card: CardContext, sections: Section[]): RenderElement {

@@ -1,4 +1,4 @@
-// The band row above the prompt: the Askaway logo, one line that says how many questions wait, and a button that
+// The band row above the prompt: the AskAway User logo, one line that says how many questions wait, and a button that
 // opens the pane. The register decides when the row is drawn (only while a question is open and no survey is up);
 // this file only draws it.
 import type { Elements, RenderElement, RenderSurface } from 'claude-code'

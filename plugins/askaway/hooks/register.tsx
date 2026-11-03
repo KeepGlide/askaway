@@ -1,4 +1,4 @@
-// The Askaway hooks module: the poll timer, the state reads and writes of the state folder, the pane, the band row,
+// The AskAway User hooks module: the poll timer, the state reads and writes of the state folder, the pane, the band row,
 // the toast and the /askaway command. $ stays in this file: the engine follows $ only inside the module that holds
 // the hook, so the calls on $ live here. Pure rules live in model.ts, the wizard's in wizard.ts, the text in i18n.ts.
 import { atom, read, update } from 'claude-code'
@@ -53,7 +53,7 @@ import * as flow from './wizard'
 import type { Group, Pick, Wizard } from './wizard'
 
 const PANE = 'askaway'
-const TITLE = 'Askaway'
+const TITLE = 'AskAway User'
 const POLL_MS = 5000
 // A draft.json stamped more than this past the clock is pulled back to the clock: a far-future stamp would hold off later drafts.
 const DRAFT_SKEW_MS = 60_000
@@ -91,37 +91,37 @@ const LANG_NAMES: Readonly<Record<Lang, string>> = { en: 'English', pt: 'Portugu
 // The drawn state. The pane and the band draw from these; the poll and the handlers write them, so each change
 // redraws the instances that read it. They are declared here because the engine reads atoms in the file that
 // reads them.
-const board = atom({ plugin: 'askaway', key: 'board' } as const, EMPTY_BOARD)
-const isAway = atom({ plugin: 'askaway', key: 'away' } as const, false)
-const clockTick = atom({ plugin: 'askaway', key: 'tick' } as const, 0)
+const board = atom({ plugin: 'askaway-user', key: 'board' } as const, EMPTY_BOARD)
+const isAway = atom({ plugin: 'askaway-user', key: 'away' } as const, false)
+const clockTick = atom({ plugin: 'askaway-user', key: 'tick' } as const, 0)
 // Question ids already seen. The first poll only primes them, so a session start does not toast what is there.
-const seen = atom({ plugin: 'askaway', key: 'seen' } as const, { isPrimed: false, ids: [] as string[] })
-const cleared = atom({ plugin: 'askaway', key: 'cleared' } as const, [] as string[])
+const seen = atom({ plugin: 'askaway-user', key: 'seen' } as const, { isPrimed: false, ids: [] as string[] })
+const cleared = atom({ plugin: 'askaway-user', key: 'cleared' } as const, [] as string[])
 // The cards fading out after a press: question id → press time. The pane is one instance, so a plain atom holds it.
-const leaving = atom({ plugin: 'askaway', key: 'leaving' } as const, {} as Record<string, number>)
+const leaving = atom({ plugin: 'askaway-user', key: 'leaving' } as const, {} as Record<string, number>)
 // Whether this session's main loop is inside a turn: an answer is handed to the prompt only while it is idle.
-const turn = atom({ plugin: 'askaway', key: 'turn' } as const, { isBusy: false })
+const turn = atom({ plugin: 'askaway-user', key: 'turn' } as const, { isBusy: false })
 // The language in use, and the question wizard (group, step, picks, Other…).
-const langAtom = atom({ plugin: 'askaway', key: 'lang' } as const, DEFAULT_LANG)
+const langAtom = atom({ plugin: 'askaway-user', key: 'lang' } as const, DEFAULT_LANG)
 // The open questions whose asking session has ended (`list --open` marks them): the card shows a notice for them.
-const endedAtom = atom({ plugin: 'askaway', key: 'ended' } as const, [] as string[])
+const endedAtom = atom({ plugin: 'askaway-user', key: 'ended' } as const, [] as string[])
 // The damaged q/ files that pause their session (readBoard): the pane's notices.
-const damagedAtom = atom({ plugin: 'askaway', key: 'damagedPauses' } as const, [] as string[])
+const damagedAtom = atom({ plugin: 'askaway-user', key: 'damagedPauses' } as const, [] as string[])
 // The stored answerer name: null before the question was asked, '' after a skip, else the name.
-const whoAtom = atom({ plugin: 'askaway', key: 'who' } as const, null as string | null)
-const quietAtom = atom({ plugin: 'askaway', key: 'quiet' } as const, false)
-const wizardAtom = atom({ plugin: 'askaway', key: 'wizard' } as const, flow.EMPTY_WIZARD)
+const whoAtom = atom({ plugin: 'askaway-user', key: 'who' } as const, null as string | null)
+const quietAtom = atom({ plugin: 'askaway-user', key: 'quiet' } as const, false)
+const wizardAtom = atom({ plugin: 'askaway-user', key: 'wizard' } as const, flow.EMPTY_WIZARD)
 // Whether a move (a pick, Next or Back) ran within MOVE_LOCK_MS: the pane draws its buttons disabled meanwhile.
-const moveLockAtom = atom({ plugin: 'askaway', key: 'moveLock' } as const, false)
+const moveLockAtom = atom({ plugin: 'askaway-user', key: 'moveLock' } as const, false)
 // The question set (reviewKeyOf) the review (every chosen answer, Back and Submit all) is drawn for in place of the card, or null:
 // set by Next on the last question of a group of two or more, cleared by Back on the review (leaveReview), a move, a jump, a
 // submit, and a poll that finds the group's questions changed (closeChangedReview).
-const reviewAtom = atom({ plugin: 'askaway', key: 'review' } as const, null as string | null)
+const reviewAtom = atom({ plugin: 'askaway-user', key: 'review' } as const, null as string | null)
 // The questions whose last Submit all (or row Submit) did not deliver: the card says so until a submit delivers the pick or
 // the pick changes (setUndelivered, forgetUndelivered).
-const undeliveredAtom = atom({ plugin: 'askaway', key: 'undelivered' } as const, [] as string[])
+const undeliveredAtom = atom({ plugin: 'askaway-user', key: 'undelivered' } as const, [] as string[])
 // The height of each question's Other field while text is typed in it (otherRowsOf); absent, the field is OTHER_MIN_ROWS tall.
-const otherRowsAtom = atom({ plugin: 'askaway', key: 'otherRows' } as const, {} as Record<string, number>)
+const otherRowsAtom = atom({ plugin: 'askaway-user', key: 'otherRows' } as const, {} as Record<string, number>)
 // The ts of the picks this session last wrote to draft.json or applied from it. A draft with a newer ts is applied.
 let draftTs = 0
 // Whether a move (a pick, Next or Back) ran within MOVE_LOCK_MS; cleared by the timer set in moveOnce. The atom mirrors it.
@@ -164,7 +164,7 @@ function heldFor(surface: RenderSurface, requestId: string): HeldButtons {
 
 // A failed poll or action is logged, never thrown into the timer or a press handler.
 function logFailure($: EngineInterface, error: unknown): void {
-  $.ui.log(`askaway: ${error instanceof Error ? error.message : String(error)}`)
+  $.ui.log(`askaway-user: ${error instanceof Error ? error.message : String(error)}`)
 }
 
 function report($: EngineInterface, job: Promise<unknown>): void {
@@ -217,7 +217,7 @@ export async function writeAtomic($: EngineInterface, path: string, text: string
   const temp = tempPathOf(path)
   await $.fs.write(temp, text)
   const run = await $.process.run(['mv', '-fT', temp, path])
-  if (run.exitCode !== 0) throw new Error(`askaway: could not move ${temp} into place: ${(run.stderr || run.stdout).trim()}`)
+  if (run.exitCode !== 0) throw new Error(`askaway-user: could not move ${temp} into place: ${(run.stderr || run.stdout).trim()}`)
 }
 
 // The temp file a write of `path` goes to first: dot-named beside it, with a random part, so two writers never share one.
@@ -781,10 +781,10 @@ async function mintPanelToken($: EngineInterface, home: string): Promise<string>
   // The error names the exit code only: the file's name is the token, so neither its path nor the command's stderr (which
   // names the path) reaches the throw or the log.
   const made = await $.process.run(['install', '-m', '600', '/dev/null', file])
-  if (made.exitCode !== 0) throw new Error(`askaway: could not create the panel token file (install exit ${made.exitCode})`)
+  if (made.exitCode !== 0) throw new Error(`askaway-user: could not create the panel token file (install exit ${made.exitCode})`)
   await $.fs.write(file, `${JSON.stringify({ ts: await $.clock.now() })}\n`)
   const mode = await $.process.run(['chmod', '600', file])
-  if (mode.exitCode !== 0) throw new Error(`askaway: could not set the panel token file to mode 600 (chmod exit ${mode.exitCode})`)
+  if (mode.exitCode !== 0) throw new Error(`askaway-user: could not set the panel token file to mode 600 (chmod exit ${mode.exitCode})`)
   return token
 }
 
@@ -975,7 +975,7 @@ function clearPicks(prev: Wizard, ids: readonly string[], first?: string | null)
 // The read, the merge and the write run under draft.lock, so a window's pick is never merged into a draft another window is
 // writing; a write that finds the lock held throws, and the pick stays pending for the next poll.
 async function saveDraft($: EngineInterface, home: string, changes: DraftChanges): Promise<void> {
-  if (!(await takeDraftLock($, home))) throw new Error(`askaway: ${home}/draft.json is locked by another window; the pick is retried`)
+  if (!(await takeDraftLock($, home))) throw new Error(`askaway-user: ${home}/draft.json is locked by another window; the pick is retried`)
   try {
     await mergeDraft($, home, changes)
   } finally {
@@ -1004,7 +1004,7 @@ async function mergeDraft($: EngineInterface, home: string, changes: DraftChange
   const unreadable = draft === undefined && (await $.fs.exists(path))
   if (unreadable && !unreadableHeld) {
     unreadableHeld = true
-    throw new Error(`askaway: ${path} does not parse; the picks were not written`)
+    throw new Error(`askaway-user: ${path} does not parse; the picks were not written`)
   }
   if (unreadable) logFailure($, new Error(`${path} does not parse; overwritten with this window's picks`))
   const stored = unreadable ? await read($, wizardAtom) : draft

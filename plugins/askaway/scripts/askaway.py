@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Askaway inbox: the CLI agents call and the hook modes that guard and deliver questions.
+"""AskAway User inbox: the CLI agents call and the hook modes that guard and deliver questions.
 
 State lives in one JSON file per item under ASKAWAY_HOME (default
 ~/.claude/state/askaway): q/ questions, a/ answers (first writer wins),
@@ -240,7 +240,7 @@ WRITE_WORDS: Final = frozenset({
 READ_EXEMPT_WORDS: Final = frozenset({"merge", "commit", "archive"})  # the object right after a read verb: get_commit
 # One simple `askaway.py ask|status|list|wait|export` call of the installed script: its path is SCRIPT_PATH
 # (symlinks resolved), its mirror under ~/.claude/mods (spelled out, or with ~, $HOME or ${HOME}), or the
-# plugin-root form the Askaway skill teaches (a quoted path only). A planted path such as /x/askaway.py never matches.
+# plugin-root form the AskAway User skill teaches (a quoted path only). A planted path such as /x/askaway.py never matches.
 _HOME_PREFIX: Final = r"(?:~|\$HOME|\$\{HOME\})"
 _MIRROR_PATH: Final = rf"(?:{re.escape(str(MIRROR_SCRIPT))}|{_HOME_PREFIX}/\.claude/mods/plugins/askaway/scripts/askaway\.py)"
 _FIXED_SCRIPTS: Final = "|".join([re.escape(str(SCRIPT_PATH)), _MIRROR_PATH])
@@ -262,24 +262,24 @@ HOME_VAR: Final = "ASKAWAY_HOME"
 ASK_LOCK: Final = ".ask.lock"  # the state folder's lock file: held by each ask from its duplicate check to its write
 PRUNE_LOCK: Final = ".prune.lock"  # taken without waiting by the daily cleanup: a run that finds it held skips the cleanup
 RECIPIENT_KEY: Final = "recipient"  # who a delivery marker gave the reply to: MAIN_ASKER in d/, the subagent's agent_id in s/
-ANSWER_DENIED: Final = ("Denied: an Askaway question is answered only by the user, in the Askaway panel, never "
+ANSWER_DENIED: Final = ("Denied: an AskAway User question is answered only by the user, in the AskAway User panel, never "
                         "from a shell command. Keep working on the recommended option or end the turn.")
-AWAY_DENIED: Final = ("Denied: the Askaway away mode is switched only by the user, in the Askaway panel or the user's "
+AWAY_DENIED: Final = ("Denied: the AskAway User away mode is switched only by the user, in the AskAway User panel or the user's "
                       "own shell, never by a shell command of the agent. Questions keep going to the inbox meanwhile.")
 AWAY_SWITCHES: Final = frozenset({"on", "off"})
-STATE_DENIED: Final = ("Denied: the Askaway state folder is written only by askaway.py itself. The user answers "
-                       "in the Askaway panel, so a shell command or a file edit must not write into that folder.")
-UNREADABLE_DENIED: Final = ("Denied: the Askaway guard could not read this command (an internal error). Split it into "
+STATE_DENIED: Final = ("Denied: the AskAway User state folder is written only by askaway.py itself. The user answers "
+                       "in the AskAway User panel, so a shell command or a file edit must not write into that folder.")
+UNREADABLE_DENIED: Final = ("Denied: the AskAway User guard could not read this command (an internal error). Split it into "
                             "simpler commands, or keep working without it.")
-TOO_DEEP_DENIED: Final = ("Denied: the Askaway guard could not read this command: its $(...), `...`, (...) or eval "
+TOO_DEEP_DENIED: Final = ("Denied: the AskAway User guard could not read this command: its $(...), `...`, (...) or eval "
                           "nesting goes deeper than 64 levels. Split it into simpler commands.")
-BACKSTOP_DENIED: Final = "Askaway guard backstop missing: reinstall the plugin (scripts/askaway_guard_baseline.py)."
+BACKSTOP_DENIED: Final = "AskAway User guard backstop missing: reinstall the plugin (scripts/askaway_guard_baseline.py)."
 SCAN_DEPTH_LIMIT: Final = 64  # nested scans (command substitutions, eval, sh -c, comments) the scanner follows
 SCAN_SIZE_LIMIT: Final = 64 * 1024  # characters: a longer command is not scanned, and is denied
 FED_SCAN_LIMIT: Final = 64 * 1024  # characters the scan reads from a line's substitutions' heredocs; past it, denied
 FED_READ_COST: Final = 128  # characters charged to each such read on top of its text, so short reads are bounded too
 PRINTF_CONVERSION: Final = re.compile(r"%(%|[-+ #0*\d.]*[a-zA-Z])")  # a printf conversion, or %%
-TOO_LONG_DENIED: Final = ("Denied: the Askaway guard does not read a command longer than 64K characters. Split it into "
+TOO_LONG_DENIED: Final = ("Denied: the AskAway User guard does not read a command longer than 64K characters. Split it into "
                           "smaller commands, or write large content to a file with the Write tool.")
 FORCE_PRUNE_DENIED: Final = ("Denied: prune --force is for the user's own terminal only. It removes an open question "
                              "whose session has not ended, which frees that session's pause. Do read-only work or "
@@ -1485,7 +1485,7 @@ def answer_refusal(entry: Mapping[str, Any], by: str) -> str | None:
     asked = entry.get("session")
     if by == "cli" and asked and caller_session() != asked:
         return ("answer refused: this question belongs to another session; answer it "
-                "from the Askaway panel or from its own session")
+                "from the AskAway User panel or from its own session")
     return None
 
 
@@ -1585,7 +1585,7 @@ def cmd_answer(item_id: str, key: str, by: str, text: str | None) -> dict[str, A
     if refusal is not None:
         return {"error": refusal}
     if by in TOKEN_SOURCES and not consume_panel_token():
-        return {"error": f"answer refused: --by {by} needs a valid panel token; answer from the Askaway panel"}
+        return {"error": f"answer refused: --by {by} needs a valid panel token; answer from the AskAway User panel"}
     stamp = answer_stamp(entry, by)
     record = {"id": item_id, "key": key, "by": stamp, "who": answerer_name(),
               "session": answer_session(entry, stamp), "ts": now_ms()}
@@ -2139,7 +2139,7 @@ def askuser_reason(skeletons: Sequence[Mapping[str, Any]]) -> str:
     commands = [f"{number}. python3 \"{SCRIPT_PATH}\" ask --json "
                 + shlex.quote(json.dumps(skeleton, ensure_ascii=False, separators=(',', ':')))
                 for number, skeleton in enumerate(skeletons, start=1)]
-    return ("The user is away, so these AskUserQuestion calls are NOT in the Askaway inbox yet. "
+    return ("The user is away, so these AskUserQuestion calls are NOT in the AskAway User inbox yet. "
             "Before you continue, fill every empty field (\"\" or null) of each skeleton, then file "
             "it with its command: one command per question, keeping the single quotes (write a ' "
             "inside a value as '\\''). Continue on the recommended option unless the reply says "
@@ -3449,13 +3449,13 @@ def _pause_decision(event: Mapping[str, Any]) -> HookOutput:
     item_id, title = blocking
     hint = _ask_form_hint(tool, command)
     if title is None:
-        return deny(f"Paused: Askaway question {item_id} is damaged (its file does not read), so it cannot be "
+        return deny(f"Paused: AskAway User question {item_id} is damaged (its file does not read), so it cannot be "
                     f"answered. The user clears it with `python3 {SCRIPT_PATH} prune`. Do read-only work or end the "
                     f"turn.{hint}")
     status = f"python3 {SCRIPT_PATH} status {item_id}"
     if event.get("agent_id"):
         return deny(_subagent_pause_reason(item_id, title, event["agent_id"], status) + hint)
-    return deny(f"Paused: Askaway question {item_id} ({_literal(title)}) needs the "
+    return deny(f"Paused: AskAway User question {item_id} ({_literal(title)}) needs the "
                 "user's answer. It holds this call: end the turn now instead of retrying or polling, because the "
                 f"answer arrives by itself in the context. To look it up once: `{status}`.{hint}")
 
@@ -3463,7 +3463,7 @@ def _pause_decision(event: Mapping[str, Any]) -> HookOutput:
 def _subagent_pause_reason(item_id: str, title: str, agent_id: object, status: str) -> str:
     """The pause reason a subagent reads: its own pause reaches it after its own status call, which alone ends the hold;
     a pause no ask of this subagent filed holds the whole session, and only the parent session receives that answer."""
-    paused = f"Paused: Askaway question {item_id} ({_literal(title)}) needs the user's answer."
+    paused = f"Paused: AskAway User question {item_id} ({_literal(title)}) needs the user's answer."
     if (read_json(item_path("q", item_id)) or {}).get(ASKER_KEY) != agent_id:
         return (f"{paused} It holds the whole session, this call included: end the turn now. A subagent hands back what "
                 "it has and says the question is open. The parent session receives the answer and the hold ends then; "
@@ -3490,7 +3490,7 @@ def hook_pause_guard(event: Mapping[str, Any]) -> HookOutput:
     try:
         return _pause_decision(event)
     except Exception:  # noqa: BLE001 - fail closed: while a pause may hold the session, an error must not pass the call
-        return deny("Paused: the Askaway pause check failed, so this call is denied. Do read-only work or end the turn.")
+        return deny("Paused: the AskAway User pause check failed, so this call is denied. Do read-only work or end the turn.")
 
 
 def _asked_id(response: object) -> str | None:
@@ -3625,7 +3625,7 @@ def _delivery_line(entry: Mapping[str, Any], answer: Mapping[str, Any]) -> str:
     key, recommended = answer.get("key"), entry.get("recommended")
     other = other_text(answer)  # the Other text as the delivery line quotes it: capped, as model.ts's deliveryLine does
     chosen = _other_wording(other) if other else _key_text(entry, key)
-    line = f"{_answer_wording(answer)}: {chosen}. Askaway question {entry['id']} ({_literal(entry['title'])})."
+    line = f"{_answer_wording(answer)}: {chosen}. AskAway User question {entry['id']} ({_literal(entry['title'])})."
     if key != recommended:
         line += f" (you were using {_key_text(entry, recommended)})"
     return _one_line(line)  # a title or label with a line break must not forge a second line

@@ -10,7 +10,7 @@ const HOME = '/test-home'
 const STATE = `${HOME}/.claude/state/askaway`
 const SESSION = { cwd: '/work/app', surface: 'terminal', isInteractive: true } as const
 const PANE_PROPS = {
-  title: 'Askaway',
+  title: 'AskAway User',
   isFocused: false,
   bodyColumns: 100,
   placement: 'inline',
@@ -113,7 +113,7 @@ function gate(): { promise: Promise<void>; open: () => void } {
 }
 
 const mountPane = ($: Engine) =>
-  $.ui.mount({ plugin: 'askaway', surface: 'terminal', component: 'Pane', requestId: 'askaway', props: PANE_PROPS })
+  $.ui.mount({ plugin: 'askaway-user', surface: 'terminal', component: 'Pane', requestId: 'askaway', props: PANE_PROPS })
 
 test('a CLI answer that lands while the panel call is in flight is never overwritten, and the pane shows that winner', async ($, on) => {
   const files = new Map([[path('q', QUESTION), question(QUESTION, 1000)]])

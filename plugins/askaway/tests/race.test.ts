@@ -12,7 +12,7 @@ const DRAFT = `${STATE}/draft.json`
 const DRAFT_LOCK = `${STATE}/draft.lock`
 const SESSION = { cwd: '/work/app', surface: 'terminal', isInteractive: true } as const
 const PANE_PROPS = {
-  title: 'Askaway',
+  title: 'AskAway User',
   isFocused: false,
   bodyColumns: 100,
   placement: 'inline',
@@ -214,7 +214,7 @@ function gate(): { promise: Promise<void>; open: () => void } {
 }
 
 const mountPane = ($: Engine) =>
-  $.ui.mount({ plugin: 'askaway', surface: 'terminal', component: 'Pane', requestId: 'askaway', props: PANE_PROPS })
+  $.ui.mount({ plugin: 'askaway-user', surface: 'terminal', component: 'Pane', requestId: 'askaway', props: PANE_PROPS })
 
 test('race: 20 concurrent Submit all presses for one question write its answer file exactly once', async ($, on) => {
   const files = new Map([[path('q', QUESTION), question(QUESTION, 1000)]])

@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="assets/askaway-cover-1600x400.png" alt="Askaway: uma caixa de perguntas para o Claude Code." width="100%" />
+<img src="assets/askaway-cover-1600x400.png" alt="AskAway User: uma caixa de perguntas para o Claude Code." width="100%" />
 
-# 🔷 Askaway
+# 🔷 AskAway User
 
 [![🇺🇸 English](https://img.shields.io/badge/%F0%9F%87%BA%F0%9F%87%B8-English-blue.svg)](README.md) [![🇧🇷 Português (Brasil)](https://img.shields.io/badge/%F0%9F%87%A7%F0%9F%87%B7-Portugu%C3%AAs%20(Brasil)-green.svg)](README.pt-BR.md)
 
@@ -50,16 +50,16 @@
 
 ## 📌 Status
 
-**Estável** (`1.0.3`). O Askaway segue o [SemVer](https://semver.org/): a partir da `1.0.0`, uma mudança que quebre o contrato JSON da CLI ou o formato das perguntas guardadas só vem numa nova versão major. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
+**Estável** (`1.0.3`). O AskAway User segue o [SemVer](https://semver.org/): a partir da `1.0.0`, uma mudança que quebre o contrato JSON da CLI ou o formato das perguntas guardadas só vem numa nova versão major. As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md).
 
 > [!WARNING]
-> A API de mods muda entre as versões do Claude Code, então um Claude Code mais novo pode mudar o painel antes de o Askaway acompanhar ([Problemas conhecidos](#-problemas-conhecidos)).
+> A API de mods muda entre as versões do Claude Code, então um Claude Code mais novo pode mudar o painel antes de o AskAway User acompanhar ([Problemas conhecidos](#-problemas-conhecidos)).
 
 ## 💡 Por que existe
 
-Um cartão de pergunta aparece no painel do Askaway para cada decisão que um agente registrou enquanto você estava ausente. Você responde ali, e o agente já segue a opção recomendada (a A), a menos que você escolha outra. Cada resposta volta para a sessão do Claude Code que perguntou.
+Um cartão de pergunta aparece no painel do AskAway User para cada decisão que um agente registrou enquanto você estava ausente. Você responde ali, e o agente já segue a opção recomendada (a A), a menos que você escolha outra. Cada resposta volta para a sessão do Claude Code que perguntou.
 
-Um agente que precisa de uma decisão enquanto você está ausente tem duas más opções: parar e esperar, ou adivinhar. O Askaway oferece uma terceira. O agente registra a pergunta com uma opção recomendada e continua trabalhando. Você responde depois no painel do Askaway, e as suas respostas voltam para a sessão que perguntou. É para quem roda agentes do Claude Code longe do terminal, no modo ausente ou com `bypassPermissions`.
+Um agente que precisa de uma decisão enquanto você está ausente tem duas más opções: parar e esperar, ou adivinhar. O AskAway User oferece uma terceira. O agente registra a pergunta com uma opção recomendada e continua trabalhando. Você responde depois no painel do AskAway User, e as suas respostas voltam para a sessão que perguntou. É para quem roda agentes do Claude Code longe do terminal, no modo ausente ou com `bypassPermissions`.
 
 O agente segue fazendo o que não depende da sua resposta. Ao voltar, o aviso e o botão da faixa acima do prompt mostram que há perguntas esperando. Você abre o painel e encontra cada pergunta registrada por qualquer sessão de qualquer projeto, um cartão por vez, cada um com o que o agente acrescentou para você avaliar:
 
@@ -72,9 +72,9 @@ O agente segue fazendo o que não depende da sua resposta. Ao voltar, o aviso e 
 
 Você escolhe uma opção ou escreve a sua, avança para a próxima pergunta pelos botões ou pelas teclas de atalho, e envia todas as respostas do grupo com **Enviar tudo**. Cada uma é entregue sozinha à sessão que perguntou, sem nenhum passo seu.
 
-O Askaway faz mais do que dar tempo para responder sem parar o agente. Cada pergunta chega com o contexto, a comparação, o raciocínio e o custo de cada opção, então você decide com os mesmos fatos que o agente tinha, e decide bem.
+O AskAway User faz mais do que dar tempo para responder sem parar o agente. Cada pergunta chega com o contexto, a comparação, o raciocínio e o custo de cada opção, então você decide com os mesmos fatos que o agente tinha, e decide bem.
 
-O Askaway não:
+O AskAway User não:
 
 - responde por você: os agentes são orientados a não responder perguntas. A CLI tem um comando `answer`, e a skill orienta os agentes a não chamá-lo. O hook `pause-guard` nega uma chamada de Bash, no shell do próprio agente, que o rode. É um freio, não uma garantia: o painel chama a CLI diretamente, o que não é uma chamada de ferramenta, então o hook não a vê;
 - faz chamadas de rede: perguntas e respostas são arquivos na sua máquina;
@@ -89,7 +89,7 @@ O Askaway não:
 | **Recomendada** (*recommended*) | A opção que o agente marca como padrão. Ele segue trabalhando nela até você responder, e a sua resposta a substitui. |
 | **Risco** (*risk*) | Quão arriscado é aceitar a opção recomendada: `low`, `medium` ou `high`. Só `high` pausa. |
 | **Pausa** (*pause*) | Uma retenção do agente que perguntou uma pergunta `high` (a thread principal ou um subagente): as edições, os comandos de shell e as outras chamadas de ferramenta que alteram algo ficam bloqueadas até a resposta ser entregue à sessão dele. |
-| **Aderência** (*fit*) | A estimativa do próprio agente, de 0 a 100, de quão bem uma opção serve à tarefa. O Askaway não mede nem verifica essa nota. |
+| **Aderência** (*fit*) | A estimativa do próprio agente, de 0 a 100, de quão bem uma opção serve à tarefa. O AskAway User não mede nem verifica essa nota. |
 
 ## 🎁 O que entrega
 
@@ -106,11 +106,11 @@ O Askaway não:
 
 ## 📸 Screenshots
 
-![O painel do Askaway ao lado dos painéis Context e Environment, tema claro: dois projetos, quatro sessões, cinco perguntas, um cartão aberto](assets/window-light-en.png)
+![O painel do AskAway User ao lado dos painéis Context e Environment, tema claro: dois projetos, quatro sessões, cinco perguntas, um cartão aberto](assets/window-light-en.png)
 
 ![O mesmo painel no tema escuro](assets/window-dark-en.png)
 
-![A faixa do Askaway acima do prompt](assets/band-en.png)
+![A faixa do AskAway User acima do prompt](assets/band-en.png)
 
 ## ⚡ Início rápido
 
@@ -124,7 +124,7 @@ Reinicie o Claude Code, ou rode `/reload-plugins` se a sua versão tiver o coman
 
 ## ⚙️ Como funciona
 
-O Askaway tem duas partes que compartilham uma pasta de estado. A CLI (`scripts/askaway.py`) registra e responde perguntas, um arquivo JSON por item, e roda os quatro ganchos de comando de `hooks/command-hooks.json` (`deliver`, `ask-guard`, `pause-guard`, `stamp-asker`). O painel (um mod carregado de `hooks/register.tsx`) consulta a pasta a cada 5 segundos (`POLL_MS = 5000` em `hooks/register.tsx`) e grava respostas só pela CLI.
+O AskAway User tem duas partes que compartilham uma pasta de estado. A CLI (`scripts/askaway.py`) registra e responde perguntas, um arquivo JSON por item, e roda os quatro ganchos de comando de `hooks/command-hooks.json` (`deliver`, `ask-guard`, `pause-guard`, `stamp-asker`). O painel (um mod carregado de `hooks/register.tsx`) consulta a pasta a cada 5 segundos (`POLL_MS = 5000` em `hooks/register.tsx`) e grava respostas só pela CLI.
 
 Componentes e fluxo dos arquivos:
 
@@ -153,7 +153,7 @@ sequenceDiagram
     participant Agent as Agente que perguntou
     participant Hooks as Ganchos de comando
     participant Folder as Pasta de estado
-    participant Panel as Painel do Askaway
+    participant Panel as Painel do AskAway User
     participant You as Você
     Agent->>Folder: ask grava a pergunta em q/
     Note over Agent: a CLI responde pause
@@ -204,7 +204,7 @@ O painel só roda no Linux: as gravações de estado usam `mv -fT` do GNU, e a c
 
 ## 🚀 Instalação
 
-O catálogo fica em [KeepGlide/claude-plugins](https://github.com/KeepGlide/claude-plugins), o marketplace da KeepGlide. Este repositório guarda só o plugin Askaway.
+O catálogo fica em [KeepGlide/claude-plugins](https://github.com/KeepGlide/claude-plugins), o marketplace da KeepGlide. Este repositório guarda só o plugin AskAway User.
 
 ### 1️⃣ Adicione o marketplace
 
@@ -230,7 +230,7 @@ Regras básicas:
 
 - 🔑 Nenhum segredo é necessário. Se um passo pedir um, pare e deixe o usuário digitá-lo.
 - 🧑 precisa da aprovação do usuário: os passos 3, 4 e 9 mudam a configuração do Claude Code ou abrem o painel dele.
-- 💸 Nenhum passo custa dinheiro. O Askaway não faz chamadas de rede.
+- 💸 Nenhum passo custa dinheiro. O AskAway User não faz chamadas de rede.
 - Plataformas: os passos de shell foram verificados só no Linux.
 - `${CLAUDE_PLUGIN_ROOT}` é a pasta do plugin `askaway` instalado, a que os ganchos e a skill usam; num shell, defina-a você mesmo antes dos comandos. Ache a pasta com `claude plugin list`: a linha `Read from:` sob `askaway@keepglide`. Cada comando leva o próprio `ASKAWAY_HOME`, então a pasta de teste nunca toca a pasta de estado real.
 
@@ -242,9 +242,9 @@ Regras básicas:
 | 4 | 🧑 Instalar o plugin | `claude plugin install askaway@keepglide` | Código de saída 0; `claude plugin list` mostra `askaway@keepglide`. |
 | 5 | Criar uma pasta de estado de teste | `mkdir -p /tmp/askaway-test` | Código de saída 0; a pasta está vazia. |
 | 6 | Verificar o modo ausente | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" away status` | Imprime `{"away": false}`. |
-| 7 | Registrar uma pergunta de teste | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Test","lang":"en","question":"Pick option A today?","what":"A test question for the Askaway CLI. It only checks that a question is filed.","problem":"Nothing is decided by this test, so the check has no cost.","context":"Install spec check of the Askaway CLI.","options":[{"key":"A","label":"Yes","tradeoff":"Safe to accept and easy to change later","fit":90,"does":"The check takes option A.","pros":"Quick to verify.","cons":"Tests nothing else."},{"key":"B","label":"No","tradeoff":"Keeps the current behavior","fit":10,"does":"The check takes option B.","pros":"Changes nothing at all.","cons":"Gives no result."}],"recommended":"A","why":"A is the safe default for this test.","how":"The session continues on A at once.","gains":"The check finishes without a human.","losses":"Nothing is changed by the test.","analogy":"A dry run before the real job.","urgency":"Can wait","undo":"changing later ≈ 1 min","risk":"low"}'` | Imprime `{"id": "q-…", "recommended": "A", "title": "Test", "action": "continue"}`. |
+| 7 | Registrar uma pergunta de teste | `ASKAWAY_HOME=/tmp/askaway-test python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Test","lang":"en","question":"Pick option A today?","what":"A test question for the AskAway User CLI. It only checks that a question is filed.","problem":"Nothing is decided by this test, so the check has no cost.","context":"Install spec check of the AskAway User CLI.","options":[{"key":"A","label":"Yes","tradeoff":"Safe to accept and easy to change later","fit":90,"does":"The check takes option A.","pros":"Quick to verify.","cons":"Tests nothing else."},{"key":"B","label":"No","tradeoff":"Keeps the current behavior","fit":10,"does":"The check takes option B.","pros":"Changes nothing at all.","cons":"Gives no result."}],"recommended":"A","why":"A is the safe default for this test.","how":"The session continues on A at once.","gains":"The check finishes without a human.","losses":"Nothing is changed by the test.","analogy":"A dry run before the real job.","urgency":"Can wait","undo":"changing later ≈ 1 min","risk":"low"}'` | Imprime `{"id": "q-…", "recommended": "A", "title": "Test", "action": "continue"}`. |
 | 8 | Verificar a regra de pausa | Passo 7 de novo numa segunda pasta, `ASKAWAY_HOME=/tmp/askaway-test-2`, com `"risk":"high"` no lugar de `"risk":"low"` | Imprime `"action": "pause"`. Na pasta do passo 7, a mesma pergunta da mesma sessão é uma duplicata e imprime `"action": "open"`. |
-| 9 | 🧑 Abrir o painel (numa sessão do Claude Code) | `/askaway` | A janela do painel do Askaway abre. |
+| 9 | 🧑 Abrir o painel (numa sessão do Claude Code) | `/askaway` | A janela do painel do AskAway User abre. |
 | 10 | Devolver ao usuário | nenhum | Informe cada resultado, as pastas `/tmp/askaway-test` e `/tmp/askaway-test-2` e qualquer passo pulado. Peça ao usuário para apagar as duas pastas. |
 
 ✅ **Pronto quando:** os passos 1, 2, 6, 7 e 8 batem. Os passos 3, 4 e 9 batem depois que o usuário aprovar.
@@ -253,7 +253,7 @@ Para desfazer: `claude plugin uninstall askaway@keepglide`, `claude plugin marke
 
 ## 🔄 Atualização
 
-A versão que você recebe é a que o catálogo da KeepGlide fixa. A entrada do Askaway nele nomeia uma tag do git (`ref`) e um commit (`sha`), e `claude plugin install askaway@keepglide` instala esse par.
+A versão que você recebe é a que o catálogo da KeepGlide fixa. A entrada do AskAway User nele nomeia uma tag do git (`ref`) e um commit (`sha`), e `claude plugin install askaway@keepglide` instala esse par.
 
 ### Fixar e voltar a versão
 
@@ -289,7 +289,7 @@ rm -r ~/.claude/state/askaway
 > [!CAUTION]
 > Apagar a pasta de estado apaga cada pergunta e resposta dentro dela. Use o caminho do seu `ASKAWAY_HOME` se você definiu um.
 
-**O que fica:** a pasta de estado com as perguntas, respostas e marcas de entrega, e a entrada do marketplace, até você removê-las como acima. O Askaway grava só dentro da pasta de estado ([O que o Askaway lê e grava](#o-que-o-askaway-lê-e-grava)), e o painel guarda quatro chaves no armazenamento do mod (`lang`, `who`, `quiet` e `cleared`) fora dela; os passos de desinstalação acima não removem essas chaves.
+**O que fica:** a pasta de estado com as perguntas, respostas e marcas de entrega, e a entrada do marketplace, até você removê-las como acima. O AskAway User grava só dentro da pasta de estado ([O que o AskAway User lê e grava](#o-que-o-askaway-lê-e-grava)), e o painel guarda quatro chaves no armazenamento do mod (`lang`, `who`, `quiet` e `cleared`) fora dela; os passos de desinstalação acima não removem essas chaves.
 
 ## 🧭 Uso
 
@@ -299,7 +299,7 @@ Enquanto há perguntas abertas, uma faixa fica acima do prompt: `2 perguntas agu
 
 ### Responder uma pergunta
 
-1. Aperte `1` com o prompt vazio, ou clique em **Responder** na faixa, para abrir o painel. O cabeçalho mostra o logo do Askaway, o título **Perguntas aguardando** e o contador, como `2 pendentes · 1 grupo`.
+1. Aperte `1` com o prompt vazio, ou clique em **Responder** na faixa, para abrir o painel. O cabeçalho mostra o logo do AskAway User, o título **Perguntas aguardando** e o contador, como `2 pendentes · 1 grupo`.
 2. A árvore lista cada grupo do Desktop e cada família de sessões com perguntas abertas, uma abaixo da outra, com o nome em negrito: o nome do grupo na barra lateral do Desktop, ou o título da raiz da família. Embaixo de um grupo, cada sessão desenha a sua própria linha com as suas perguntas. Embaixo do título da raiz de uma família, as perguntas da própria sessão raiz ficam logo abaixo desse título (o título nunca se repete como linha de sessão); embaixo delas, as sessões derivadas da família (`├` ou `└`) guardam as suas perguntas. Uma marca mostra em que ponto está cada pergunta: `●` a que está na tela, `○` aguardando. Uma pergunta com opção escolhida mostra depois do texto `✓ - ▪ Enviar resposta`: esse **Enviar resposta** manda só a resposta dela, na hora, e o cartão fica na pergunta que está na tela; as demais escolhas esperam o **Enviar tudo**, que volta o cartão para a primeira pergunta do grupo. Nada é enviado antes de um dos dois. Os nomes de família e de sessão são texto, não botões; cada linha de pergunta é um link, desenhado pontilhado e sublinhado no Desktop, e apertar uma leva ao cartão dela.
 3. Clique numa opção para registrá-la. O painel avança para a próxima pergunta sem resposta, voltando ao início se preciso, ou para a última pergunta quando todas já têm resposta. Nada é enviado ainda.
 4. Para responder com as suas palavras, o campo embaixo de **Outra…** fica sempre aberto: clique nele e digite. Aperte Enter (o botão do campo diz **Aplicar**) para pôr o texto no botão **Outra** como rótulo; o cartão fica onde está, então aperte **Próxima →** ou **Enviar tudo** quando quiser. Enquanto não há rótulo mantido, o texto é registrado como sua resposta quando o campo perde o foco e em **Enviar tudo**, e um campo em branco tira a resposta. Com um rótulo mantido, sair do campo, **Próxima →** ou **← Voltar** não registra o texto dele, um campo em branco não muda nada, e o rótulo só é escolhido com um clique no botão; **Enviar tudo** ainda registra o texto digitado no campo. O link **Outra…** só leva o foco ao campo.
@@ -319,11 +319,11 @@ Quando nenhuma pergunta está aberta, o painel mostra uma linha de rodapé sob a
 
 Os rótulos estão em inglês; o painel os mostra em português quando o idioma é `pt-BR`.
 
-O cartão abre com o título, a Urgência (na cor do seu grau), a explicação antes da pergunta (**O que é** e **O problema**, dois parágrafos simples, sem título), o bloco **Detalhes do Askaway:** (o logo e o título, depois **Analogia**, **💡 Por que A**, **↩️ Como desfazer**, **🛠️ Como**, **🎁 O que ganhamos**, **⚖️ O que perdemos** e **🧭 Contexto e origem**), a pergunta, a linha de estado logo abaixo dela, as opções com a troca, a aderência, as linhas **O que acontece**, **Prós** e **Contras**, e a linha de navegação. Os detalhes ficam sempre abertos: não há link nem tecla para abri-los.
+O cartão abre com o título, a Urgência (na cor do seu grau), a explicação antes da pergunta (**O que é** e **O problema**, dois parágrafos simples, sem título), o bloco **Detalhes do AskAway User:** (o logo e o título, depois **Analogia**, **💡 Por que A**, **↩️ Como desfazer**, **🛠️ Como**, **🎁 O que ganhamos**, **⚖️ O que perdemos** e **🧭 Contexto e origem**), a pergunta, a linha de estado logo abaixo dela, as opções com a troca, a aderência, as linhas **O que acontece**, **Prós** e **Contras**, e a linha de navegação. Os detalhes ficam sempre abertos: não há link nem tecla para abri-los.
 
 1. **Linha do título:** o título como um cabeçalho pequeno, depois ` - Ver sessão ↗ - ` (um link que abre a sessão que perguntou, quando ela rodou no Desktop; a seta marca o link, já que o Desktop não sublinha), depois o rótulo de risco e a idade, por exemplo `⚠️ risco médio · há 12 min`; onde a superfície não desenha Markdown, o título é texto em negrito com o risco e a idade ao lado, sem link. Uma pergunta registrada sem `title` recebe a pergunta cortada em 60 caracteres como título (a CLI faz isso). O painel nunca corta um título: um título salvo vazio é desenhado como o texto da pergunta, inteiro. O risco quebra para baixo do título quando não cabe na linha.
 2. **Urgência:** logo abaixo do título, uma linha **⏱️ Urgência** (`urgency`), quando estiver preenchida, com o texto na cor do seu grau: `urgency_level` (`low`, `medium`, `high`), ou as palavras do texto quando o grau não vier.
-3. **Explicação antes da pergunta:** as seções preenchidas, como parágrafos simples sem título: o texto de **O que é** (`what`) e depois o de **O problema** (`problem`). Depois, o bloco **Detalhes do Askaway:** (com o logo): **🔁 Analogia** (`analogy`), **💡 Por que A** (`why`; a letra é a chave recomendada), **↩️ Como desfazer** (`undo`), **🛠️ Como** (`how`), **🎁 O que ganhamos** (`gains`), **⚖️ O que perdemos** (`losses`) e **🧭 Contexto e origem** (`context`) por último. O bloco não tem borda: fica sobre o preenchimento de mensagem do usuário do próprio tema (`userMessageBackground`), então segue os temas claro, escuro e automático. Os títulos das seções vão em negrito.
+3. **Explicação antes da pergunta:** as seções preenchidas, como parágrafos simples sem título: o texto de **O que é** (`what`) e depois o de **O problema** (`problem`). Depois, o bloco **Detalhes do AskAway User:** (com o logo): **🔁 Analogia** (`analogy`), **💡 Por que A** (`why`; a letra é a chave recomendada), **↩️ Como desfazer** (`undo`), **🛠️ Como** (`how`), **🎁 O que ganhamos** (`gains`), **⚖️ O que perdemos** (`losses`) e **🧭 Contexto e origem** (`context`) por último. O bloco não tem borda: fica sobre o preenchimento de mensagem do usuário do próprio tema (`userMessageBackground`), então segue os temas claro, escuro e automático. Os títulos das seções vão em negrito.
 4. **A pergunta:** o texto da pergunta, em negrito. Sempre presente.
 5. **Linha de estado:** discreta, logo abaixo da pergunta: o que o agente faz agora e o que acontece se ninguém responder: `Na opção A desde 14:05. Escolha outra opção para trocar; sem resposta, fica a opção A.`, ou `Pausado desde 14:05, esperando a sua resposta.` para uma pergunta de risco `high`. A hora leva também a data, como em `Na opção A desde 17/10 14:05`, quando a pergunta foi feita em um dia anterior.
 6. **As opções:** cada uma é um botão de largura total, `A · Rótulo`, com `(Recomendada)` depois do rótulo da recomendada. Embaixo, uma linha `└ troca · aderência 88` (a aderência é a estimativa do agente), depois **O que acontece** (`does`), **Prós** (`pros`) e **Contras** (`cons`), que aparecem de uma vez. A opção escolhida é o botão preenchido; a recomendada fica em negrito até ser escolhida. A última é **Outra…**, com a letra depois da última opção (`C · Outra…` com duas opções).
@@ -378,7 +378,7 @@ O modo ausente é uma das três formas de o agente saber que você está ausente
 
 ## 🧠 Como os agentes registram perguntas
 
-Cada agente lê a skill `askaway:askaway-question-playbook` (`plugins/askaway/skills/askaway-question-playbook/SKILL.md`) e registra a pergunta com a CLI, em vez de perguntar e esperar. Um agente registra uma pergunta quando qualquer uma destas condições vale:
+Cada agente lê a skill `askaway-user:askaway-user-question-playbook` (`plugins/askaway/skills/askaway-user-question-playbook/SKILL.md`) e registra a pergunta com a CLI, em vez de perguntar e esperar. Um agente registra uma pergunta quando qualquer uma destas condições vale:
 
 - o modo de permissão é `bypassPermissions`;
 - o modo ausente está ligado (`away.json` tem `"on": true`);
@@ -419,7 +419,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" ask --json '{"title":"Cache b
 
 Não passe `session` nem `project`: a CLI os preenche a partir do ambiente e do diretório de trabalho. Texto acima do limite é recusado, não cortado: a resposta de refile traz `too long (n/limit)`; encurte o texto e registre a entrada de novo.
 
-A CLI também tem `answer <id> <key> [--by <origem>] [--text <texto>]`, que registra uma resposta; agentes não devem chamá-lo, e uma chamada de Bash que rode `askaway.py answer` é negada pelo hook `pause-guard` em qualquer sessão, então você responde no painel. `--by` aceita exatamente `cli` (o padrão), `panel`, `accept_recommended` ou `accept_all`; qualquer outro valor é recusado. A chave `other` recebe o texto livre por `--text` (aparado nas pontas; obrigatório para `other` e descartado para uma chave com letra). Uma resposta `cli` a uma pergunta que tem sessão é recusada, a menos que o `CLAUDE_CODE_SESSION_ID` do shell seja essa mesma sessão; um shell sem id de sessão também é recusado, e a recusa manda responder pelo painel do Askaway ou pela sessão que perguntou. As respostas `panel`, `accept_recommended` e `accept_all` não são ligadas a um shell de sessão.
+A CLI também tem `answer <id> <key> [--by <origem>] [--text <texto>]`, que registra uma resposta; agentes não devem chamá-lo, e uma chamada de Bash que rode `askaway.py answer` é negada pelo hook `pause-guard` em qualquer sessão, então você responde no painel. `--by` aceita exatamente `cli` (o padrão), `panel`, `accept_recommended` ou `accept_all`; qualquer outro valor é recusado. A chave `other` recebe o texto livre por `--text` (aparado nas pontas; obrigatório para `other` e descartado para uma chave com letra). Uma resposta `cli` a uma pergunta que tem sessão é recusada, a menos que o `CLAUDE_CODE_SESSION_ID` do shell seja essa mesma sessão; um shell sem id de sessão também é recusado, e a recusa manda responder pelo painel do AskAway User ou pela sessão que perguntou. As respostas `panel`, `accept_recommended` e `accept_all` não são ligadas a um shell de sessão.
 
 O painel responde só por este comando, com `answer <id> <key> --by panel --strict`, então a CLI é o único escritor de `a/`. A primeira resposta gravada num item vale, entre processos: uma posterior não é gravada.
 
@@ -481,7 +481,7 @@ As gravações passam antes por um arquivo oculto `.<nome>.<hex>.tmp` e depois s
 
 A pasta de estado pertence a um usuário, e todas as sessões do Claude Code que rodam como esse usuário a compartilham. Um login compartilhado, ou um sistema de arquivos compartilhado que monte a mesma pasta de estado em duas máquinas, também compartilha a caixa de entrada: os dois veem as mesmas perguntas e respostas, e os títulos de sessão copiados para as perguntas e para as exportações. Dê a cada pessoa o seu próprio login, ou defina um `ASKAWAY_HOME` separado para cada uma.
 
-### O que o Askaway lê e grava
+### O que o AskAway User lê e grava
 
 - **Ganchos** (`plugins/askaway/hooks/command-hooks.json`) leem a entrada do hook pela entrada padrão: id da sessão, modo de permissão, diretório de trabalho, nome e entrada da ferramenta.
   - `SessionStart` (em `startup`, `resume`, `clear` ou `compact`), `UserPromptSubmit` e `PostToolUse` rodam `hook deliver`: ele lê `q/`, `a/`, `d/` e `s/`, grava uma marca de entrega para cada resposta que entrega (em `d/` para a sessão principal, em `s/` para o subagente cujo próprio `ask` registrou a pergunta), e coloca o texto da resposta no contexto daquela sessão.
@@ -497,7 +497,7 @@ A pasta de estado pertence a um usuário, e todas as sessões do Claude Code que
 
 ## 🧾 Decisões
 
-As escolhas por trás do comportamento do Askaway, agrupadas por área. Cada linha diz o que foi decidido, a alternativa que perdeu e o porquê, e **Desde** aponta para a entrada da versão no [CHANGELOG.md](CHANGELOG.md) (as versões anteriores à 0.4.0-beta.6 são de antes do CHANGELOG; uma data indica que a decisão manteve o comportamento como estava). A maioria foi decidida pela dona do projeto nas rodadas de revisão das betas. As regras completas estão no [SPEC.md](plugins/askaway/SPEC.md).
+As escolhas por trás do comportamento do AskAway User, agrupadas por área. Cada linha diz o que foi decidido, a alternativa que perdeu e o porquê, e **Desde** aponta para a entrada da versão no [CHANGELOG.md](CHANGELOG.md) (as versões anteriores à 0.4.0-beta.6 são de antes do CHANGELOG; uma data indica que a decisão manteve o comportamento como estava). A maioria foi decidida pela dona do projeto nas rodadas de revisão das betas. As regras completas estão no [SPEC.md](plugins/askaway/SPEC.md).
 
 <details>
 <summary>Contrato da pergunta (17)</summary>
@@ -520,7 +520,7 @@ As escolhas por trás do comportamento do Askaway, agrupadas por área. Cada lin
 | Uma pergunta de risco alto que não grava é tentada 4 vezes, com 50 ms entre elas, e então a resposta é `pause` com o erro do sistema. | Pedir correção na falha; uma tentativa | Um pedido de correção deixaria uma pergunta de risco alto seguir sem pausa. | [beta.30](CHANGELOG.md#040-beta30---2026-10-20) |
 | Um `ask` de risco alto que bate num erro interno responde `pause`. | `continue` | Falhar em direção à pausa. | [beta.7](CHANGELOG.md#040-beta7---2026-10-17) |
 | A marca de recomendada aparece uma vez: a CLI tira `(Recommended)`, `[Recomendada]`, `Keep - recommended` e afins do começo e do fim de todo rótulo guardado, e o painel desenha a própria marca. | Rótulos como vieram | Os rótulos mostravam a marca duas vezes. | [beta.40](CHANGELOG.md#040-beta40---2026-10-22) |
-| A skill é `askaway:askaway-question-playbook`, e o modelo pode carregá-la sozinho. | Uma skill chamada `askaway`; uma skill presa a um comando de barra | Uma skill chamada `askaway` tomava o `/askaway`, e execuções sem supervisão precisam do playbook. | [beta.8](CHANGELOG.md#040-beta8---2026-10-18) |
+| A skill é `askaway-user:askaway-user-question-playbook`, e o modelo pode carregá-la sozinho. | Uma skill chamada `askaway`; uma skill presa a um comando de barra | Uma skill chamada `askaway` tomava o `/askaway`, e execuções sem supervisão precisam do playbook. | [beta.8](CHANGELOG.md#040-beta8---2026-10-18) |
 
 </details>
 
@@ -628,7 +628,7 @@ As escolhas por trás do comportamento do Askaway, agrupadas por área. Cada lin
 
 ## 🔀 Escolhas e renúncias
 
-Cada linha nomeia o valor que o Askaway escolheu e o que ele abriu mão.
+Cada linha nomeia o valor que o AskAway User escolheu e o que ele abriu mão.
 
 - **Continuidade em vez de espera.** O agente segue na opção recomendada e só `high` pausa, então você pode encontrar trabalho já feito no padrão; a sua resposta o troca.
 - **Segurança em vez de velocidade nas escolhas arriscadas.** Uma pausa termina quando a resposta é entregue a quem perguntou, não quando é gravada, então o agente fica retido até o próximo gancho dele lê-la.
@@ -662,7 +662,7 @@ Cada linha nomeia o valor que o Askaway escolheu e o que ele abriu mão.
 
 ## 🚧 Limites
 
-O que o Askaway não faz ou não consegue garantir. As limitações que têm contorno estão em [Problemas conhecidos](#-problemas-conhecidos), e os limites de segurança também estão no [SECURITY.md](SECURITY.md#known-limits).
+O que o AskAway User não faz ou não consegue garantir. As limitações que têm contorno estão em [Problemas conhecidos](#-problemas-conhecidos), e os limites de segurança também estão no [SECURITY.md](SECURITY.md#known-limits).
 
 **Ambiente e plataforma**
 
@@ -715,8 +715,8 @@ O que o Askaway não faz ou não consegue garantir. As limitações que têm con
 
 Relate uma vulnerabilidade em privado, não numa issue pública. [SECURITY.md](SECURITY.md) tem o canal de relato, as versões suportadas e o prazo de resposta. Os limites conhecidos da pasta de estado de um só usuário estão nas seções [Security](plugins/askaway/SPEC.md#security) e [Panel credential](plugins/askaway/SPEC.md#panel-credential) da spec.
 
-- **O que sai da máquina:** nada. Perguntas, respostas e marcas de entrega são arquivos JSON simples na sua pasta de estado, e o Askaway não faz chamadas de rede próprias. O texto da resposta é injetado no prompt da sessão que perguntou, então chega ao modelo que essa sessão usa.
-- **Chamadas pagas:** nenhuma. O Askaway não faz chamadas de rede, então não faz chamadas pagas.
+- **O que sai da máquina:** nada. Perguntas, respostas e marcas de entrega são arquivos JSON simples na sua pasta de estado, e o AskAway User não faz chamadas de rede próprias. O texto da resposta é injetado no prompt da sessão que perguntou, então chega ao modelo que essa sessão usa.
+- **Chamadas pagas:** nenhuma. O AskAway User não faz chamadas de rede, então não faz chamadas pagas.
 - **O texto da pergunta** é o que o agente escreveu. Mantenha segredos fora dele.
 - **Expiração:** uma resposta ainda não lida 7 dias depois de você enviá-la é encerrada como expirada. A verificação roda sob demanda nos ganchos de qualquer sessão, e vale mesmo que a sessão que perguntou ainda esteja viva. Uma resposta cuja sessão que perguntou foi liberada pelo Claude Desktop é encerrada na hora, assim que o gancho de qualquer sessão rodar.
 - **O guarda de Bash é um desestímulo, não uma garantia** (veja [Por que existe](#-por-que-existe)).
@@ -730,7 +730,7 @@ Relate uma vulnerabilidade em privado, não numa issue pública. [SECURITY.md](S
 | A CLI imprime `"error": "internal error"` | Falha interna; nada foi registrado | Pare se `action` for `pause`; senão, siga com a opção recomendada e informe o texto do erro. |
 | O painel está no idioma errado | As variáveis de locale dizem outra coisa | Rode `/askaway lang en` ou `/askaway lang pt-BR`. |
 | Uma resposta nunca chega à sessão | A sessão ainda não leu, ou a resposta expirou sem ser lida depois de 7 dias | Confira com `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/askaway.py" status <id>`; a linha de estado no painel mostra o estado da entrega. |
-| A CLI imprime `"error": "answer refused: ..."` | Uma resposta `cli` a uma pergunta de outra sessão, ou a partir de um shell sem id de sessão | Responda pelo painel do Askaway, ou pela sessão que perguntou. |
+| A CLI imprime `"error": "answer refused: ..."` | Uma resposta `cli` a uma pergunta de outra sessão, ou a partir de um shell sem id de sessão | Responda pelo painel do AskAway User, ou pela sessão que perguntou. |
 
 ## 🐞 Problemas conhecidos
 
@@ -738,7 +738,7 @@ Nenhuma issue aberta traz o rótulo `bug` em 2026-10-22 (`gh issue list -R KeepG
 
 - **O Windows não é tratado.** A pasta de sessões do Claude Desktop é `$XDG_CONFIG_HOME/Claude/claude-code-sessions` (padrão `~/.config`) no Linux e `~/Library/Application Support/Claude/claude-code-sessions` no macOS (`desktop_sessions_root`, `scripts/askaway.py`), então no Windows ela aponta para uma pasta que o Claude Desktop não usa. Isso não foi testado lá. Contorno: nenhum.
 - **Grupos do Desktop no macOS podem precisar do caminho da configuração.** O caminho padrão da configuração é `~/.config/Claude/claude_desktop_config.json` em todas as plataformas (`desktopConfigPathOf`, `hooks/register.tsx`). Se os grupos do Desktop faltarem no macOS, defina `ASKAWAY_DESKTOP_CONFIG` com o caminho do arquivo de configuração. As perguntas continuam agrupadas por família ou projeto.
-- **API de acesso antecipado.** A API de mods muda entre as versões do Claude Code, então um Claude Code mais novo pode mudar o painel antes de o Askaway acompanhar. Contorno: fique no Claude Code 2.1.296, que foi testado, ou volte a uma versão com tag ([Fixar e voltar a versão](#fixar-e-voltar-a-versão)).
+- **API de acesso antecipado.** A API de mods muda entre as versões do Claude Code, então um Claude Code mais novo pode mudar o painel antes de o AskAway User acompanhar. Contorno: fique no Claude Code 2.1.296, que foi testado, ou volte a uma versão com tag ([Fixar e voltar a versão](#fixar-e-voltar-a-versão)).
 - **Uma execução do Codex não pode ser pausada.** Nada segura uma execução do Codex, então o script dela precisa esperar a resposta por conta própria. Contorno: [Pelo Codex](#-pelo-codex).
 - **O guarda de Bash é um desestímulo.** Ele nega `askaway.py answer` na chamada de Bash do próprio agente, mas a chamada de CLI do painel não é uma chamada de ferramenta, e o hook não a vê. A CLI também confia em `CLAUDE_CODE_SESSION_ID`, e um processo do mesmo usuário que consiga gravar a pasta de estado pode gerar um token do painel ([SECURITY.md](SECURITY.md#known-limits)). Contorno: um login por pasta de estado.
 - **O nome `who` é declarado, não verificado.** Quem puder digitar um nome pode assinar uma resposta com ele ([Configuração](#%EF%B8%8F-configuração)). Contorno: dê a cada pessoa o seu próprio login.
@@ -778,7 +778,7 @@ biome lint plugins/askaway
 
 ## 📝 Changelog
 
-As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md), no formato [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), da 0.4.0-beta.6 em diante; as versões anteriores estão no histórico do git. O Askaway segue o [Versionamento Semântico](https://semver.org/). A linha de versões até aqui:
+As mudanças de cada versão estão em [CHANGELOG.md](CHANGELOG.md), no formato [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), da 0.4.0-beta.6 em diante; as versões anteriores estão no histórico do git. O AskAway User segue o [Versionamento Semântico](https://semver.org/). A linha de versões até aqui:
 
 | Versões | Datas | Temas |
 |---|---|---|
@@ -819,4 +819,4 @@ Feito por [Sophia Phillipa](https://github.com/sophia-phillipa) na [KeepGlide](h
 
 ## 📄 Licença
 
-O Askaway é distribuído sob a [Licença MIT](LICENSE) (SPDX `MIT`). Copyright (c) 2026 Sophia Phillipa (KeepGlide).
+O AskAway User é distribuído sob a [Licença MIT](LICENSE) (SPDX `MIT`). Copyright (c) 2026 Sophia Phillipa (KeepGlide).

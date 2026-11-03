@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Askaway is stable from `1.0.0`. Fixes land on the latest `1.x` release.
+AskAway User is stable from `1.0.0`. Fixes land on the latest `1.x` release.
 
 | Version | Supported |
 | ------- | --------- |
@@ -19,11 +19,11 @@ We acknowledge a report within 7 days and aim to publish a fix or a mitigation w
 
 ## Known limits
 
-Askaway keeps its state in one folder for one user. These limits are known and documented in [the spec](plugins/askaway/SPEC.md#security); a report that shows a larger impact is still welcome.
+AskAway User keeps its state in one folder for one user. These limits are known and documented in [the spec](plugins/askaway/SPEC.md#security); a report that shows a larger impact is still welcome.
 
 - The CLI trusts the `CLAUDE_CODE_SESSION_ID` environment variable to decide which session is the caller. A process that sets it can act as that session's agent on the state folder.
 - Any process of the same user that can write the state folder can mint a panel token. The panel credential is a second layer behind the Bash guard, not isolation ([spec](plugins/askaway/SPEC.md#panel-credential)).
 - The Bash guard is a deterrent, not a guarantee: the panel calls the CLI itself, which is not a tool call ([README](README.md#-why-it-exists)).
 - The pause guard blocks the call when it times out or crashes only through the hook's `"onFailure": "block"` field, which needs Claude Code 2.1.295 or later ([hooks reference](https://code.claude.com/docs/en/hooks)). On an older Claude Code, a timeout or a crash of the pause guard lets the call through ([spec](plugins/askaway/SPEC.md#hook-modes)).
 - Below Python 3.12 every hook, the pause guard included, prints a version error on stderr and exits 0, which `onFailure` does not count as a failure: there the pause and the Bash and file guard hold nothing ([spec](plugins/askaway/SPEC.md#hook-modes)).
-- Askaway makes no network calls of its own.
+- AskAway User makes no network calls of its own.

@@ -1,4 +1,4 @@
-// The Askaway logo as one drawing element, shared by the band row and the pane heading: the SVG on the desktop, the
+// The AskAway User logo as one drawing element, shared by the band row and the pane heading: the SVG on the desktop, the
 // text glyph elsewhere. The surface decides, not `'Svg' in ui`: the terminal's elements carry an Svg too, drawn empty.
 import type { Elements, RenderElement, RenderSurface } from 'claude-code'
 
@@ -15,7 +15,7 @@ export const KEEPGLIDE_SUBMIT_SIZE = 28
 export function renderLogo(ui: Ui, surface: RenderSurface): RenderElement {
   if (surface === 'desktop' && 'Svg' in ui) {
     const { Svg } = ui
-    return <Svg key="logo" source={askawaySvg({ size: LOGO_SIZE })} alt="Askaway" width={LOGO_SIZE} height={LOGO_SIZE} />
+    return <Svg key="logo" source={askawaySvg({ size: LOGO_SIZE })} alt="AskAway User" width={LOGO_SIZE} height={LOGO_SIZE} />
   }
   const { Text } = ui
   return (

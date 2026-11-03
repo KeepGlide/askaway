@@ -1,11 +1,29 @@
 # Changelog
 
-All notable changes to Askaway are recorded here, newest first. The format follows
+All notable changes to AskAway User are recorded here, newest first. Entries before the rename name the plugin
+Askaway, its old id and its old skill name. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in
 `plugins/askaway/.claude-plugin/plugin.json` is 1.0.3, set by the 1.0.3 release commit.
 Commit hashes name the change in `git log`.
 
 ## [Unreleased]
+
+### Changed
+- The plugin is renamed AskAway User (DEC-W65). The display name, the panel title, the plugin id in
+  `plugins/askaway/.claude-plugin/plugin.json` (now `askaway-user`), the skill `askaway-user-question-playbook` (namespace
+  `askaway-user:askaway-user-question-playbook`), the mod's state atoms and pane id, and the error and log prefixes change.
+  The directory `plugins/askaway`, the CLI `scripts/askaway.py`, the state folder `~/.claude/state/askaway`, the `ASKAWAY_*`
+  environment variables, the `/askaway` commands and the GitHub repository keep their names.
+
+### Migration (installed copies)
+- Old id `askaway` → new id `askaway-user`. Agents that load `askaway:askaway-question-playbook` must load
+  `askaway-user:askaway-user-question-playbook`.
+- Not changed by this release, so no state migration is needed on the host: the state folder `~/.claude/state/askaway`
+  (`DEFAULT_HOME`), the CLI path `scripts/askaway.py` and its mirror `~/.claude/mods/plugins/askaway/scripts/askaway.py`
+  that the guards check, the `ASKAWAY_*` variables and the `/askaway` commands.
+- Not verified in this change: whether an install under the new id replaces or sits beside an install under the old id,
+  and whether the installed directory then follows the id. Check that at install (#131) before the mirror path or
+  `DEFAULT_HOME` changes in a later release.
 
 ## [1.0.3] - 2026-11-02
 
