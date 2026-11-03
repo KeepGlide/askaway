@@ -1236,7 +1236,7 @@ test('once every question of the round is answered, the pane scrolls back to its
   expect(scrollCalls()).toEqual([])
   await pane.press({ key: 'submit-all' })
   expect(writes).toEqual([path('a', 'q-l1-cccccc')])
-  expect(scrollCalls()).toEqual(['askaway: no implementation for ui.scroll'])
+  expect(scrollCalls()).toEqual(['askaway-user: no implementation for ui.scroll'])
   await pane.unmount()
 })
 
@@ -5120,9 +5120,9 @@ test('option sub-rows are plain on the Desktop and on the terminal; the lead lin
 
 const noop = (): void => {}
 
-// The Buttons of a drawn tree by key, each with the press handle the engine gave it (`"press":{"plugin":"askaway","handle":N}`).
+// The Buttons of a drawn tree by key, each with the press handle the engine gave it (`"press":{"plugin":"askaway-user","handle":N}`).
 const handleOf = (node: Record<string, unknown>): number | undefined => {
-  const match = /"press":\{"plugin":"askaway","handle":(\d+)\}/.exec(JSON.stringify(node))
+  const match = /"press":\{"plugin":"askaway-user","handle":(\d+)\}/.exec(JSON.stringify(node))
   return match === null ? undefined : Number(match[1])
 }
 const buttonHandles = (tree: unknown): Record<string, number | undefined> =>
@@ -6778,7 +6778,7 @@ test('Gauntlet 5 B3 M18: a hand-off whose submit throws keeps its markers, toast
   expect(toasts).toContain(t('en', 'toast.undelivered', { key: 'A', id: 'q-l2-bbbbbb' }))
   // The failed submit is logged once, and the log names the call that failed (the engine's wording for it is not pinned).
   expect(logs).toHaveLength(1)
-  expect(logs[0]).toMatch(/^askaway: .*prompt\.submit/)
+  expect(logs[0]).toMatch(/^askaway-user: .*prompt\.submit/)
   // No retry: the markers are there, so the next poll hands nothing and submits nothing.
   await clock.advance(5000)
   expect(submits).toHaveLength(1)
@@ -7947,10 +7947,10 @@ test('gauntlet 7 pane-exec3-2: a list --open run that fails is logged with its e
   await clock.advance(5000)
   // A handler that throws is skipped by the kit, and the run rejects with the kit's own words: the log names the run that did not start.
   expect(logs).toHaveLength(3)
-  expect(logs[0]?.startsWith('askaway: askaway list --open did not start: ')).toBe(true)
+  expect(logs[0]?.startsWith('askaway-user: askaway list --open did not start: ')).toBe(true)
   expect(logs.slice(1)).toEqual([
-    'askaway: askaway list --open failed (exit 2): askaway: state folder unreadable',
-    'askaway: askaway list --open failed (exit 0): not a list',
+    'askaway-user: askaway list --open failed (exit 2): askaway: state folder unreadable',
+    'askaway-user: askaway list --open failed (exit 0): not a list',
   ])
 })
 
@@ -8220,7 +8220,7 @@ test('gauntlet 7 review F7 model: History and the footer name a label marked at 
 
 test('gauntlet 7 review F8: a list --open run that keeps failing the same way is logged once, cut to 500 characters, and again once a run succeeds', async ($, on) => {
   const files = new Map([[path('q', 'q-l1-aaaaaa'), question('q-l1-aaaaaa', 1000, { session: 'sess-gone' })]])
-  let stderr = `askaway-user: ${'x'.repeat(5000)}\n`
+  let stderr = `askaway: ${'x'.repeat(5000)}\n`
   let isListFailing = true
   // Registered before the host stub: a `list` call fails with `stderr` while the test says so, else the stub lists.
   on('process.run', {}, (_$, e, next) => {
@@ -8244,7 +8244,7 @@ test('gauntlet 7 review F8: a list --open run that keeps failing the same way is
   // Another failure text is logged at once.
   stderr = 'askaway: state folder unreadable\n'
   await clock.advance(5000)
-  expect(logs).toEqual([cut, cut, 'askaway: askaway list --open failed (exit 2): askaway: state folder unreadable'])
+  expect(logs).toEqual([cut, cut, 'askaway-user: askaway list --open failed (exit 2): askaway: state folder unreadable'])
 })
 
 // The card language (cardLangOf): a card is drawn in one language end to end, while the pane chrome keeps the pane's.
