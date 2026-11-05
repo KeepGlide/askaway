@@ -10,7 +10,7 @@
       "name": "askaway-user",
       "source": "./plugins/askaway",
       "description": "A question inbox for Claude Code: agents file questions with a default while you are away, and you answer them in a panel.",
-      "version": "1.0.3"
+      "version": "1.1.0"
     }
   ]
 }
